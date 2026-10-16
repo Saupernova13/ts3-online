@@ -65,6 +65,8 @@ pub enum Ty {
     Ptr,
     I32,
     U8,
+    /// u64 byte count, reported in whole MB so small changes are not logged
+    Mb,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -170,6 +172,7 @@ fn convert_watch(w: RawWatch) -> Result<Watch, String> {
         "ptr" => Ty::Ptr,
         "i32" => Ty::I32,
         "u8" => Ty::U8,
+        "mb" => Ty::Mb,
         t => return Err(format!("watch {}: unknown type {t:?}", w.name)),
     };
     let src = match (&w.rva, &w.base) {

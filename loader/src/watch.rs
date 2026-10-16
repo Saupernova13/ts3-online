@@ -8,6 +8,7 @@ pub enum Val {
     Ptr(u64),
     I32(i32),
     U8(u8),
+    Mb(u64),
 }
 
 impl std::fmt::Display for Val {
@@ -16,6 +17,7 @@ impl std::fmt::Display for Val {
             Val::Ptr(p) => write!(f, "{p:#x}"),
             Val::I32(v) => write!(f, "{v}"),
             Val::U8(v) => write!(f, "{v}"),
+            Val::Mb(v) => write!(f, "{v} MB"),
         }
     }
 }
@@ -29,6 +31,7 @@ fn read_val(mem: &dyn Mem, addr: u64, ty: Ty) -> Option<Val> {
         Ty::Ptr => Some(Val::Ptr(u64::from_le_bytes(mem.read(addr, 8)?.try_into().ok()?))),
         Ty::I32 => Some(Val::I32(i32::from_le_bytes(mem.read(addr, 4)?.try_into().ok()?))),
         Ty::U8 => Some(Val::U8(mem.read(addr, 1)?[0])),
+        Ty::Mb => Some(Val::Mb(u64::from_le_bytes(mem.read(addr, 8)?.try_into().ok()?) >> 20)),
     }
 }
 

@@ -111,6 +111,11 @@
    "name": "viewport_count",
    "rva": "0x9581a8",
    "type": "i32"
+  },
+  {
+   "name": "sysheap_free",
+   "rva": "0x9bb9c0",
+   "type": "mb"
   }
  ],
  "patches": [

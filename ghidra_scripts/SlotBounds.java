@@ -56,7 +56,7 @@ public class SlotBounds extends GhidraScript {
     listing = currentProgram.getListing();
 
     Map<Function, List<String>> hits = new LinkedHashMap<>();
-    Set<Address> cmpSeen = new HashSet<>();
+    Set<String> cmpSeen = new HashSet<>();
     int accesses = 0;
     InstructionIterator ii = listing.getInstructions(true);
     while (ii.hasNext() && !monitor.isCancelled()) {
@@ -78,12 +78,16 @@ public class SlotBounds extends GhidraScript {
       Function f = getFunctionContaining(in.getAddress());
       List<String> lines = hits.computeIfAbsent(f, k -> new ArrayList<>());
       lines.add("  access " + in.getAddress() + " " + in + "  -> " + n.getAddress() + " " + n);
-      // scan the function for small compares near this access
+      // scan this function only for small compares near this access
+      AddressSetView body = f == null ? null : f.getBody();
       Instruction p = in;
-      for (int k = 0; k < 40 && p != null; k++) p = p.getPrevious();
-      if (p == null) p = in;
-      for (int k = 0; k < 90 && p != null; k++, p = p.getNext()) {
-        if (!isSmallCmp(p) || !cmpSeen.add(p.getAddress())) continue;
+      for (int k = 0; k < 40; k++) {
+        Instruction q = p.getPrevious();
+        if (q == null || body == null || !body.contains(q.getAddress())) break;
+        p = q;
+      }
+      for (int k = 0; k < 90 && p != null && body != null && body.contains(p.getAddress()); k++, p = p.getNext()) {
+        if (!isSmallCmp(p) || !cmpSeen.add(f.getEntryPoint() + ":" + p.getAddress())) continue;
         Instruction j = p.getNext();
         lines.add("    cmp " + p.getAddress() + " " + bytes(p) + "  " + p + "   ; " + (j == null ? "" : j.getAddress() + " " + j));
       }

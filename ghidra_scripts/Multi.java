@@ -17,6 +17,10 @@
 //   strre <regex>       find defined strings matching regex, list referrers only
 //   scalar <hex> [mn]   list instructions with that scalar operand (optionally only mnemonic mn)
 //   rangerefs <addr> <len>  list every reference into [addr, addr+len), grouped by target offset
+//   riprefs <addr> <len>    one line per instruction referencing [addr, addr+len):
+//                           RIPREF va len bytes target_offset  (input for tools/gen_patches.py)
+//   asm <addr>          disassemble the function containing addr with raw bytes
+//   ctx <addr> [before] [after]  disassemble around one instruction (default 8 / 12)
 //
 // @category ts3-online
 import ghidra.app.script.GhidraScript;
@@ -54,6 +58,12 @@ public class Multi extends GhidraScript {
       if (f != null && !fs.contains(f)) fs.add(f);
     }
     return fs;
+  }
+
+  static String hex(byte[] b) {
+    StringBuilder sb = new StringBuilder();
+    for (byte x : b) sb.append(String.format("%02x", x));
+    return sb.toString();
   }
 
   Function containing(String arg) throws Exception {
@@ -163,6 +173,44 @@ public class Multi extends GhidraScript {
               }
             }
             out.println(" total functions: " + fs.size());
+            break;
+          }
+          case "riprefs": {
+            String[] sp = arg.split("\\s+");
+            Address start = toAddr(sp[0]);
+            long len = Long.decode(sp[1]);
+            Set<Address> seen = new TreeSet<>();
+            for (long i = 0; i < len; i++)
+              for (Reference r : getReferencesTo(start.add(i))) {
+                Instruction in = getInstructionAt(r.getFromAddress());
+                if (in == null || !seen.add(in.getAddress())) continue;
+                out.println("RIPREF " + in.getAddress() + " " + in.getLength() + " " + hex(in.getBytes()) + " 0x"
+                    + Long.toHexString(i) + " ; " + in);
+              }
+            break;
+          }
+          case "asm": {
+            Function f = containing(arg);
+            out.println(" " + f.getName() + " @ " + f.getEntryPoint());
+            InstructionIterator ii = currentProgram.getListing().getInstructions(f.getBody(), true);
+            while (ii.hasNext()) {
+              Instruction in = ii.next();
+              out.println(String.format("   %s %-24s %s", in.getAddress(), hex(in.getBytes()), in));
+            }
+            break;
+          }
+          case "ctx": {
+            String[] sp = arg.split("\\s+");
+            Instruction at = getInstructionAt(toAddr(sp[0]));
+            int before = sp.length > 1 ? Integer.parseInt(sp[1]) : 8, after = sp.length > 2 ? Integer.parseInt(sp[2]) : 12;
+            if (at == null) { out.println("ERR no instruction at " + sp[0]); break; }
+            Function f = getFunctionContaining(at.getAddress());
+            out.println(" in " + (f == null ? "?" : f.getName()));
+            Instruction p = at;
+            for (int k = 0; k < before && p.getPrevious() != null; k++) p = p.getPrevious();
+            for (int k = 0; k < before + after + 1 && p != null; k++, p = p.getNext())
+              out.println(String.format("  %s %s %-24s %s", p.getAddress().equals(at.getAddress()) ? ">" : " ",
+                  p.getAddress(), hex(p.getBytes()), p));
             break;
           }
           default: out.println("ERR unknown command " + cmd);

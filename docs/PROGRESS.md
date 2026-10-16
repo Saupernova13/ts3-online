@@ -70,6 +70,10 @@ Newest first. One entry per working session: what was learned, what changed, wha
   ran without trouble. Evidence: `work/evidence/2026-10-17-*`. Not tested: `enable=quadrants` and
   `window=` (they need a `ts3online.ini` in the game folder).
 
+- Documentation pass: `docs/PATCHES.md` lists all 220 patches and 7 hooks with group, status and
+  notes; `tools/gen_patches.py` regenerates it with the patch set. README status and tool list
+  brought up to date.
+
 **Next:** streaming rig (PLAN phase 6): needs persistent virtual displays (user's call), then
 `enable=quadrants` + `window=` in game. Later: HUD for players 3/4, auto-restoring P3/P4 after a
 level change.

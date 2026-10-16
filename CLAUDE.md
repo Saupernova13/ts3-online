@@ -20,8 +20,8 @@ Reverse engineering *Toy Story 3 Complete Edition* toward 4-player online co-op.
 
 ## Analysis
 
-- Ghidra project: `work/ghidra/ts3.gpr` (already analysed). Ghidra 12.1.3 is at `C:\utils\ghidra`,
-  JDK 21 at `C:\Program Files\Java\jdk-21.0.12.1`.
+- Ghidra project: `work/ghidra/ts3.gpr` (create it once with `tools/ghidra.sh import`). Needs
+  Ghidra 12.x (`GHIDRA_INSTALL_DIR`) and a JDK 21+ (`JAVA_HOME`).
 - Run queries with `tools/ghidra.sh query queries/NN-name.cmd`; add a new numbered query file
   per investigation so the evidence can be reproduced.
 - Each headless run costs ~1 minute of startup: batch related commands into one query file.

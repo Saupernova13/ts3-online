@@ -56,10 +56,10 @@ Audio is the host's single mix for everyone in both options.
 
 ### Rig design (2026-10-16)
 
-Host inventory: Apollo 0.4.6 (running as a service for the user's own remote play, so the rig
-uses separate instances with their own config and ports and never edits that config), the
-SudoMaker virtual display adapter, Tailscale 1.102.2, ViGEm Bus 1.21, Moonlight 6.1. Primary
-display: a 1920x1080 TV.
+Host software: Apollo (a Sunshine fork, with the SudoMaker virtual display adapter), Tailscale,
+ViGEm Bus and Moonlight. If Apollo is already used for everyday remote play, the rig runs separate
+instances with their own config and ports and leaves that config alone. The host's own monitor is
+assumed to be 1920x1080.
 
 Game side (loader, opt-in through `ts3online.ini`):
 - `enable = quadrants`: every split request builds 4 quadrants (patch `0x1405f4718`), so each
@@ -70,7 +70,7 @@ Game side (loader, opt-in through `ts3online.ini`):
 
 | | A. Spanning | C. Crop mirror |
 |---|---|---|
-| Layout | TV + 3 virtual 1920x1080 displays in a 2x2 grid; the game window spans them | game window on one 3840x2160 display; a mirror app shows quadrant k full screen on display k |
+| Layout | the host monitor + 3 virtual 1920x1080 displays in a 2x2 grid; the game window spans them | game window on one 3840x2160 display; a mirror app shows quadrant k full screen on display k |
 | Streams | one Apollo instance per virtual display (`output_name`, own port base) | same |
 | Cost | no new code beyond the loader options | an extra GPU copy and about a frame of latency |
 | Full-screen UI | menus, cutscenes and loading screens are split across the four players | the mirror shows the whole frame, scaled, when the game has one viewport or a full-screen menu (the loader can publish that state) |
@@ -85,8 +85,8 @@ Displays: Apollo creates one virtual display per stream, but with several instan
 virtual display works at a time (Apollo issue #874, closed "not planned"; the maintainer's advice
 is separate instances). So each rig instance must capture a persistent display picked with
 `output_name`, with Apollo's per-stream virtual display off. That needs a driver that keeps N
-virtual monitors (for example Virtual Display Driver, configured by XML). Installing it is the
-user's call.
+virtual monitors (for example Virtual Display Driver, configured by XML). Installing it is a
+deliberate host change, not something the scripts do on their own.
 
 ## Risks
 

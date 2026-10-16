@@ -1,10 +1,10 @@
 # Progress log
 
-Newest first. One entry per working session: what was learned, what changed, what is next.
+Oldest first. One entry per working session: what was learned, what changed, what is next.
 
 ## 2026-10-16
 
-- Located the install: `G:\SteamLibrary\steamapps\common\Toy Story 3 Complete Edition`
+- Located the install: `steamapps\common\Toy Story 3 Complete Edition` in a Steam library
   (Steam app 4049180). The live exe already carries a 7-byte patch; `.exe.orig` is the original
   and is what Ghidra analysed (FINDINGS §7).
 - REA's own Ghidra provider is not configured on this machine (`GHIDRA_INSTALL_DIR` unset, JDK 17
@@ -42,10 +42,10 @@ Newest first. One entry per working session: what was learned, what changed, wha
   to slot 2, and the engine switches to the 3-way split, then dies in a runaway loop in slot init.
   Root cause: slots 2/3 keep player index -1 (FINDINGS 5b). Fixed in `bind_joining_avatar`; not
   re-run yet.
-- Automated testing paused: virtual-pad presses reached the user's desktop when the game lost
+- Automated testing paused: virtual-pad presses reached the desktop when the game lost
   focus. Further in-game runs wait for an agreed test window.
 
-- Test window from the user: the slot-index fix works. 3 and 4 players join, with 3-way and 4-way
+- Supervised test run: the slot-index fix works. 3 and 4 players join, with 3-way and 4-way
   split, no crash, memory stable. Then: 4 per-player views plus per-player setup for slots 2/3
   give viewports 3/4 working follow cameras (FINDINGS 5c). The controls-refresh hook re-enables
   slots 2/3 (5d), but players 3/4 still do not move. Evidence: `work/evidence/` (screenshots + logs).
@@ -65,7 +65,9 @@ Newest first. One entry per working session: what was learned, what changed, wha
   Full-screen moments (shared screen, a player leaving) still use one viewport.
 - Deployed (220 patches with the optional group); not run in the game yet.
 
-- Test window (2026-10-17): all four players move (T3, T4); exiting Toy Box with 4 players and
+## 2026-10-17
+
+- Supervised test run: all four players move (T3, T4); exiting Toy Box with 4 players and
   re-entering works, and pads 2-4 re-join and move (T6). The game's own regrouping of players
   ran without trouble. Evidence: `work/evidence/2026-10-17-*`. Not tested: `enable=quadrants` and
   `window=` (they need a `ts3online.ini` in the game folder).
@@ -74,6 +76,6 @@ Newest first. One entry per working session: what was learned, what changed, wha
   notes; `tools/gen_patches.py` regenerates it with the patch set. README status and tool list
   brought up to date.
 
-**Next:** streaming rig (PLAN phase 6): needs persistent virtual displays (user's call), then
+**Next:** streaming rig (PLAN phase 6): needs persistent virtual displays (a driver install on the host), then
 `enable=quadrants` + `window=` in game. Later: HUD for players 3/4, auto-restoring P3/P4 after a
 level change.

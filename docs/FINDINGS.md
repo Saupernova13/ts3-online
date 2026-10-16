@@ -79,11 +79,43 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   callers), `0x1405f1030` assign, `0x1405fc7d0` remove pending, `0x1405ec210`
   `Players_GetAvatarFromPlayerId`.
 - **[inf]** The engine source has `MAX_PLAYERS` as a compile-time constant set to 2 for this game,
-  while the shared engine code keeps its 3/4-player branches. Slots 2 and 3 would land on
-  `+0x248` (the vertical flag) and beyond, past the end of the object, so the slot array has to
-  be relocated, not just unbounded.
-- **[unk]** Total object size and what follows `+0x258`; how many `< 2` checks are really
-  `MAX_PLAYERS`; per-player arrays outside this object (HUD, cameras, control mappers, save data).
+  while the shared engine code keeps its 3/4-player branches.
+
+### 3a. Patch surface for 4 slots (`queries/06`, `SlotBounds.java`, `tools/classify_bounds.py`)
+
+- **[obs] Object size ~0x258.** The static constructor `0x140019d70` (a CRT dynamic initializer)
+  writes members up to `+0x248` and constructs the two slots at `+0x198`; unrelated statics
+  start at about `+0x27c`. **The object cannot grow in place; it must be relocated.**
+- **[obs] Absolute references are few.** Only 3 functions address the object directly: the static
+  ctor `0x140019d70`, the atexit dtor `0x140757bc0` (also destroys the slots at `+0x198`) and setup
+  `0x1405a6620`. Everything else goes through the pointer `0x140b2ef50`.
+- **[obs] Indexed slot accesses survive relocation unchanged:** 122 sites in 95 functions compute
+  `idx * 0x58 + 0x1a0 + mgr` (`IMUL r, idx, 0x58`), so slots 2/3 at `+0x248`/`+0x2a0` work if the
+  slots stay contiguous at `+0x198`.
+- **[obs] Fields after the slots that must move:** `+0x248` SplitScreenVertical (8 instruction
+  sites: `0x1401b8920`, `0x1405ec6a0`, `0x1405ec6ac`, `0x1405f10d1`, `0x1405f2305`, `0x1405f2440`,
+  `0x1405f244c` + the ctor write `0x140019e40`) and `+0x250` pending removal (`0x14005185f`,
+  `0x1405fc7d6`, `0x1405fc8b8`, `0x1405fca20`).
+- **[obs] Bounds checks:** the compiled `idx < 2` is `CMP idx, 1 ; JA skip` right before the IMUL.
+  Auto-classified candidates:
+
+  | class | sites | functions | patch |
+  |---|---|---|---|
+  | guard (same register) | 89 | 70 | imm `1 -> 3` |
+  | guard (index moved to another register) | 17 | 15 | imm `1 -> 3` |
+  | guard (`CMP idx, 2 ; JGE`) | 3 | 3 | imm `2 -> 4` |
+  | loop over players (`CMP i, 2 ; JC back`) | 1 | 1 | imm `2 -> 4` |
+  | review by hand | 39 | 27 | - |
+  | slot access with no nearby guard | 13 | 10 | check caller |
+
+  The list is `data/bounds-candidates.json` (unreviewed).
+- **[obs] Player-count tests:** 9 `count == 2` tests in 9 functions (become `>= 2`, case by case)
+  and 34 `count > 1` style tests in 29 functions (already fine for 3-4).
+- **[obs]** 30 functions hardcode player 2's avatar (`+0x1f8`). These are game logic that may need
+  to consider players 3/4 too.
+- **[unk]** Per-player arrays outside this object (HUD, cameras, control mappers, save data); the
+  slot ctor/dtor element count (expected `2` in the vector ctor at `0x140019e34` and dtor at
+  `0x140757bd6`).
 
 ## 4. Input handles 4 pads
 

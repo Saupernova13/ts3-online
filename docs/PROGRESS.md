@@ -15,6 +15,13 @@ Newest first. One entry per working session: what was learned, what changed, wha
 - Input enumerates 4 XInput pads already.
 - Set up this repo; queries 01-05 in `queries/` reproduce the evidence.
 
-**Next:** phase 1. Measure the player manager's real size, list every access to its slot
-array and every `MAX_PLAYERS` bound, and find other per-player arrays (HUD, cameras, control
-mappers).
+- Phase 1, player-manager layer: dumped 510 manager-touching functions (`PlayerMgrDump.java`),
+  mapped offsets (`tools/scan_player_mgr.py`), measured the object (~0x258 bytes, static, 3
+  functions address it absolutely), and listed instruction-level bound sites
+  (`SlotBounds.java` -> `tools/classify_bounds.py`): 110 mechanical patches, 39 to review, 13
+  unguarded accesses, 12 tail-field sites. FINDINGS §3a has the details; PLAN.md has the
+  phase 3 recipe.
+
+**Next:** phase 2, the Rust `dinput8.dll` proxy loader with a signature-based patch table. Then
+hand-review the 39 + 13 sites and look for per-player arrays outside the manager (HUD,
+cameras, control mappers).

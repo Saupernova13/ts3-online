@@ -8,8 +8,8 @@ No game files are included. Everything here works against your own install.
 
 ## Status
 
-Feasibility research is done; the next step is mapping every 2-player limit. See
-[docs/PROGRESS.md](docs/PROGRESS.md).
+Feasibility research is done and the player manager's 2-player limits are mapped down to the
+instruction. The next step is the runtime patch loader. See [docs/PROGRESS.md](docs/PROGRESS.md).
 
 | Doc | What |
 |---|---|
@@ -34,6 +34,12 @@ tools/ghidra.sh query queries/01-input-and-split-mode.cmd
 # list command-line flags and whether the game reads them
 tools/ghidra.sh script FlagUse.java "$(cygpath -w work/out/flags.txt)"
 
+# player-manager map and MAX_PLAYERS bound sites
+tools/ghidra.sh script PlayerMgrDump.java "$(cygpath -w work/out/pm_dump.c)"
+python -I tools/scan_player_mgr.py work/out/pm_dump.c
+tools/ghidra.sh script SlotBounds.java "$(cygpath -w work/out/slot_bounds.txt)"
+python -I tools/classify_bounds.py work/out/slot_bounds.txt --json data/bounds-candidates.json
+
 # static helpers
 python -I tools/pe_info.py imports "/path/to/exe"
 python -I tools/pe_info.py diff original.exe patched.exe
@@ -46,8 +52,9 @@ Addresses in the docs match the exe hash listed in FINDINGS.md.
 
 ```
 docs/            findings, plan, progress log
+data/            generated research output worth keeping (patch-site lists)
 ghidra_scripts/  headless Ghidra scripts (Java)
 queries/         Multi.java query files, numbered in the order they were run
-tools/           ghidra.sh runner, pe_info.py
+tools/           ghidra.sh runner, pe_info.py, player-manager scan and bound classifier
 work/            Ghidra project and query output (gitignored)
 ```

@@ -18,12 +18,21 @@ Native netcode is out (see FINDINGS §1). Instead:
 | # | Phase | Output | Status |
 |---|---|---|---|
 | 0 | Feasibility RE | FINDINGS.md | done |
-| 1 | Map every `MAX_PLAYERS` dependency | full list of `< 2` sites, per-player arrays, player manager size | next |
-| 2 | Patch loader | DLL loaded through a `dinput8.dll` proxy (the exe imports DINPUT8), applying patches in memory by byte signature; the exe stays untouched | - |
+| 1 | Map every `MAX_PLAYERS` dependency | player manager size, slot accesses, bound sites (FINDINGS §3a) | manager layer done; review list + other per-player arrays open |
+| 2 | Patch loader | Rust `cdylib` posing as `dinput8.dll` (the exe imports DINPUT8; Rust + MSVC target and VS 2022 Build Tools are installed), applying patches in memory by byte signature before the CRT static initializers run; the exe stays untouched | next |
 | 3 | Relocate player slots + raise bounds | players 3/4 can be assigned; mode 3/4 split appears | - |
 | 4 | Join flow, cameras, HUD, pad binding | P3/P4 join from their pads, own camera and HUD | - |
 | 5 | Game content | Toy Box first (open world, likely least scripted), then story missions | - |
 | 6 | Streaming rig | see below | - |
+
+## Phase 3 recipe (from FINDINGS §3a)
+
+1. Allocate a ~0x320-byte buffer within +-2 GB of the module (RIP-relative reach).
+2. Rewrite the RIP-relative operands in the 3 functions that address the object directly
+   (static ctor, atexit dtor, setup) to point at the buffer at the same offsets.
+3. Construct/destroy 4 slots instead of 2 (vector ctor/dtor count).
+4. Move `+0x248` -> `+0x2f8` and `+0x250` -> `+0x300` at their 12 instruction sites.
+5. Apply the 110 mechanical bound patches; hand-review the 39 + 13 others and the 9 `count == 2` tests.
 
 ## Streaming options (phase 6)
 

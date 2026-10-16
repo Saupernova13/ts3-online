@@ -1,0 +1,1517 @@
+{
+ "guard": [
+  {
+   "func": "FUN_14006a490",
+   "addr": "14006a6c6",
+   "bytes": "4883ff01",
+   "cmp": "RDI,1",
+   "jcc": "JA",
+   "jtarget": "14006a72a",
+   "access": "14006a6d3",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400888d0",
+   "addr": "140088914",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "140088950",
+   "access": "140088920",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400b7980",
+   "addr": "1400b799c",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JA",
+   "jtarget": "1400b79b6",
+   "access": "1400b79a8",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400b7b60",
+   "addr": "1400b7b76",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JA",
+   "jtarget": "1400b7b90",
+   "access": "1400b7b82",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400bc560",
+   "addr": "1400bc5d2",
+   "bytes": "83fb01",
+   "cmp": "EBX,1",
+   "jcc": "JA",
+   "jtarget": "1400bc5ec",
+   "access": "1400bc5d7",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400e7840",
+   "addr": "1400e78b8",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1400e78dc",
+   "access": "1400e78bd",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400e7840",
+   "addr": "1400e78e8",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1400e790c",
+   "access": "1400e78ed",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400e7840",
+   "addr": "1400e7931",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1400e7955",
+   "access": "1400e7936",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400e7840",
+   "addr": "1400e7961",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1400e7985",
+   "access": "1400e7966",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400ea970",
+   "addr": "1400eaa16",
+   "bytes": "83fd01",
+   "cmp": "EBP,1",
+   "jcc": "JA",
+   "jtarget": "1400eaabd",
+   "access": "1400eaa1f",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400ea970",
+   "addr": "1400eab1f",
+   "bytes": "83fd01",
+   "cmp": "EBP,1",
+   "jcc": "JA",
+   "jtarget": "1400eabcd",
+   "access": "1400eab28",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400eddf0",
+   "addr": "1400edf75",
+   "bytes": "83ff01",
+   "cmp": "EDI,1",
+   "jcc": "JA",
+   "jtarget": "1400edf98",
+   "access": "1400edf7a",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400ee9b0",
+   "addr": "1400eed9c",
+   "bytes": "4183fc01",
+   "cmp": "R12D,1",
+   "jcc": "JA",
+   "jtarget": "1400ef079",
+   "access": "1400eeda9",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400ee9b0",
+   "addr": "1400ef452",
+   "bytes": "4183fc01",
+   "cmp": "R12D,1",
+   "jcc": "JA",
+   "jtarget": "1400ef61c",
+   "access": "1400ef45f",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400fe060",
+   "addr": "1400fe082",
+   "bytes": "83fe01",
+   "cmp": "ESI,1",
+   "jcc": "JA",
+   "jtarget": "1400fe095",
+   "access": "1400fe087",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140106590",
+   "addr": "1401065b4",
+   "bytes": "83ff01",
+   "cmp": "EDI,1",
+   "jcc": "JA",
+   "jtarget": "1401065c7",
+   "access": "1401065b9",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140113c70",
+   "addr": "140113cc8",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "140113ce2",
+   "access": "140113ccd",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401149b0",
+   "addr": "140114a51",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "140114aae",
+   "access": "140114a5d",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140114ac0",
+   "addr": "140114b89",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "140114be6",
+   "access": "140114b95",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140115290",
+   "addr": "140115486",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "1401154f0",
+   "access": "14011548b",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401162b0",
+   "addr": "1401162e6",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14011633e",
+   "access": "1401162eb",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140116c40",
+   "addr": "140116c95",
+   "bytes": "83fb01",
+   "cmp": "EBX,1",
+   "jcc": "JA",
+   "jtarget": "140116d7b",
+   "access": "140116ca5",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140118380",
+   "addr": "1401183cd",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "14011842d",
+   "access": "1401183d2",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401187f0",
+   "addr": "140118902",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "140118962",
+   "access": "140118907",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14011a020",
+   "addr": "14011a395",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "14011a3fe",
+   "access": "14011a39a",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14011fd40",
+   "addr": "14011ffc2",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14011ffe6",
+   "access": "14011ffc7",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14011fd40",
+   "addr": "14011fff2",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "140120016",
+   "access": "14011fff7",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14011fd40",
+   "addr": "14012003b",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14012005f",
+   "access": "140120040",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14011fd40",
+   "addr": "14012006b",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14012008f",
+   "access": "140120070",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140123a90",
+   "addr": "140123acb",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "140123aef",
+   "access": "140123ad0",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140123a90",
+   "addr": "140123afb",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "140123b1f",
+   "access": "140123b00",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140123a90",
+   "addr": "140123b44",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "140123b68",
+   "access": "140123b49",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140123a90",
+   "addr": "140123b74",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "140123b98",
+   "access": "140123b79",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401372d0",
+   "addr": "14013736c",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "140137382",
+   "access": "140137371",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140151bc0",
+   "addr": "140151be7",
+   "bytes": "83fe01",
+   "cmp": "ESI,1",
+   "jcc": "JA",
+   "jtarget": "140151c01",
+   "access": "140151bf3",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140194bf0",
+   "addr": "140194ca2",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "140194cbc",
+   "access": "140194ca7",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140194bf0",
+   "addr": "140194d33",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "140194d4d",
+   "access": "140194d38",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140194bf0",
+   "addr": "140194d71",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "140194d89",
+   "access": "140194d76",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140199f60",
+   "addr": "14019a23c",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14019a407",
+   "access": "14019a245",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14019b580",
+   "addr": "14019b5cc",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14019b5ea",
+   "access": "14019b5d3",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14019b950",
+   "addr": "14019bc16",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14019bc37",
+   "access": "14019bc1b",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14019bcd0",
+   "addr": "14019bd2c",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14019be26",
+   "access": "14019bd35",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14019ce80",
+   "addr": "14019ceba",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14019ced6",
+   "access": "14019cec1",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14019ce80",
+   "addr": "14019d13c",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14019d282",
+   "access": "14019d145",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401a04e0",
+   "addr": "1401a0506",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401a0540",
+   "access": "1401a050d",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401a1430",
+   "addr": "1401a14ea",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401a1506",
+   "access": "1401a14f1",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401a4a00",
+   "addr": "1401a4a26",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401a4a60",
+   "access": "1401a4a2d",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401a4c70",
+   "addr": "1401a4cb6",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401a4cd2",
+   "access": "1401a4cbd",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401a77f0",
+   "addr": "1401a781d",
+   "bytes": "4183fc01",
+   "cmp": "R12D,1",
+   "jcc": "JA",
+   "jtarget": "1401a7838",
+   "access": "1401a7823",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401a77f0",
+   "addr": "1401a78ed",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401a7c63",
+   "access": "1401a78f6",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401a7d90",
+   "addr": "1401a7db0",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401a7dfd",
+   "access": "1401a7db5",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401afa30",
+   "addr": "1401afa5c",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401afa84",
+   "access": "1401afa61",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401afaa0",
+   "addr": "1401afdce",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401afee7",
+   "access": "1401afdd7",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401affa0",
+   "addr": "1401affc5",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b0012",
+   "access": "1401affca",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b0a80",
+   "addr": "1401b0acc",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "1401b0b2d",
+   "access": "1401b0ad8",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b0a80",
+   "addr": "1401b0b51",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "1401b0b74",
+   "access": "1401b0b5d",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b2010",
+   "addr": "1401b2042",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b207c",
+   "access": "1401b2049",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b2250",
+   "addr": "1401b22c6",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b22e2",
+   "access": "1401b22cd",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b27e0",
+   "addr": "1401b2837",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b2853",
+   "access": "1401b283e",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b4270",
+   "addr": "1401b43b8",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b43d4",
+   "access": "1401b43bf",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b4270",
+   "addr": "1401b44b7",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b44d3",
+   "access": "1401b44be",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b5bc0",
+   "addr": "1401b5bec",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b5c2e",
+   "access": "1401b5bf1",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b5c50",
+   "addr": "1401b5d36",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b5d52",
+   "access": "1401b5d3d",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b5c50",
+   "addr": "1401b5d88",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b5da4",
+   "access": "1401b5d8f",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b8890",
+   "addr": "1401b88cc",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b8906",
+   "access": "1401b88d1",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b8a10",
+   "addr": "1401b8b0b",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b8b27",
+   "access": "1401b8b12",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401b8a10",
+   "addr": "1401b8bd0",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401b8bec",
+   "access": "1401b8bd7",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401ba840",
+   "addr": "1401ba93c",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401ba99b",
+   "access": "1401ba941",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401c2b80",
+   "addr": "1401c2bdb",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401c2bf7",
+   "access": "1401c2be2",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401c8650",
+   "addr": "1401c869d",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401c8c44",
+   "access": "1401c86a6",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401ce650",
+   "addr": "1401ce7c2",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401ce7ef",
+   "access": "1401ce7c7",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1401e8300",
+   "addr": "1401e8320",
+   "bytes": "83ff01",
+   "cmp": "EDI,1",
+   "jcc": "JA",
+   "jtarget": "1401e83a0",
+   "access": "1401e8325",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140214180",
+   "addr": "1402149e6",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "140214a09",
+   "access": "1402149eb",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140218f40",
+   "addr": "140218f59",
+   "bytes": "83ff01",
+   "cmp": "EDI,1",
+   "jcc": "JA",
+   "jtarget": "140218f87",
+   "access": "140218f65",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405cdfd0",
+   "addr": "1405cdff0",
+   "bytes": "83fb01",
+   "cmp": "EBX,1",
+   "jcc": "JA",
+   "jtarget": "1405ce0a3",
+   "access": "1405ce011",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405d3340",
+   "addr": "1405d3363",
+   "bytes": "83ff01",
+   "cmp": "EDI,1",
+   "jcc": "JA",
+   "jtarget": "1405d3420",
+   "access": "1405d338b",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405e7720",
+   "addr": "1405e7739",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "1405e77d5",
+   "access": "1405e7749",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405ec210",
+   "addr": "1405ec226",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "1405ec24b",
+   "access": "1405ec232",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405f8ba0",
+   "addr": "1405f8bc9",
+   "bytes": "83fb01",
+   "cmp": "EBX,1",
+   "jcc": "JA",
+   "jtarget": "1405f8c7c",
+   "access": "1405f8be5",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405fc7d0",
+   "addr": "1405fc8d6",
+   "bytes": "83ff01",
+   "cmp": "EDI,1",
+   "jcc": "JA",
+   "jtarget": "1405fc984",
+   "access": "1405fc8ec",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140611c60",
+   "addr": "140611cb5",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "140611cd6",
+   "access": "140611cc1",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14061eca0",
+   "addr": "14061ed2c",
+   "bytes": "4183ff01",
+   "cmp": "R15D,1",
+   "jcc": "JA",
+   "jtarget": "14061f1a1",
+   "access": "14061ed36",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14069a000",
+   "addr": "14069a024",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14069a04c",
+   "access": "14069a02b",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14069a290",
+   "addr": "14069a298",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14069a2c6",
+   "access": "14069a29d",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14069c240",
+   "addr": "14069c285",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14069c443",
+   "access": "14069c28e",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_14069e5c0",
+   "addr": "14069e5d7",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "14069e60f",
+   "access": "14069e5dc",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1406a0290",
+   "addr": "1406a032b",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JA",
+   "jtarget": "1406a035f",
+   "access": "1406a0337",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1406a2810",
+   "addr": "1406a28dd",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1406a2dd7",
+   "access": "1406a28e6",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1406a5290",
+   "addr": "1406a52d8",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1406a52f2",
+   "access": "1406a52dd",
+   "patch": "imm 1->3"
+  }
+ ],
+ "guard_moved": [
+  {
+   "func": "FUN_140046d90",
+   "addr": "140047270",
+   "bytes": "4183fd01",
+   "cmp": "R13D,1",
+   "jcc": "JA",
+   "jtarget": "1400472d3",
+   "access": "140047276",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140088e80",
+   "addr": "140088ea8",
+   "bytes": "83fb01",
+   "cmp": "EBX,1",
+   "jcc": "JA",
+   "jtarget": "140088ee7",
+   "access": "140088eb0",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400ee9b0",
+   "addr": "1400eee1a",
+   "bytes": "4183fc01",
+   "cmp": "R12D,1",
+   "jcc": "JA",
+   "jtarget": "1400eee35",
+   "access": "1400eee20",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1400ee9b0",
+   "addr": "1400eef2e",
+   "bytes": "4183fc01",
+   "cmp": "R12D,1",
+   "jcc": "JA",
+   "jtarget": "1400ef61c",
+   "access": "1400eef38",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140106f60",
+   "addr": "140107003",
+   "bytes": "4183f801",
+   "cmp": "R8D,1",
+   "jcc": "JA",
+   "jtarget": "140107183",
+   "access": "140107010",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140139970",
+   "addr": "140139974",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JA",
+   "jtarget": "140139aa0",
+   "access": "140139980",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140218770",
+   "addr": "1402187e6",
+   "bytes": "4183fe01",
+   "cmp": "R14D,1",
+   "jcc": "JA",
+   "jtarget": "140218875",
+   "access": "14021881c",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405a9730",
+   "addr": "1405a9733",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JA",
+   "jtarget": "1405a9794",
+   "access": "1405a973b",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405baed0",
+   "addr": "1405baed0",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JA",
+   "jtarget": "1405baef0",
+   "access": "1405baed8",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405bb680",
+   "addr": "1405bb680",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JA",
+   "jtarget": "1405bb695",
+   "access": "1405bb688",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405bbe70",
+   "addr": "1405bbe70",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JA",
+   "jtarget": "1405bbe8d",
+   "access": "1405bbe78",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405dc970",
+   "addr": "1405dc984",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "1405dc9a1",
+   "access": "1405dc98c",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1405f1a60",
+   "addr": "1405f1a75",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JA",
+   "jtarget": "1405f1af7",
+   "access": "1405f1a7d",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_140651320",
+   "addr": "14065154a",
+   "bytes": "4183fa01",
+   "cmp": "R10D,1",
+   "jcc": "JA",
+   "jtarget": "140651594",
+   "access": "140651553",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1406c0e70",
+   "addr": "1406c0fc1",
+   "bytes": "83fb01",
+   "cmp": "EBX,1",
+   "jcc": "JA",
+   "jtarget": "1406c103a",
+   "access": "1406c0fcd",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1406c0e70",
+   "addr": "1406c0ffa",
+   "bytes": "83fb01",
+   "cmp": "EBX,1",
+   "jcc": "JA",
+   "jtarget": "1406c103a",
+   "access": "1406c1006",
+   "patch": "imm 1->3"
+  },
+  {
+   "func": "FUN_1406c1bb0",
+   "addr": "1406c1bc8",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JA",
+   "jtarget": "1406c1c4b",
+   "access": "1406c1bda",
+   "patch": "imm 1->3"
+  }
+ ],
+ "guard_ge": [
+  {
+   "func": "FUN_1401b8a10",
+   "addr": "1401b8a50",
+   "bytes": "83f802",
+   "cmp": "EAX,2",
+   "jcc": "JGE",
+   "jtarget": "1401b8a79",
+   "access": "1401b8a55",
+   "patch": "imm 2->4"
+  },
+  {
+   "func": "FUN_14021ef70",
+   "addr": "14021ef85",
+   "bytes": "83fa02",
+   "cmp": "EDX,2",
+   "jcc": "JGE",
+   "jtarget": "14021efb6",
+   "access": "14021ef8d",
+   "patch": "imm 2->4"
+  },
+  {
+   "func": "FUN_1406a5890",
+   "addr": "1406a5c3d",
+   "bytes": "83f802",
+   "cmp": "EAX,2",
+   "jcc": "JGE",
+   "jtarget": "1406a5cd3",
+   "access": "1406a5c46",
+   "patch": "imm 2->4"
+  }
+ ],
+ "loop": [
+  {
+   "func": "FUN_140046d90",
+   "addr": "1400471b4",
+   "bytes": "83fb02",
+   "cmp": "EBX,2",
+   "jcc": "JC",
+   "jtarget": "1400470a0",
+   "access": "-",
+   "patch": "imm 2->4"
+  }
+ ],
+ "review": [
+  {
+   "func": "FUN_14006a490",
+   "addr": "14006a750",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JNZ",
+   "jtarget": "14006a75a",
+   "access": "-"
+  },
+  {
+   "func": "FUN_14006a490",
+   "addr": "14006a75a",
+   "bytes": "83f802",
+   "cmp": "EAX,2",
+   "jcc": "JNZ",
+   "jtarget": "14006a790",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1400b7b60",
+   "addr": "1400b7bcc",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JBE",
+   "jtarget": "1400b7be0",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1400e7840",
+   "addr": "1400e7893",
+   "bytes": "83780801",
+   "cmp": "dword ptr [RAX + 0x8],1",
+   "jcc": "JNZ",
+   "jtarget": "1400e789c",
+   "access": "1400e78bd"
+  },
+  {
+   "func": "FUN_1400e7840",
+   "addr": "1400e79a5",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JNZ",
+   "jtarget": "1400e79b8",
+   "access": "-"
+  },
+  {
+   "func": "FUN_140106f60",
+   "addr": "140106fa3",
+   "bytes": "83fa03",
+   "cmp": "EDX,3",
+   "jcc": "JNZ",
+   "jtarget": "140106fd1",
+   "access": "-"
+  },
+  {
+   "func": "FUN_140106f60",
+   "addr": "140106ffe",
+   "bytes": "83f803",
+   "cmp": "EAX,3",
+   "jcc": "JNZ",
+   "jtarget": "140107075",
+   "access": "140107010"
+  },
+  {
+   "func": "FUN_140114ac0",
+   "addr": "140114c40",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JA",
+   "jtarget": "140114c65",
+   "access": "-"
+  },
+  {
+   "func": "FUN_140118380",
+   "addr": "140118362",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JG",
+   "jtarget": "14011836e",
+   "access": "-"
+  },
+  {
+   "func": "FUN_14011a020",
+   "addr": "14011a2fe",
+   "bytes": "4883f803",
+   "cmp": "RAX,3",
+   "jcc": "JL",
+   "jtarget": "14011a2f0",
+   "access": "-"
+  },
+  {
+   "func": "FUN_14011a020",
+   "addr": "14011a344",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JNZ",
+   "jtarget": "14011a352",
+   "access": "-"
+  },
+  {
+   "func": "FUN_14011a020",
+   "addr": "14011a352",
+   "bytes": "83f902",
+   "cmp": "ECX,2",
+   "jcc": "JNZ",
+   "jtarget": "14011a375",
+   "access": "-"
+  },
+  {
+   "func": "FUN_14011a020",
+   "addr": "14011a42c",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JLE",
+   "jtarget": "14011a436",
+   "access": "-"
+  },
+  {
+   "func": "FUN_140194bf0",
+   "addr": "140194e26",
+   "bytes": "3c02",
+   "cmp": "AL,2",
+   "jcc": "JNZ",
+   "jtarget": "140194e32",
+   "access": "-"
+  },
+  {
+   "func": "FUN_140199f60",
+   "addr": "14019a2b0",
+   "bytes": "83bb9800000002",
+   "cmp": "dword ptr [RBX + 0x98],2",
+   "jcc": "JNZ",
+   "jtarget": "14019a375",
+   "access": "-"
+  },
+  {
+   "func": "FUN_14019bcd0",
+   "addr": "14019bdbc",
+   "bytes": "4883f903",
+   "cmp": "RCX,3",
+   "jcc": "JL",
+   "jtarget": "14019bdb0",
+   "access": "-"
+  },
+  {
+   "func": "FUN_14019bcd0",
+   "addr": "14019bdf1",
+   "bytes": "83f803",
+   "cmp": "EAX,3",
+   "jcc": "JZ",
+   "jtarget": "14019bdfd",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1401a04e0",
+   "addr": "1401a05f2",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401a060e",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1401a4a00",
+   "addr": "1401a4b12",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JA",
+   "jtarget": "1401a4b2e",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1401a4ab0",
+   "addr": "1401a4b8e",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JA",
+   "jtarget": "1401a4ba8",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1401b0a80",
+   "addr": "1401b0b2d",
+   "bytes": "83bf9400000003",
+   "cmp": "dword ptr [RDI + 0x94],3",
+   "jcc": "JNZ",
+   "jtarget": "1401b0c52",
+   "access": "1401b0b5d"
+  },
+  {
+   "func": "FUN_1401b4270",
+   "addr": "1401b432f",
+   "bytes": "83f802",
+   "cmp": "EAX,2",
+   "jcc": "JGE",
+   "jtarget": "1401b437c",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1401b8890",
+   "addr": "1401b8910",
+   "bytes": "833dd92f7e0001",
+   "cmp": "dword ptr [0x14099b8f0],1",
+   "jcc": "JGE",
+   "jtarget": "1401b892d",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1401b8a10",
+   "addr": "1401b8aa9",
+   "bytes": "48837e7001",
+   "cmp": "qword ptr [RSI + 0x70],1",
+   "jcc": "JBE",
+   "jtarget": "1401b8abe",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1401e8300",
+   "addr": "1401e83b9",
+   "bytes": "83fa01",
+   "cmp": "EDX,1",
+   "jcc": "JNZ",
+   "jtarget": "1401e83e8",
+   "access": "-"
+  },
+  {
+   "func": "FUN_140214180",
+   "addr": "1402149cf",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JNZ",
+   "jtarget": "140214c9f",
+   "access": "1402149eb"
+  },
+  {
+   "func": "FUN_140218f40",
+   "addr": "14021900a",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JNZ",
+   "jtarget": "140219094",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1405a9730",
+   "addr": "1405a97b5",
+   "bytes": "837af001",
+   "cmp": "dword ptr [RDX + -0x10],1",
+   "jcc": "JNZ",
+   "jtarget": "1405a97c7",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1405a9730",
+   "addr": "1405a97d0",
+   "bytes": "837af001",
+   "cmp": "dword ptr [RDX + -0x10],1",
+   "jcc": "JNZ",
+   "jtarget": "1405a97e2",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1405bb680",
+   "addr": "1405bb612",
+   "bytes": "83f801",
+   "cmp": "EAX,1",
+   "jcc": "JNZ",
+   "jtarget": "1405bb63b",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1405f1030",
+   "addr": "1405f1041",
+   "bytes": "83fb01",
+   "cmp": "EBX,1",
+   "jcc": "JA",
+   "jtarget": "1405f114a",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1405f1030",
+   "addr": "1405f10c9",
+   "bytes": "83f802",
+   "cmp": "EAX,2",
+   "jcc": "JNZ",
+   "jtarget": "1405f10e7",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1405f1030",
+   "addr": "1405f10e7",
+   "bytes": "83f803",
+   "cmp": "EAX,3",
+   "jcc": "JNZ",
+   "jtarget": "1405f10f5",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1405f1a60",
+   "addr": "1405f1a9a",
+   "bytes": "833801",
+   "cmp": "dword ptr [RAX],1",
+   "jcc": "JNZ",
+   "jtarget": "1405f1af7",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1405f1a60",
+   "addr": "1405f1ab0",
+   "bytes": "833803",
+   "cmp": "dword ptr [RAX],3",
+   "jcc": "JZ",
+   "jtarget": "1405f1af7",
+   "access": "-"
+  },
+  {
+   "func": "FUN_1405fc7d0",
+   "addr": "1405fc835",
+   "bytes": "83f901",
+   "cmp": "ECX,1",
+   "jcc": "JG",
+   "jtarget": "1405fc83f",
+   "access": "-"
+  },
+  {
+   "func": "FUN_14060fc10",
+   "addr": "14060fd86",
+   "bytes": "837a0401",
+   "cmp": "dword ptr [RDX + 0x4],1",
+   "jcc": "JLE",
+   "jtarget": "14060fe88",
+   "access": "14060fd9b"
+  },
+  {
+   "func": "FUN_14060fc10",
+   "addr": "14060fe0b",
+   "bytes": "83fe01",
+   "cmp": "ESI,1",
+   "jcc": "JNZ",
+   "jtarget": "14060fe65",
+   "access": "-"
+  },
+  {
+   "func": "FUN_140651320",
+   "addr": "1406515ee",
+   "bytes": "4183f901",
+   "cmp": "R9D,1",
+   "jcc": "JZ",
+   "jtarget": "1406515fc",
+   "access": "-"
+  }
+ ],
+ "unguarded": [
+  {
+   "func": "FUN_1400ee9b0",
+   "access": "1400ef525"
+  },
+  {
+   "func": "FUN_140114c00",
+   "access": "140114c45"
+  },
+  {
+   "func": "FUN_1401a0590",
+   "access": "1401a05f9"
+  },
+  {
+   "func": "FUN_1401a4ab0",
+   "access": "1401a4b19"
+  },
+  {
+   "func": "FUN_1401a4b70",
+   "access": "1401a4b9a"
+  },
+  {
+   "func": "FUN_1402632b0",
+   "access": "140263329"
+  },
+  {
+   "func": "FUN_1402632b0",
+   "access": "140263367"
+  },
+  {
+   "func": "FUN_140274a10",
+   "access": "140274a6c"
+  },
+  {
+   "func": "FUN_140274a10",
+   "access": "140274aac"
+  },
+  {
+   "func": "FUN_1405b0420",
+   "access": "1405b050d"
+  },
+  {
+   "func": "FUN_1405f1030",
+   "access": "1405f1089"
+  },
+  {
+   "func": "FUN_1405f1030",
+   "access": "1405f1156"
+  },
+  {
+   "func": "FUN_14060fc10",
+   "access": "14060fd9b"
+  }
+ ]
+}

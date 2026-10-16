@@ -178,6 +178,10 @@ def main():
             {"name": "pobj_count", "base": "pobj", "off": "0x0", "type": "i32"},
             {"name": "split_mode", "rva": f"{0x140B2C5F8 - IMAGE_BASE:#x}", "type": "i32"},
             {"name": "viewport_count", "rva": f"{0x1409581A8 - IMAGE_BASE:#x}", "type": "i32"},
+            # control stacks (static at 0x140ac61c0): per-player stack pointer at +0x58 + i*8, count = first i32
+            *[w for i in range(NEW_SLOTS) for w in (
+                {"name": f"cstack{i}", "rva": f"{0x140AC61C0 + 0x58 + i * 8 - IMAGE_BASE:#x}", "type": "ptr"},
+                {"name": f"cstack{i}_count", "base": f"cstack{i}", "off": "0x0", "type": "i32"})],
             # "System" heap object (static at 0x1409bb8a0): +0x120 free bytes, logged in MB steps by the loader
             {"name": "sysheap_free", "rva": f"{0x1409BB8A0 + 0x120 - IMAGE_BASE:#x}", "type": "mb"},
         ],

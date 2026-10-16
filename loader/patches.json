@@ -113,6 +113,50 @@
    "type": "i32"
   },
   {
+   "name": "cstack0",
+   "rva": "0xac6218",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack0_count",
+   "base": "cstack0",
+   "off": "0x0",
+   "type": "i32"
+  },
+  {
+   "name": "cstack1",
+   "rva": "0xac6220",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack1_count",
+   "base": "cstack1",
+   "off": "0x0",
+   "type": "i32"
+  },
+  {
+   "name": "cstack2",
+   "rva": "0xac6228",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack2_count",
+   "base": "cstack2",
+   "off": "0x0",
+   "type": "i32"
+  },
+  {
+   "name": "cstack3",
+   "rva": "0xac6230",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack3_count",
+   "base": "cstack3",
+   "off": "0x0",
+   "type": "i32"
+  },
+  {
    "name": "sysheap_free",
    "rva": "0x9bb9c0",
    "type": "mb"

@@ -186,6 +186,14 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
 5. **[obs]** `DAT_140b2ef20` is the world-streaming manager (set in `0x14021d460` /
    `0x14021e350`). It holds **two** region slots (`[9]`/`[10]`) with per-player "in region" bytes at
    `slot+8+player`, and swaps slots by player count (`0x1405d6ae0`).
+6. **[obs]** Join-screen cancel `0x1400fe910` releases player 1's device (hardcoded), then runs the
+   same tail as `0x1400e7450`. The join handler's failure path (`0x1400eb923`) also releases
+   player 1.
+7. **[obs]** Vehicle auto-drive `0x14019b110(rides, idx, avatar, start)` picks the *other*
+   player's avatar as `idx == 0 ? slot1 : slot0`. For players 3/4 that is player 1, so it is safe as is.
+8. **[obs]** Avatar-by-class lookup `0x1405bae40` has 3 callers: the pick handler, a paratrooper
+   lookup that already skips player-owned avatars (`0x1400c6270`), and a generic class lookup
+   (`0x140168730`).
 - **[inf]** For P3/P4 the join chain needs a variable player index, not more byte patches: replace
   `0x1400eb6f0` and `0x1400e2490` with reimplementations; keep the avatar registry from handing a
   player-owned avatar to another player; give duplicate characters unique names (`Woody3`).
@@ -206,7 +214,18 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
     stride, room for 8) using that viewport's camera. Scene render `0x1401e9270` walks four
     views (`param_1[0..3]`).
 - **[unk]** How a player's `CameraState` component maps to camera N; whether each viewport's
-  camera uses its own aspect ratio.
+  camera uses its own aspect ratio. Static search was inconclusive (`queries/34`-`36`); settle it
+  at runtime.
+
+### 6a. HUD (`queries/32`-`33`)
+
+- **[obs]** HUD screens form an enum-indexed table at `0x14094e700` (16-byte `{name, flags}`
+  entries): `IPCounter7`, `P1HealthBarHud`, `P2HealthBarHud`, `P1MissionCompassHud`,
+  `P2MissionCompassHud`, `ControllerLayoutHUD`, `NegativeUIScreen`, `P1AmmoMeterHud`, ...
+- **[obs]** Per-player HUD code addresses P1 and P2 explicitly, by name and by fixed slot (e.g.
+  `0x1402091a0` binds the mission compasses to `mgr+0x1a0` and `mgr+0x1f8`), not by player index.
+- **[inf]** Players 3/4 get no HUD rather than a crash. Giving them one means new screen assets
+  (`UI/screens/*.sc`) plus table entries; that is polish for later.
 
 ## 7. Existing patch on the live exe
 

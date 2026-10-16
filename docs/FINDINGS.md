@@ -382,5 +382,23 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   follow audio playback.
 - **[unk]** Whether the job system or async tasks finish in an order that changes gameplay; whether
   any gameplay depends on what is rendered (culling, LOD); where the random nodes get numbers;
-  whether CPU-specific CRT math paths differ between machines. NETCODE.md phase N0 measures this.
+  whether CPU-specific CRT math paths differ between machines. Only the lockstep alternative in
+  NETCODE.md depends on these.
+
+## 9. Running copies side by side (for host/client play, `queries/78`-`80`)
+
+- **[obs] Single instance.** `0x14027e130` creates the named mutex `OctaneApp`; if it already exists
+  (`ERROR_ALREADY_EXISTS`) or access is denied, the game shows "Cannot start Octane Application
+  because another instance is already running." and exits.
+- **[obs] Steam relaunch.** Startup `0x1402839d0` calls `SteamAPI_RestartAppIfNecessary(4049180)`
+  (`0x3dc91c`) at `0x140283a78`, then `SteamInternal_SteamAPI_Init`. A copy started outside Steam
+  is relaunched through Steam.
+- **[obs] Focus.** The window class (registered in `0x1402a5930`, WndProc `0x1402b6d70` ->
+  `0x1402b08f0`) handles `WM_ACTIVATE` by releasing or restoring the cursor clip and re-acquiring
+  input (driver `vt+0x100`); it sets no pause flag. `WM_SIZE` minimise sets flags at `+0x681`-`+0x684`.
+- **[obs] Transforms.** `0x140568b50(node, transform)` sets a node's rotation (quaternion at
+  `+0x40`) and updates a rotated vector at `+0x80`; the placing handler calls it before `vt+0x8`.
+  Avatar position fields still need confirming at runtime.
+- **[obs] Pads** are read through `XINPUT1_4` ordinals 2, 3 and 4 (`XInputGetState`,
+  `XInputSetState`, `XInputGetCapabilities`).
 

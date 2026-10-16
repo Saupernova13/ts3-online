@@ -207,6 +207,18 @@ def main():
     for p in patches:
         groups[p["group"]] = groups.get(p["group"], 0) + 1
     print(f"{a.out}: {len(patches)} patches {groups}")
+    print(write_catalog(a.out))
+
+
+def write_catalog(doc_path):
+    """Regenerate docs/PATCHES.md from the patch document (loaded by path: `python -I` drops the script dir)."""
+    import importlib.util
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    spec = importlib.util.spec_from_file_location("patch_catalog", os.path.join(here, "patch_catalog.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.write(doc_path, os.path.normpath(os.path.join(here, "..", "docs", "PATCHES.md")))
 
 
 if __name__ == "__main__":

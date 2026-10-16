@@ -356,3 +356,31 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   after a `divss xmm3, xmm1` and before a `comiss`.
 - **[inf]** Removes a clamp on a computed ratio (probably aspect ratio or FOV). Not made in this
   repo; purpose unverified.
+
+## 8. Determinism surface (for native netcode, `queries/74`-`77`)
+
+- **[obs] No networking code**: no Winsock or other socket imports (also §1). Steam is linked
+  (`steam_api64.dll`, 7 imports) but only for callbacks/achievements.
+- **[obs] One game clock.** `0x14025a5e0` returns milliseconds from `QueryPerformanceCounter`; the
+  per-frame update `0x14025a470` averages the last 15 frame times from the same source, clamps to
+  0.1 s, and writes the frame delta (`0x14094ecf0`) and a frame counter (`0x1409c2928`).
+- **[obs] A built-in clock override.** Both functions return a stored time (`0x1409c2918`) instead of
+  reading the counter when the byte `0x1409c27b9` is set. Nothing in the exe writes either, so it is
+  a dormant debug or capture mode the loader can turn on and drive frame by frame.
+- **[obs] RNG.** The CRT `rand` has 6 callers (`0x1400c4660` town-person spawn, `0x140189bd0`,
+  `0x140268470`, `0x14046a660`, `0x140522f70`, `0x1407127a0`) and `srand` is never called, so it runs
+  from the CRT's default seed. The UCRT keeps `rand` state per thread. One more generator: an LCG
+  with multiplier `0x19660d` in `0x14070b840`. Engine-level random nodes exist (`RandomIntNode`,
+  `RandomFloatNode`, `Navigate::RandomPointSearch`); their source is not traced yet.
+- **[obs] Concurrency.** Threads come from 2 creators (`0x140250010`, `0x140257bc0`) and fibers from 2
+  (`0x14025a8b0`, `0x14025ae20`): a job system. Asynchronous work exists: `AsyncActorCreator`
+  (`AsyncActorTask`), `ChoreographyNode::AsyncChoreographyTask`, `Navigate::DeferredWorker`, and the
+  world streaming manager.
+- **[obs] Physics is Bullet** (`btCollisionWorld`, `CBulletVehicle`, `CRigidBody`), which repeats
+  exactly given the same step size, inputs and object order on one thread.
+- **[obs]** The game reads FMOD Studio timeline positions (`getTimelinePosition`), so some timing may
+  follow audio playback.
+- **[unk]** Whether the job system or async tasks finish in an order that changes gameplay; whether
+  any gameplay depends on what is rendered (culling, LOD); where the random nodes get numbers;
+  whether CPU-specific CRT math paths differ between machines. NETCODE.md phase N0 measures this.
+

@@ -47,10 +47,11 @@ Loader features this needs: `hook` (entry jump), `call_redirect` (rel32 retarget
 
 ## Native online play
 
-Real netcode instead of streaming: deterministic lockstep, where every PC runs the same 4-player
-game and only pad inputs cross the network. Design, evidence and phases N0-N5 are in
-[NETCODE.md](NETCODE.md). It reuses everything from phases 3-5; the streaming rig below stays as
-the fallback that needs no determinism.
+Real netcode instead of streaming: each person runs their own copy with one local player and full
+screen, one copy hosts, and remote players appear as proxy avatars in slots 1-3 driven by network
+data. The host owns the world. Design and phases H0-H6 are in [NETCODE.md](NETCODE.md); the first
+target is two copies on one PC. It reuses the 4-player work from phases 3-5. The streaming rig
+below stays on file as the fallback.
 
 ## Streaming options (phase 6)
 

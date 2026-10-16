@@ -1,94 +1,100 @@
 # Native online play (design)
 
-Goal: real online co-op for up to 4 players, each on their own PC with their own copy of the game
-and a full screen of their own. No screen streaming. The game has no networking code at all
-(FINDINGS §1, §8), so the netcode lives in our loader.
+Goal: each person runs their own copy of the game with one local player, full screen, no split
+screen. One copy hosts; the others connect to it. In game, everyone sees everyone else and plays
+in the same world. First target: two copies on one PC; the same code then works across a tailnet.
+No screen streaming. The game has no networking code at all (FINDINGS §1, §8), so all of it lives
+in our loader.
 
-## Options
+## Model: host session, owner-driven avatars
 
-| | A. Deterministic lockstep | B. Authoritative host, replicated state | C. Loose sync |
-|---|---|---|---|
-| What crosses the network | each player's pad state, once per frame | positions, animation, AI, physics, pickups, scripts, UI state of every relevant object | player avatars (transform + animation) and a list of key events |
-| What each PC runs | the whole game, identically | the host simulates; clients draw what they are told | its own copy of the world; other players are puppets |
-| Work | make the simulation repeatable, plus a small input layer | serialise and apply state for every gameplay system: years for a game this size | per-system event sync; worlds drift apart, and enemies, carried objects and missions disagree |
-| Fits this project because | 4-player local play already works, so only the pad inputs differ between PCs | - | fallback for free roam (Toy Box) if A cannot be made repeatable |
+```
+ copy A (host)                          copy B (client)
+ +-------------------------+   UDP    +-------------------------+
+ | slot 0: A's player      | <------> | slot 0: B's player      |
+ | slot 1: proxy for B     |          | slot 1: proxy for A     |
+ | world: authoritative    |          | world: follows the host |
+ +-------------------------+          +-------------------------+
+```
 
-Rollback netcode (GGPO-style) would need to save and restore the whole game state every frame;
-the game has no save states and a heap of 1 GB, so it is out. Delay-based lockstep needs none of
-that, at the cost of a few frames of input delay.
+- **Each copy simulates its own player.** Slot 0 is the local player, driven by the local pad as in
+  single player, with the normal full-screen camera.
+- **Remote players are proxy avatars in slots 1-3.** The 4-player work (phases 3-5) already gives
+  real player avatars in those slots, with animation, collision and co-op abilities. On each copy
+  they are driven by network data instead of a local pad:
+  1. the owner's pad input for that frame goes into the proxy's control mapper, so the proxy runs,
+     jumps and attacks through the game's own `PlayerDriver` and animation;
+  2. the owner's position, facing and velocity, sent 30-60 times a second, correct the proxy
+     (blend when close, snap when far), so small differences never build up.
+- **The host owns the world.** Enemies, pickups, doors, missions and level changes are decided on
+  the host and sent to clients as events and corrections; a client that hits an enemy or grabs a
+  pickup sends a request. This part grows system by system.
+- **One view per copy.** The split-screen mode is forced to one viewport showing slot 0, and the
+  2-player behaviours that assume a shared screen are turned off for networked sessions:
+  shared-screen mode (`0x1405f2200`) and regrouping a player who strays too far (the placing
+  handlers, FINDINGS 5e).
 
-**Recommendation: A.** Every PC runs the same 4-player game from the same save, and the loader
-feeds all four players' pads to every PC on the same frame. If the simulation is repeatable, the
-PCs never diverge and no game state ever has to be sent.
+Why proxies in player slots rather than plain NPC puppets: a puppet needs its animation state set
+directly, which means reverse engineering the animation graph. A player-slot proxy animates itself
+from input, and the game already treats it as a player for co-op moves and interactions.
 
-## Why A is plausible here (evidence, FINDINGS §8)
+## What the exe needs (FINDINGS §9)
 
-| Source of divergence | What the exe does | Plan |
+| Need | Finding | Plan |
 |---|---|---|
-| Wall-clock time | one game clock (`0x14025a5e0`, `0x14025a470`) on `QueryPerformanceCounter`, with a dormant override (`0x1409c27b9` + `0x1409c2918`) | turn the override on and advance it by a fixed step per simulated frame: fixed delta time, frame-locked timers |
-| Random numbers | CRT `rand` from 6 call sites, never seeded; an LCG in `0x14070b840`; engine random nodes | hook `rand` with one session PRNG seeded by the host (no per-thread state); trace the other generators |
-| Threads and async work | a job system (2 thread and 2 fiber creators), async actor creation, async choreography, deferred pathfinding, world streaming | find which results gameplay consumes and make them land on a fixed frame (wait for completion at a frame boundary) |
-| Physics | Bullet | repeatable with a fixed step and a fixed object order |
-| Rendering | each PC would draw a different view | every PC draws all 4 views, exactly as local play does, so any culling or LOD-driven logic matches; each PC then shows only its own quarter, scaled to full screen |
-| Loading | load and stream times differ per PC | no PC simulates past a barrier until every PC has finished loading |
-| Audio and video | FMOD timeline reads; Bink cutscenes run on real time | pause the simulation during cutscenes and resume on a barrier; check what the timeline reads feed |
-| Floating point | same exe, x64 SSE on every PC | expected to match; the CRT's CPU-specific math paths are a risk to measure |
-| Menus, pause, joining | all driven by pad input | already repeatable once input is |
+| Two copies on one PC | a named mutex `OctaneApp` refuses a second instance (`0x14027e130`) | the loader gives the mutex a per-process name |
+| Launch outside Steam's single launch | `SteamAPI_RestartAppIfNecessary(4049180)` relaunches through Steam (`0x1402839d0`) | the loader makes it return false; both copies then init the Steam API themselves |
+| Keep running unfocused | the window handler does not pause on deactivation, it only releases the mouse clip (`0x1402b08f0`) | verify in game |
+| Separate pads per copy | the game reads pads through `XInputGetState` (`XINPUT1_4` #2) | per-copy pad mapping in `ts3online.ini` (copy A reads pad 1, copy B pad 2); proxy slots read network state |
+| Separate files per copy | both copies would share the save folder and `ts3online.log` | per-copy log name; a client never writes saves |
+| Remote player avatars | the join flow can spawn and bind avatars for slots 1-3 (`join_request`, pick handler, `bind_joining_avatar`) | bind a proxy without a menu: spawn the class, assign the slot and a virtual pad device |
+| Read and set positions | actor transforms: a set-rotation at `0x140568b50` (96 callers) used by the placing handler; position fields to confirm at runtime | read slot 0's transform every frame; write the proxy's |
+| Single viewport | `SetSplitScreenMode` (`0x1405f4700`), the mode patch point from the quadrants work | force mode 0 in networked sessions |
 
-## Architecture
+## Network
 
-```
- PC 1 (host)                 PC 2..4
- +--------------+  inputs   +--------------+
- | game (4P)    | <-------> | game (4P)    |   same exe, same save, same level
- | loader:      |    UDP    | loader:      |
- |  clock lock  |           |  clock lock  |
- |  XInput hook |           |  XInput hook |
- |  frame gate  |           |  frame gate  |
- +--------------+           +--------------+
-```
-
-- **Input layer.** The game reads pads through `XInputGetState` (`XINPUT1_4` ordinal 2 in its
-  import table). The loader replaces that import: on every PC, pad *k* reports player *k*'s state
-  for the current frame, taken from the local pad on player *k*'s own PC and from the network on
-  the others. The game's own join, menu and control code stays untouched.
-- **Frame gate.** Once per frame (the input dispatch `0x140280b90` runs once per frame), the loader
-  sends the local pad state for frame *N + D* and waits until it has every player's state for frame
-  *N*. *D* is the input delay in frames: about 1-2 on a LAN or tailnet, 3-4 across a region.
-- **Clock lock.** The clock override advances by exactly one frame per gated frame, so delta time,
-  timers and animation steps are identical everywhere, and a slow PC slows everyone instead of
-  diverging.
-- **Desync check.** Every N frames each PC hashes a state digest (avatar positions, gold, slot
-  states, RNG state) and sends it with its input. A mismatch stops the session and logs the frame,
-  first for debugging, later for an automatic resync (everyone reloads the level from the host's
-  save).
-- **Session.** The host picks the save and the level; clients receive the save file, all load it,
-  and play starts on a barrier. Joining mid-session is out of scope at first.
-- **Transport.** UDP between tailnet addresses first (Tailscale handles NAT). Later, Steam
-  networking through the game's own `steam_api64.dll` (`SteamInternal_FindOrCreateUserInterface` is
-  already imported), which would add NAT traversal and friend invites without Tailscale.
-- **Own screen.** Version 1 can show the familiar 4-way split on every PC. Version 2 presents only
-  the local player's quarter, scaled to full screen, with the game still drawing all four (see the
-  rendering row above).
+- **Transport.** UDP in a loader thread. `ts3online.ini`: `net=host:27777` or
+  `net=client:127.0.0.1:27777` (a tailnet address works the same way), plus `name=` and the
+  character class.
+- **Messages.**
+  - Client to host: hello (name, class), per-frame player state (pad input, position, facing,
+    velocity, slot-0 action flags), requests (hit, pickup, interact).
+  - Host to clients: roster (who is in which slot), other players' states relayed, world events,
+    level changes.
+- **Timing.** Each copy runs at its own frame rate and pace. Remote states are buffered for about
+  100 ms and interpolated; nothing waits on the network, so a slow link makes proxies lag, never
+  the local game.
 
 ## Phases
 
 | Phase | Work | Done when |
 |---|---|---|
-| N0 | Replay harness in the loader: clock override on, record every pad state per frame, replay it from the same save, hash state every frame | two runs of 5 minutes in Toy Box on one PC match frame for frame, or the first divergence is found |
-| N1 | Fix each divergence N0 finds (RNG hook, async completion points, streaming and cutscene barriers) | replays match, including level loads and a cutscene |
-| N2 | Cross-PC replay: record on one PC, replay on another | replays match across two different CPUs |
-| N3 | UDP transport and the frame gate, 2 PCs, 4-way split on both | two players finish a Toy Box session over the tailnet without a desync |
-| N4 | 4 PCs; save hand-off and load barrier; own-quarter presentation; desync resync | four players, each full screen |
-| N5 | Input-delay tuning, disconnect handling (a dropped player's avatar leaves), HUD for players 3/4, Steam transport | playable by people other than the author |
+| H0 | Two copies on one PC: mutex and Steam relaunch bypass, per-copy pad mapping, per-copy log, no client saves | both copies run Toy Box side by side, each moved by its own pad |
+| H1 | UDP host and client, hello and roster, heartbeat with round-trip time | the logs show both copies connected |
+| H2 | Ghosts: each copy sends slot 0's transform; the other spawns a proxy in slot 1 and places it every frame | each copy shows the other player moving, in one viewport |
+| H3 | Live proxies: drive the proxy from the owner's input, with position correction | proxies run, jump and attack like the owner |
+| H4 | Networked-session rules: no split screen, no shared-screen mode, no regrouping; both copies follow the host's level | two players play a Toy Box session without either world breaking |
+| H5 | Shared world, system by system: pickups and gold, enemies and NPCs owned by the host, missions, rides and vehicles | both players see the same enemies, pickups and mission state |
+| H6 | Tailnet test between two PCs, then up to 4 players, joining and leaving mid-session | a 4-player session across PCs |
 
-N0 and N1 decide everything: if the game cannot be made repeatable, option C is the fallback for
-free roam.
+H0-H3 reuse what already exists (join and bind hooks, slots 1-3, the controls fix). H5 is the
+long tail: every world system the players can touch needs its own sync rule.
 
 ## Risks
 
-- Unknown nondeterminism in systems not yet read (AI, scripts, particles that touch gameplay).
-- A slow PC slows all four (lockstep runs at the slowest PC's speed).
-- Story levels with scripted two-avatar sequences are untested even locally.
-- Every PC needs the identical game build; a Steam update on one PC breaks the session (the loader
-  already refuses to patch an unknown build, and the session can compare build IDs at connect).
+- **World consistency (H5).** Each copy simulates its own enemies and NPCs until a system is
+  synced, so early builds will show different enemies on each screen. Toy Box free roam
+  tolerates this; story missions do not.
+- **2-player assumptions.** Logic that reacts to slots 1-3 (camera framing, regrouping, HUD,
+  respawn) was written for one shared screen and must be found and gated for networked sessions.
+- **Interactions between players.** Co-op moves (throwing, carrying) happen on two copies with
+  slightly different positions; they need owner rules (whoever starts the move decides it).
+- **Same build everywhere.** Every copy needs the identical game build; the hello message carries
+  the build ID and a mismatch is refused.
+
+## Alternative kept on file
+
+Deterministic lockstep (every copy runs every player and only pad inputs are exchanged) would give
+a perfectly shared world without per-system sync, but every copy has to simulate all players in
+step, wait for the slowest PC, and share pause and menus. The evidence for it is in FINDINGS §8;
+it stays an option for world sync if H5 turns out larger than expected.

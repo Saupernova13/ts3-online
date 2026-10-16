@@ -5,8 +5,8 @@ player on their own PC and screen.**
 
 The PC release (*Toy Story 3 Complete Edition*, Steam app 4049180) has 2-player local split
 screen and no network play. This project raises the player limit to 4 with a runtime patch loader,
-and is building native online play on top of it: lockstep netcode in the loader, with only pad
-inputs crossing the network. No game files are included or modified; everything is applied in memory to
+and is building native online play on top of it: each player runs their own copy, one copy
+hosts, and everyone shares one world. No game files are included or modified; everything is applied in memory to
 your own install.
 
 ## Status
@@ -20,7 +20,7 @@ your own install.
 | Force 4 quarters for streaming (`enable=quadrants`) | built, not yet tested in game |
 | Borderless window placement (`window=`) | built, not yet tested in game |
 | HUD for players 3/4 (health, ammo, compass) | missing |
-| Native online play (lockstep netcode, no streaming) | designed ([NETCODE.md](docs/NETCODE.md)) |
+| Native online play (host and clients, one player per copy, no streaming) | designed ([NETCODE.md](docs/NETCODE.md)) |
 | Streaming each quarter to a remote player (fallback) | designed, not built ([PLAN, phase 6](docs/PLAN.md)) |
 
 Tested in Toy Box with four virtual Xbox 360 pads. Story levels have not been played with 4
@@ -36,12 +36,11 @@ players yet; their scripts assume at most two avatars, so expect rough edges the
    controls and level-teardown code that hardcodes player 1 with Rust functions that take the
    player index. The renderer and input already handle 4 views and 4 pads. Every change is listed
    in [docs/PATCHES.md](docs/PATCHES.md).
-3. **Online (planned).** Every player runs the game on their own PC. The loader keeps all copies
-   in lockstep: each frame it sends the local pad state to the others and feeds all four players'
-   pads into every copy, with the game clock locked to the frame count, so the copies never
-   diverge and only inputs cross the network. See [docs/NETCODE.md](docs/NETCODE.md). Streaming
-   each player's quarter of one host's screen ([docs/PLAN.md](docs/PLAN.md), phase 6) is the
-   fallback.
+3. **Online (planned).** Every player runs their own copy with one local player, full screen.
+   One copy hosts and the others connect to it. Remote players appear in your world as proxy
+   avatars in player slots 2-4, driven by their owner's input and position over UDP, and the host
+   owns the shared world. See [docs/NETCODE.md](docs/NETCODE.md). Streaming each player's quarter
+   of one host's screen ([docs/PLAN.md](docs/PLAN.md), phase 6) is the fallback.
 
 ## Requirements
 
@@ -154,7 +153,7 @@ Query files are numbered in the order they were run; their commands are listed a
 |---|---|
 | [docs/FINDINGS.md](docs/FINDINGS.md) | what the exe does, with addresses and evidence tags |
 | [docs/PATCHES.md](docs/PATCHES.md) | every runtime patch and hook (generated) |
-| [docs/NETCODE.md](docs/NETCODE.md) | native online play: lockstep design, evidence, phases |
+| [docs/NETCODE.md](docs/NETCODE.md) | native online play: host/client design, phases |
 | [docs/PLAN.md](docs/PLAN.md) | approach, phases, streaming rig design, risks |
 | [docs/PROGRESS.md](docs/PROGRESS.md) | dated work log |
 | [docs/TESTING.md](docs/TESTING.md) | in-game test route, virtual pads, crash triage |
@@ -174,7 +173,7 @@ work/            Ghidra project, query output, test evidence (gitignored)
 
 ## Contributing
 
-Issues and pull requests are welcome, especially determinism findings for the netcode, HUD
+Issues and pull requests are welcome, especially world-sync work for the netcode, HUD
 screens for players 3/4, and story-level testing.
 
 - Record each discovery in `docs/FINDINGS.md` with its address and an `[obs]`/`[inf]`/`[unk]` tag,

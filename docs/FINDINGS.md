@@ -117,14 +117,39 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   slot ctor/dtor element count (expected `2` in the vector ctor at `0x140019e34` and dtor at
   `0x140757bd6`).
 
+### 3b. Relocation details (`queries/07`, `queries/08`)
+
+- **[obs]** The slots are built by `_eh_vector_constructor_iterator_(mgr+0x198, 0x58, 2, ctor
+  0x14059aac0, dtor 0x14059d200)` in the static ctor (`MOV R8D, 2` at `0x140019e2e`) and torn down by
+  the matching destructor iterator in the atexit dtor (`0x140757bd0`).
+- **[obs]** 66 RIP-relative instructions address the object (static ctor, atexit dtor, setup);
+  `queries/08` lists them and `tools/gen_patches.py` turns them into `rip_reloc` patches.
+- **[obs]** Exe identity for the loader: TimeDateStamp `0x6abf29b6`, SizeOfImage `0xbdc000`,
+  DllCharacteristics `0x8160` (ASLR + high-entropy VA, no CFG, no SteamStub section).
+- **[obs]** `FUN_1402632b0` / `FUN_140274a10` use a 0x58 stride on an unrelated dynamic array; not
+  player code.
+
 ## 4. Input handles 4 pads
 
 - **[obs]** `XInputInputDriver` (vftable `0x1407bccf8`, ctor `0x140279780(pad index)`, stored at
   `driver+0x2d0`). Device enumeration in `0x14027ea20` and `0x14027b500` loops pad indices
   `0..3` (`< 4`) and caps devices at 11 (`< 0xb`). Poll: `0x14027c000` (`XInputGetState`).
-- **[obs]** `DAT_140ac5380` vtable `+0x88` is called with a player index when a player leaves
-  (releases that player's controller, **[inf]**).
-- **[unk]** How pads are bound to players 0/1 at join time (`ControlMapper` component, join-in screen).
+- **[obs]** `DAT_140ac5380` is a `WindowsSystemInputDriver` (0x508 bytes, ctor `0x140279430`,
+  created in `0x14027e490`). Player -> device map at `+0x4b8` with **11** entries, count at `+0x4e4`.
+  Vtable methods (all loop to 11, no 2-player limit):
+
+  | slot | fn | does |
+  |---|---|---|
+  | `+0x70` | - | controller object for player i |
+  | `+0x78` | `0x140282e50` | clear all assignments |
+  | `+0x80` | `0x14027fec0` | assign(player, device); special case for player 1 at controller `+0x270` |
+  | `+0x88` | `0x140282ea0` | release(player) |
+  | `+0x90` | `0x14027d1c0` | is player assigned |
+  | `+0xa0` | `0x140282f60` | is device assigned |
+  | `+0xa8` | `0x14027dde0` | device of player |
+  | `+0xd0` | `0x14027de10` | assigned count |
+  | `+0xd8` | `0x14027ddb0` | first free player index |
+  | `+0xe0` | `0x14027de70` | player of device |
 
 ## 5. Game layer assumes 2 players
 
@@ -138,11 +163,50 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   count or networking: split screen is entirely engine-side.
 - **[unk]** Whether story missions or Toy Box scripts break with more than 2 players.
 
+### 5a. Join flow (`queries/09`-`queries/19`)
+
+1. **[obs]** An event callback `0x14021fdb0(_, pad)` calls the join handler only while
+   `player_count < 2`.
+2. **[obs]** Join handler `0x1400eb6f0(pad)`: refuses if P1's avatar is in a no-join state or the
+   manager says no (`0x1405ce0e0`), bails if `input->count() >= 2` (`CMP EAX,2 ; JNC` at
+   `0x1400eb782`), then `input->assign(1, pad)` with a **hardcoded player index 1**
+   (`MOV EDX,1` at `0x1400eb798`). It opens `ScreenJoinIn`, or `ScreenVerifyRestartLevel` in 15
+   story levels, and releases player 1's pad if the screen fails to open.
+3. **[obs]** `ScreenJoinIn` (vftable `0x140780330`): `0x14011b4d0` builds the menu and hides P1's
+   character. The pick handler `0x140104190` maps Woody/Buzz/Jessie to an avatar named
+   `Woody2`/`Buzz2`/`Jessie2`. It reuses an existing avatar of that class if one exists
+   (`0x1405bae40`, which scans the 16-entry avatar registry at `mgr+0x10` **without checking
+   whether it already belongs to a player**). Otherwise it spawns one (`0x1405af7e0` sync /
+   `0x1405af9e0` async with callback `0x1400dbfe0`) at P1's position or the `StartPosition_P2_<level>`
+   anchor.
+4. **[obs]** Bind `0x1400e2490(avatar, level_info, start)`: `assign_avatar(mgr, 1, avatar)`
+   (`0x1405f1030`), a `JoiningPlayer1Avatar` special case that swaps in `mgr+0x1f8`,
+   `0x14019b110(DAT_14099b8b0, 1, ...)` (auto-drive onto a vehicle) and
+   `0x1405d6ae0(DAT_140b2ef20, 1, level_info, 0)`. **Player index 1 is hardcoded throughout.**
+5. **[obs]** `DAT_140b2ef20` is the world-streaming manager (set in `0x14021d460` /
+   `0x14021e350`). It holds **two** region slots (`[9]`/`[10]`) with per-player "in region" bytes at
+   `slot+8+player`, and swaps slots by player count (`0x1405d6ae0`).
+- **[inf]** For P3/P4 the join chain needs a variable player index, not more byte patches: replace
+  `0x1400eb6f0` and `0x1400e2490` with reimplementations; keep the avatar registry from handing a
+  player-owned avatar to another player; give duplicate characters unique names (`Woody3`).
+- **[unk]** How the world-streaming manager behaves with 3-4 players (two region slots), which
+  viewport each player's camera renders to, and the per-player HUD.
+
 ## 6. Rendering and window
 
 - **[obs]** `-dxresolution WxH` is parsed with `strtok` (`0x1402a5930`); the window is created
   with style `0xca0000` (caption, system menu, minimise; not resizable).
-- **[unk]** Whether each viewport's camera uses its own viewport aspect ratio.
+- **[obs] The renderer is built for 4 views** (`queries/20`-`22`):
+  - `0x1401f7bd0(rects, n)` copies split-mode rects into the viewport table at `0x1409aac40`
+    (0x20 per entry, exactly 4 entries before other fields at `+0x80`) and sets the count at
+    `0x14094e294`.
+  - Init `0x1401f82e0` (called from `0x14021d460`) creates four cameras, `camera`, `camera 1`,
+    `camera 2`, `camera 3`, at `entry+0x18`.
+  - The frame setup `0x1401f7f20` turns each viewport into a render pass (`0x14099bd00`, 0x40
+    stride, room for 8) using that viewport's camera. Scene render `0x1401e9270` walks four
+    views (`param_1[0..3]`).
+- **[unk]** How a player's `CameraState` component maps to camera N; whether each viewport's
+  camera uses its own aspect ratio.
 
 ## 7. Existing patch on the live exe
 

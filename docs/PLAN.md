@@ -34,6 +34,17 @@ Native netcode is out (see FINDINGS §1). Instead:
 4. Move `+0x248` -> `+0x2f8` and `+0x250` -> `+0x300` at their 12 instruction sites.
 5. Apply the 110 mechanical bound patches; hand-review the 39 + 13 others and the 9 `count == 2` tests.
 
+## Phase 4 approach: replace functions, not bytes
+
+Game logic with a hardcoded player index (join handler `0x1400eb6f0`, avatar bind `0x1400e2490`)
+is reimplemented in Rust from the decompiled code, with the player index as a variable. The
+loader overwrites the original entry with `mov rax, imm64; jmp rax`; the replacement calls back
+into game functions through typed pointers at `module_base + rva`. Call sites that need a
+different callee (e.g. the avatar registry lookup `0x1405bae40` in the pick handler) get their
+rel32 retargeted to a stub allocated near the module.
+
+Loader features this needs: `hook` (entry jump), `call_redirect` (rel32 retarget via near stub).
+
 ## Streaming options (phase 6)
 
 | Option | How | Cost |

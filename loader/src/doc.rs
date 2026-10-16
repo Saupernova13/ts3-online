@@ -47,6 +47,8 @@ struct RawPatch {
     len: Option<usize>,
     disp_pos: Option<usize>,
     target_off: Option<String>,
+    mode: Option<String>,
+    hook: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,9 +80,20 @@ pub struct Watch {
     pub ty: Ty,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HookMode {
+    /// Overwrite the function entry with a jump to the hook.
+    Entry,
+    /// Like Entry, through a thunk that passes the caller's return address in R8.
+    EntryCaller,
+    /// Replace an inline block with a call to the hook.
+    Call,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
     Bytes(Vec<u8>),
+    Hook { mode: HookMode, name: String },
     RipReloc { len: usize, disp_pos: usize, target_off: u64 },
 }
 
@@ -129,6 +142,23 @@ fn convert_patch(p: RawPatch) -> Result<Patch, String> {
                 return Err(err("len/disp_pos inconsistent with orig"));
             }
             Op::RipReloc { len, disp_pos, target_off }
+        }
+        "hook" => {
+            let mode = match p.mode.as_deref() {
+                Some("entry") => HookMode::Entry,
+                Some("entry_caller") => HookMode::EntryCaller,
+                Some("call") => HookMode::Call,
+                m => return Err(err(&format!("bad hook mode {m:?}"))),
+            };
+            let name = p.hook.clone().ok_or_else(|| err("missing hook name"))?;
+            let ok = match mode {
+                HookMode::Call => orig.len() >= 12,
+                _ => orig.len() == 12,
+            };
+            if !ok {
+                return Err(err("orig length does not fit the hook mode"));
+            }
+            Op::Hook { mode, name }
         }
         k => return Err(err(&format!("unknown kind {k:?}"))),
     };
@@ -191,6 +221,10 @@ mod tests {
         assert_eq!(d.relocate.new_size, 0x400);
         let rip = d.patches.iter().filter(|p| matches!(p.op, Op::RipReloc { .. })).count();
         assert_eq!(rip, 65);
+        let hooks: Vec<_> = d.patches.iter().filter(|p| matches!(p.op, Op::Hook { .. })).collect();
+        assert_eq!(hooks.len(), 4);
+        assert!(hooks.iter().any(|p| matches!(&p.op, Op::Hook { mode: HookMode::Call, name } if name == "release_joining")));
+        assert!(d.watch.iter().any(|w| w.name == "pobj_count"));
         assert!(d.watch.iter().any(|w| w.name == "mgr" && w.src == Source::Rva(0xb2ef50)));
     }
 

@@ -1,5 +1,5 @@
 //! Pure patch logic: verify everything, compute every write, then apply.
-use crate::doc::{Op, Patch};
+use crate::doc::{HookMode, Op, Patch};
 use crate::hex;
 
 /// Process memory as seen by the patcher (a real process, or a byte vector in tests).
@@ -25,9 +25,69 @@ pub fn remap_copy(old: &[u8], new_size: usize, tail_start: usize, tail_shift: us
     Ok(out)
 }
 
-/// The bytes a patch writes, given the module base and relocation buffer.
-pub fn patch_bytes(p: &Patch, module_base: u64, buffer: u64) -> Result<Vec<u8>, String> {
+/// Resolves a hook to the address its patch should jump or call to (for `entry_caller`, the thunk).
+pub type Resolver<'a> = &'a dyn Fn(HookMode, &str) -> Option<u64>;
+
+/// Thunk for `entry_caller`: `mov r8,[rsp]; mov rax,imm64; jmp rax`.
+pub fn thunk_bytes(target: u64) -> Vec<u8> {
+    let mut b = vec![0x4c, 0x8b, 0x04, 0x24, 0x48, 0xb8];
+    b.extend_from_slice(&target.to_le_bytes());
+    b.extend_from_slice(&[0xff, 0xe0]);
+    b
+}
+
+/// `mov rax,imm64` followed by `jmp rax` (entry) or `call rax` (call).
+fn mov_rax_then(target: u64, op: [u8; 2]) -> Vec<u8> {
+    let mut b = vec![0x48, 0xb8];
+    b.extend_from_slice(&target.to_le_bytes());
+    b.extend_from_slice(&op);
+    b
+}
+
+/// Fills `n` bytes with multi-byte NOPs.
+fn nops(mut n: usize) -> Vec<u8> {
+    const NOPS: [&[u8]; 9] = [
+        &[0x90],
+        &[0x66, 0x90],
+        &[0x0f, 0x1f, 0x00],
+        &[0x0f, 0x1f, 0x40, 0x00],
+        &[0x0f, 0x1f, 0x44, 0x00, 0x00],
+        &[0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00],
+        &[0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00],
+        &[0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+        &[0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+    ];
+    let mut out = Vec::with_capacity(n);
+    while n > 0 {
+        let k = n.min(9);
+        out.extend_from_slice(NOPS[k - 1]);
+        n -= k;
+    }
+    out
+}
+
+/// The bytes a patch writes, given the module base, relocation buffer and hook resolver.
+pub fn patch_bytes(p: &Patch, module_base: u64, buffer: u64, resolve: Resolver) -> Result<Vec<u8>, String> {
     match &p.op {
+        Op::Hook { mode, name } => {
+            let target = resolve(*mode, name).ok_or_else(|| format!("patch {}: unknown hook {name:?}", p.id))?;
+            let mut b = match mode {
+                HookMode::Entry | HookMode::EntryCaller => {
+                    if p.orig.len() != 12 {
+                        return Err(format!("patch {}: entry hook needs 12 bytes", p.id));
+                    }
+                    mov_rax_then(target, [0xff, 0xe0])
+                }
+                HookMode::Call => {
+                    if p.orig.len() < 12 {
+                        return Err(format!("patch {}: call hook needs >= 12 bytes", p.id));
+                    }
+                    mov_rax_then(target, [0xff, 0xd0])
+                }
+            };
+            b.extend(nops(p.orig.len() - b.len()));
+            Ok(b)
+        }
         Op::Bytes(new) => {
             assert_eq!(new.len(), p.orig.len(), "patch {}: length", p.id);
             Ok(new.clone())
@@ -44,8 +104,8 @@ pub fn patch_bytes(p: &Patch, module_base: u64, buffer: u64) -> Result<Vec<u8>, 
 }
 
 /// True if every rip_reloc patch reaches `buffer` with an i32 displacement.
-pub fn all_fit(patches: &[Patch], module_base: u64, buffer: u64) -> bool {
-    patches.iter().all(|p| patch_bytes(p, module_base, buffer).is_ok())
+pub fn all_fit(patches: &[Patch], module_base: u64, buffer: u64, resolve: Resolver) -> bool {
+    patches.iter().all(|p| patch_bytes(p, module_base, buffer, resolve).is_ok())
 }
 
 /// Verifies all sites against `orig`; returns one message per mismatch.
@@ -74,6 +134,7 @@ pub fn apply(
     module_base: u64,
     buffer: u64,
     patches: &[Patch],
+    resolve: Resolver,
 ) -> Result<Vec<(String, usize)>, Vec<String>> {
     let bad = verify(mem, module_base, patches);
     if !bad.is_empty() {
@@ -82,7 +143,7 @@ pub fn apply(
     let mut writes = Vec::with_capacity(patches.len());
     let mut errs = Vec::new();
     for p in patches {
-        match patch_bytes(p, module_base, buffer) {
+        match patch_bytes(p, module_base, buffer, resolve) {
             Ok(b) => writes.push((p, b)),
             Err(e) => errs.push(e),
         }
@@ -154,6 +215,74 @@ pub mod tests {
         }
     }
 
+    fn no_hooks(_: HookMode, _: &str) -> Option<u64> {
+        None
+    }
+
+    fn any_hook(_: HookMode, _: &str) -> Option<u64> {
+        Some(0x1122_3344_5566_7788)
+    }
+
+    fn hook_patch(mode: HookMode, len: usize) -> Patch {
+        Patch {
+            id: "h".into(),
+            group: "hooks".into(),
+            rva: 0,
+            orig: vec![0xcc; len],
+            op: Op::Hook { mode, name: "f".into() },
+        }
+    }
+
+    #[test]
+    fn hook_encodings() {
+        let imm = [0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11];
+        let entry = patch_bytes(&hook_patch(HookMode::Entry, 12), 0, 0, &any_hook).unwrap();
+        let mut want = vec![0x48, 0xb8];
+        want.extend_from_slice(&imm);
+        want.extend_from_slice(&[0xff, 0xe0]);
+        assert_eq!(entry, want);
+        // entry_caller jumps like entry (to the thunk the resolver returns)
+        assert_eq!(patch_bytes(&hook_patch(HookMode::EntryCaller, 12), 0, 0, &any_hook).unwrap(), want);
+
+        let call = patch_bytes(&hook_patch(HookMode::Call, 21), 0, 0, &any_hook).unwrap();
+        assert_eq!(call.len(), 21);
+        assert_eq!(&call[..2], &[0x48, 0xb8]);
+        assert_eq!(&call[2..10], &imm);
+        assert_eq!(&call[10..12], &[0xff, 0xd0]);
+        assert_eq!(&call[12..], &[0x66, 0x0f, 0x1f, 0x84, 0, 0, 0, 0, 0]);
+        // exactly 12 bytes: no padding; 25 bytes pads 9 + 4
+        assert_eq!(patch_bytes(&hook_patch(HookMode::Call, 12), 0, 0, &any_hook).unwrap().len(), 12);
+        assert_eq!(patch_bytes(&hook_patch(HookMode::Call, 25), 0, 0, &any_hook).unwrap().len(), 25);
+    }
+
+    #[test]
+    fn thunk_encoding() {
+        let t = thunk_bytes(0x1122_3344_5566_7788);
+        assert_eq!(&t[..6], &[0x4c, 0x8b, 0x04, 0x24, 0x48, 0xb8]);
+        assert_eq!(&t[6..14], &0x1122_3344_5566_7788u64.to_le_bytes());
+        assert_eq!(&t[14..], &[0xff, 0xe0]);
+    }
+
+    #[test]
+    fn hook_errors() {
+        assert!(patch_bytes(&hook_patch(HookMode::Entry, 11), 0, 0, &any_hook).is_err());
+        assert!(patch_bytes(&hook_patch(HookMode::Call, 11), 0, 0, &any_hook).is_err());
+        assert!(patch_bytes(&hook_patch(HookMode::Entry, 12), 0, 0, &no_hooks).is_err());
+    }
+
+    #[test]
+    fn unknown_hook_applies_nothing() {
+        let mut m = mem();
+        m.data[0x30..0x3c].copy_from_slice(&[0xcc; 12]);
+        let mut ps = patches();
+        ps.push(Patch { rva: 0x30, ..hook_patch(HookMode::Entry, 12) });
+        let before = m.data.clone();
+        assert!(apply(&mut m, 0x1000, 0x5000, &ps, &no_hooks).is_err());
+        assert_eq!(m.data, before);
+        assert!(apply(&mut m, 0x1000, 0x5000, &ps, &any_hook).is_ok());
+        assert_eq!(&m.data[0x30..0x32], &[0x48, 0xb8]);
+    }
+
     fn patches() -> Vec<Patch> {
         vec![
             Patch { id: "a".into(), group: "g1".into(), rva: 0x10, orig: vec![1, 2], op: Op::Bytes(vec![3, 4]) },
@@ -197,7 +326,7 @@ pub mod tests {
     #[test]
     fn apply_writes_and_counts() {
         let mut m = mem();
-        let counts = apply(&mut m, 0x1000, 0x5000, &patches()).unwrap();
+        let counts = apply(&mut m, 0x1000, 0x5000, &patches(), &no_hooks).unwrap();
         assert_eq!(counts, vec![("g1".to_string(), 1), ("g2".to_string(), 1)]);
         assert_eq!(&m.data[0x10..0x12], &[3, 4]);
         let d = i32::from_le_bytes(m.data[0x23..0x27].try_into().unwrap());
@@ -210,7 +339,7 @@ pub mod tests {
         m.data[0x10] = 9;
         m.data[0x20] = 9;
         let before = m.data.clone();
-        let errs = apply(&mut m, 0x1000, 0x5000, &patches()).unwrap_err();
+        let errs = apply(&mut m, 0x1000, 0x5000, &patches(), &no_hooks).unwrap_err();
         assert_eq!(errs.len(), 2);
         assert_eq!(m.data, before);
     }
@@ -219,10 +348,10 @@ pub mod tests {
     fn overflow_applies_nothing() {
         let mut m = mem();
         let before = m.data.clone();
-        assert!(apply(&mut m, 0x1000, 0x1_0000_0000_0000, &patches()).is_err());
+        assert!(apply(&mut m, 0x1000, 0x1_0000_0000_0000, &patches(), &no_hooks).is_err());
         assert_eq!(m.data, before);
-        assert!(!all_fit(&patches(), 0x1000, 0x1_0000_0000_0000));
-        assert!(all_fit(&patches(), 0x1000, 0x5000));
+        assert!(!all_fit(&patches(), 0x1000, 0x1_0000_0000_0000, &no_hooks));
+        assert!(all_fit(&patches(), 0x1000, 0x5000, &no_hooks));
     }
 
     #[test]
@@ -230,7 +359,7 @@ pub mod tests {
         let mut m = mem();
         let before = m.data.clone();
         m.fail_write_at = Some(0x1020);
-        assert!(apply(&mut m, 0x1000, 0x5000, &patches()).is_err());
+        assert!(apply(&mut m, 0x1000, 0x5000, &patches(), &no_hooks).is_err());
         assert_eq!(m.data, before);
     }
 
@@ -243,7 +372,7 @@ pub mod tests {
             let o = p.rva as usize;
             m.data[o..o + p.orig.len()].copy_from_slice(&p.orig);
         }
-        let counts = apply(&mut m, 0x1_4000_0000, 0x1_3000_0000, &d.patches).unwrap();
+        let counts = apply(&mut m, 0x1_4000_0000, 0x1_3000_0000, &d.patches, &any_hook).unwrap();
         assert_eq!(counts.iter().map(|(_, n)| n).sum::<usize>(), d.patches.len());
     }
 

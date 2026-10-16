@@ -39,6 +39,13 @@ pub unsafe fn rd_i32(addr: u64) -> i32 {
     std::ptr::read_unaligned(addr as *const i32)
 }
 
+pub unsafe fn wr_i32(addr: u64, v: i32) {
+    std::ptr::write_unaligned(addr as *mut i32, v)
+}
+
+/// Player-index field at the start of each manager slot; level setup only fills slots 0 and 1.
+pub const SLOT_INDEX_BASE: u64 = 0x198;
+
 /// Value of a game global (a pointer stored at the given VA).
 pub unsafe fn global(v: u64) -> u64 {
     rd_u64(va(v))

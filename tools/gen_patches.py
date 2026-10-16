@@ -170,6 +170,8 @@ def main():
             {"name": "split_vertical", "base": "mgr", "off": f"{remap(0x248):#x}", "type": "u8"},
             *[{"name": f"slot{i}_avatar", "base": "mgr", "off": f"{SLOT_BASE + 8 + i * SLOT_SIZE:#x}", "type": "ptr"}
               for i in range(NEW_SLOTS)],
+            *[{"name": f"slot{i}_index", "base": "mgr", "off": f"{SLOT_BASE + i * SLOT_SIZE:#x}", "type": "i32"}
+              for i in range(NEW_SLOTS)],
             {"name": "input", "rva": f"{0x140AC5380 - IMAGE_BASE:#x}", "type": "ptr"},
             {"name": "input_count", "base": "input", "off": "0x4e4", "type": "i32"},
             *[{"name": f"input_dev{i}", "base": "input", "off": f"{0x4B8 + 4 * i:#x}", "type": "i32"}

@@ -56,6 +56,30 @@
    "type": "ptr"
   },
   {
+   "name": "slot0_index",
+   "base": "mgr",
+   "off": "0x198",
+   "type": "i32"
+  },
+  {
+   "name": "slot1_index",
+   "base": "mgr",
+   "off": "0x1f0",
+   "type": "i32"
+  },
+  {
+   "name": "slot2_index",
+   "base": "mgr",
+   "off": "0x248",
+   "type": "i32"
+  },
+  {
+   "name": "slot3_index",
+   "base": "mgr",
+   "off": "0x2a0",
+   "type": "i32"
+  },
+  {
    "name": "input",
    "rva": "0xac5380",
    "type": "ptr"

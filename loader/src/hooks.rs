@@ -44,6 +44,12 @@ pub unsafe extern "system" fn bind_joining_avatar(avatar: u64, level_info: u64, 
     let idx = joining_index();
     let mgr = global(MGR_PTR);
     log!("hook bind_joining_avatar avatar={avatar:#x} level_info={level_info:#x} start={start:#x} idx={idx}");
+    // slots 2/3 keep the ctor's -1; slot init would then drain control stack -1 forever (FINDINGS 5b)
+    let slot_index = mgr + SLOT_INDEX_BASE + idx as u64 * SLOT_STRIDE;
+    if rd_i32(slot_index) == -1 {
+        wr_i32(slot_index, idx as i32);
+        log!("hook bind_joining_avatar set slot {idx} index (was -1)");
+    }
     assign_avatar(mgr, idx, avatar);
     ev5(global(EVENTS), va(0x1_4077_1540), 0, 0, actor_id(avatar)); // "DeactivateGlow"
 

@@ -56,6 +56,53 @@
    "type": "ptr"
   },
   {
+   "name": "input",
+   "rva": "0xac5380",
+   "type": "ptr"
+  },
+  {
+   "name": "input_count",
+   "base": "input",
+   "off": "0x4e4",
+   "type": "i32"
+  },
+  {
+   "name": "input_dev0",
+   "base": "input",
+   "off": "0x4b8",
+   "type": "i32"
+  },
+  {
+   "name": "input_dev1",
+   "base": "input",
+   "off": "0x4bc",
+   "type": "i32"
+  },
+  {
+   "name": "input_dev2",
+   "base": "input",
+   "off": "0x4c0",
+   "type": "i32"
+  },
+  {
+   "name": "input_dev3",
+   "base": "input",
+   "off": "0x4c4",
+   "type": "i32"
+  },
+  {
+   "name": "pobj",
+   "base": "mgr",
+   "off": "0xd8",
+   "type": "ptr"
+  },
+  {
+   "name": "pobj_count",
+   "base": "pobj",
+   "off": "0x0",
+   "type": "i32"
+  },
+  {
    "name": "split_mode",
    "rva": "0xb2c5f8",
    "type": "i32"
@@ -1987,6 +2034,46 @@
    "new": "89c2488b0dec9b9d00488b01448bc60f1f00",
    "kind": "bytes",
    "note": "join handler: assign(1, pad) -> assign(free_index, pad): MOV EDX,EAX; MOV RCX,[input] (disp re-encoded); MOV RAX,[RCX]; MOV R8D,ESI; NOP3"
+  },
+  {
+   "id": "hook_bind_1400e2490",
+   "group": "hooks",
+   "rva": "0xe2490",
+   "orig": "48895c241048896c24185741",
+   "kind": "hook",
+   "mode": "entry",
+   "hook": "bind_joining_avatar",
+   "note": "bind(avatar, level_info, start): Rust mirror with the joining player's index instead of 1"
+  },
+  {
+   "id": "hook_cancel_1400fe910",
+   "group": "hooks",
+   "rva": "0xfe910",
+   "orig": "40534883ec20488bd9ba0100",
+   "kind": "hook",
+   "mode": "entry",
+   "hook": "join_cancel",
+   "note": "ScreenJoinIn cancel: release the joining index (not 1), then the shared tail 0x1400e7450"
+  },
+  {
+   "id": "hook_lookup_1405bae40",
+   "group": "hooks",
+   "rva": "0x5bae40",
+   "orig": "48895c240848896c24104889",
+   "kind": "hook",
+   "mode": "entry_caller",
+   "hook": "find_avatar_by_class",
+   "note": "avatar-by-class lookup: unchanged except calls from the pick handler skip player-owned avatars"
+  },
+  {
+   "id": "hook_joinfail_1400eb923",
+   "group": "hooks",
+   "rva": "0xeb923",
+   "orig": "488b0d569a9d00488b01ba01000000ff9088000000",
+   "kind": "hook",
+   "mode": "call",
+   "hook": "release_joining",
+   "note": "join handler failure path: release(1) -> release(joining index)"
   }
  ]
 }

@@ -18,6 +18,20 @@
    "new":  "89c2488b0dec9b9d00488b01448bc60f1f00",
    "note": "join handler: assign(1, pad) -> assign(free_index, pad): MOV EDX,EAX; MOV RCX,[input] (disp re-encoded); MOV RAX,[RCX]; MOV R8D,ESI; NOP3"}
  ],
+ "hooks": [
+  {"id": "hook_bind_1400e2490", "group": "hooks", "va": "0x1400e2490", "mode": "entry", "hook": "bind_joining_avatar",
+   "orig": "48895c241048896c24185741",
+   "note": "bind(avatar, level_info, start): Rust mirror with the joining player's index instead of 1"},
+  {"id": "hook_cancel_1400fe910", "group": "hooks", "va": "0x1400fe910", "mode": "entry", "hook": "join_cancel",
+   "orig": "40534883ec20488bd9ba0100",
+   "note": "ScreenJoinIn cancel: release the joining index (not 1), then the shared tail 0x1400e7450"},
+  {"id": "hook_lookup_1405bae40", "group": "hooks", "va": "0x1405bae40", "mode": "entry_caller", "hook": "find_avatar_by_class",
+   "orig": "48895c240848896c24104889",
+   "note": "avatar-by-class lookup: unchanged except calls from the pick handler skip player-owned avatars"},
+  {"id": "hook_joinfail_1400eb923", "group": "hooks", "va": "0x1400eb923", "mode": "call", "hook": "release_joining",
+   "orig": "488b0d569a9d00488b01ba01000000ff9088000000",
+   "note": "join handler failure path: release(1) -> release(joining index)"}
+ ],
  "deferred": [
   {"va": "0x1400eb92d", "note": "join handler failure path releases player 1, not the new index; rare (join screen failed to open)"},
   {"va": "0x1400ef525", "note": "FUN_1400ee9b0 indexes slots with R14 (another player's index?), no guard; check at runtime"},

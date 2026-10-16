@@ -126,9 +126,20 @@ def main():
                 note=f"{cls}: CMP {e['cmp']} {e['jcc']} in {e['func']}")
 
     # 5. hand-reviewed patches the classifiers cannot find
-    for m in json.load(open(a.manual))["patches"]:
+    manual = json.load(open(a.manual))
+    for m in manual["patches"]:
         add(m["id"], m["group"], int(m["va"], 16), bytes.fromhex(m["orig"]), bytes.fromhex(m["new"]),
             kind="bytes", note=m["note"])
+
+    # 6. function hooks (resolved to Rust functions by the loader)
+    for m in manual.get("hooks", []):
+        orig = bytes.fromhex(m["orig"])
+        if m["mode"] in ("entry", "entry_caller") and len(orig) != 12:
+            errors.append(f"hook {m['id']}: {m['mode']} needs 12 orig bytes")
+        if m["mode"] == "call" and len(orig) < 12:
+            errors.append(f"hook {m['id']}: call needs >= 12 orig bytes")
+        add(m["id"], "hooks", int(m["va"], 16), orig, kind="hook", mode=m["mode"], hook=m["hook"],
+            note=m["note"])
 
     if errors:
         print("\n".join(errors), file=sys.stderr)
@@ -159,6 +170,12 @@ def main():
             {"name": "split_vertical", "base": "mgr", "off": f"{remap(0x248):#x}", "type": "u8"},
             *[{"name": f"slot{i}_avatar", "base": "mgr", "off": f"{SLOT_BASE + 8 + i * SLOT_SIZE:#x}", "type": "ptr"}
               for i in range(NEW_SLOTS)],
+            {"name": "input", "rva": f"{0x140AC5380 - IMAGE_BASE:#x}", "type": "ptr"},
+            {"name": "input_count", "base": "input", "off": "0x4e4", "type": "i32"},
+            *[{"name": f"input_dev{i}", "base": "input", "off": f"{0x4B8 + 4 * i:#x}", "type": "i32"}
+              for i in range(4)],
+            {"name": "pobj", "base": "mgr", "off": "0xd8", "type": "ptr"},
+            {"name": "pobj_count", "base": "pobj", "off": "0x0", "type": "i32"},
             {"name": "split_mode", "rva": f"{0x140B2C5F8 - IMAGE_BASE:#x}", "type": "i32"},
             {"name": "viewport_count", "rva": f"{0x1409581A8 - IMAGE_BASE:#x}", "type": "i32"},
         ],

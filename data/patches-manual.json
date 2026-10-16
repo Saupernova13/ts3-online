@@ -1,5 +1,5 @@
 {
- "about": "Hand-reviewed patches that the classifiers cannot find (FINDINGS 3a, 5a). VAs assume image base 0x140000000.",
+ "about": "Hand-reviewed patches that the classifiers cannot find (FINDINGS 3a, 5a, 5b). VAs assume image base 0x140000000.",
  "patches": [
   {"id": "bound_1405f1041", "group": "bounds", "va": "0x1405f1041", "orig": "83fb01", "new": "83fb03",
    "note": "assign_avatar(mgr, idx, actor): idx < 2 -> < 4 (guard too far from its access for SlotBounds)"},
@@ -9,16 +9,13 @@
    "note": "GetPlayerObject(mgr, idx): idx < 2 -> < 4; also bounded by the +0xd8 array count"},
   {"id": "join_cb_14021fdb7", "group": "join", "va": "0x14021fdb7", "orig": "83780402", "new": "83780404",
    "note": "join event callback: only while player_count < 2 -> < 4"},
-  {"id": "join_free_1400eb77c", "group": "join", "va": "0x1400eb77c", "orig": "ff90d0000000", "new": "ff90d8000000",
-   "note": "join handler: input->count() (+0xd0) -> input->first_free_player() (+0xd8); -1 when none"},
-  {"id": "join_max_1400eb782", "group": "join", "va": "0x1400eb782", "orig": "83f802", "new": "83f804",
-   "note": "join handler: unsigned index >= 2 -> >= 4 bails (also catches -1)"},
-  {"id": "join_idx_1400eb78b", "group": "join", "va": "0x1400eb78b",
-   "orig": "488b0dee9b9d00488b01448bc6ba01000000",
-   "new":  "89c2488b0dec9b9d00488b01448bc60f1f00",
-   "note": "join handler: assign(1, pad) -> assign(free_index, pad): MOV EDX,EAX; MOV RCX,[input] (disp re-encoded); MOV RAX,[RCX]; MOV R8D,ESI; NOP3"}
+  {"id": "heap_system_1402440ec", "group": "memory", "va": "0x1402440ec", "orig": "48c745df00000020", "new": "48c745df00000040",
+   "note": "\"System\" heap 512 MB -> 1 GB; a third player's slot setup exhausted it in Toy Box (FINDINGS 5b)"}
  ],
  "hooks": [
+  {"id": "hook_join_1400eb6f0", "group": "hooks", "va": "0x1400eb6f0", "mode": "entry", "hook": "join_request",
+   "orig": "48895c240848897424185748",
+   "note": "join handler(pad): Rust reimplementation using the first free player index for assign, screen owner and release"},
   {"id": "hook_bind_1400e2490", "group": "hooks", "va": "0x1400e2490", "mode": "entry", "hook": "bind_joining_avatar",
    "orig": "48895c241048896c24185741",
    "note": "bind(avatar, level_info, start): Rust mirror with the joining player's index instead of 1"},
@@ -27,16 +24,13 @@
    "note": "ScreenJoinIn cancel: release the joining index (not 1), then the shared tail 0x1400e7450"},
   {"id": "hook_lookup_1405bae40", "group": "hooks", "va": "0x1405bae40", "mode": "entry_caller", "hook": "find_avatar_by_class",
    "orig": "48895c240848896c24104889",
-   "note": "avatar-by-class lookup: unchanged except calls from the pick handler skip player-owned avatars"},
-  {"id": "hook_joinfail_1400eb923", "group": "hooks", "va": "0x1400eb923", "mode": "call", "hook": "release_joining",
-   "orig": "488b0d569a9d00488b01ba01000000ff9088000000",
-   "note": "join handler failure path: release(1) -> release(joining index)"}
+   "note": "avatar-by-class lookup: unchanged except calls from the pick handler skip player-owned avatars"}
  ],
  "deferred": [
-  {"va": "0x1400eb92d", "note": "join handler failure path releases player 1, not the new index; rare (join screen failed to open)"},
   {"va": "0x1400ef525", "note": "FUN_1400ee9b0 indexes slots with R14 (another player's index?), no guard; check at runtime"},
   {"va": "0x1401b432f", "note": "FUN_1401b4270 CMP EAX,2 JGE on an unknown 2-entry array"},
   {"va": "0x14060fe0b", "note": "FUN_14060fc10 player-2-only branch (ESI == 1)"},
-  {"va": "0x1405fc835", "note": "remove-pending reads per-player object 1 directly"}
+  {"va": "0x1405fc835", "note": "remove-pending reads per-player object 1 directly"},
+  {"va": "0x1405bb090", "note": "per-player object array at mgr+0xd8 holds 2 entries in Toy Box; players 3/4 get null from GetPlayerObject"}
  ]
 }

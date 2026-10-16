@@ -2009,31 +2009,23 @@
    "note": "join event callback: only while player_count < 2 -> < 4"
   },
   {
-   "id": "join_free_1400eb77c",
-   "group": "join",
-   "rva": "0xeb77c",
-   "orig": "ff90d0000000",
-   "new": "ff90d8000000",
+   "id": "heap_system_1402440ec",
+   "group": "memory",
+   "rva": "0x2440ec",
+   "orig": "48c745df00000020",
+   "new": "48c745df00000040",
    "kind": "bytes",
-   "note": "join handler: input->count() (+0xd0) -> input->first_free_player() (+0xd8); -1 when none"
+   "note": "\"System\" heap 512 MB -> 1 GB; a third player's slot setup exhausted it in Toy Box (FINDINGS 5b)"
   },
   {
-   "id": "join_max_1400eb782",
-   "group": "join",
-   "rva": "0xeb782",
-   "orig": "83f802",
-   "new": "83f804",
-   "kind": "bytes",
-   "note": "join handler: unsigned index >= 2 -> >= 4 bails (also catches -1)"
-  },
-  {
-   "id": "join_idx_1400eb78b",
-   "group": "join",
-   "rva": "0xeb78b",
-   "orig": "488b0dee9b9d00488b01448bc6ba01000000",
-   "new": "89c2488b0dec9b9d00488b01448bc60f1f00",
-   "kind": "bytes",
-   "note": "join handler: assign(1, pad) -> assign(free_index, pad): MOV EDX,EAX; MOV RCX,[input] (disp re-encoded); MOV RAX,[RCX]; MOV R8D,ESI; NOP3"
+   "id": "hook_join_1400eb6f0",
+   "group": "hooks",
+   "rva": "0xeb6f0",
+   "orig": "48895c240848897424185748",
+   "kind": "hook",
+   "mode": "entry",
+   "hook": "join_request",
+   "note": "join handler(pad): Rust reimplementation using the first free player index for assign, screen owner and release"
   },
   {
    "id": "hook_bind_1400e2490",
@@ -2064,16 +2056,6 @@
    "mode": "entry_caller",
    "hook": "find_avatar_by_class",
    "note": "avatar-by-class lookup: unchanged except calls from the pick handler skip player-owned avatars"
-  },
-  {
-   "id": "hook_joinfail_1400eb923",
-   "group": "hooks",
-   "rva": "0xeb923",
-   "orig": "488b0d569a9d00488b01ba01000000ff9088000000",
-   "kind": "hook",
-   "mode": "call",
-   "hook": "release_joining",
-   "note": "join handler failure path: release(1) -> release(joining index)"
   }
  ]
 }

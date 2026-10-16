@@ -81,6 +81,13 @@ connection order, so the connection order decides player numbers. The host's own
 Plan: prove the loop with A (two machines on the tailnet, two quadrants), then decide whether the
 full-screen UI problem needs C.
 
+Displays: Apollo creates one virtual display per stream, but with several instances only one
+virtual display works at a time (Apollo issue #874, closed "not planned"; the maintainer's advice
+is separate instances). So each rig instance must capture a persistent display picked with
+`output_name`, with Apollo's per-stream virtual display off. That needs a driver that keeps N
+virtual monitors (for example Virtual Display Driver, configured by XML). Installing it is the
+user's call.
+
 ## Risks
 
 - `< 2` literals that are not `MAX_PLAYERS` (patching the wrong ones breaks unrelated logic).

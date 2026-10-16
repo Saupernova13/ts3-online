@@ -193,8 +193,8 @@ mod tests {
 
 /// Replaces the slot-1 block of the two global "controls disabled" refreshers (0x1405f8a70,
 /// 0x1405d3200), which only update slots 0/1. Same rule for slots 1..=3: controls are on when the
-/// slot's own disable list (`slot+0x50`) and the global one (0x1409582a8) are both empty; flip the
-/// avatar's flag (`+0x428`) through its vtable `+0x148` when it disagrees (FINDINGS 5d).
+/// slot's own disable list (`slot+0x50`) and the global one (0x1409582a8) are both empty; when the
+/// avatar's flag (`+0x428`) disagrees, set it through `vtable+0x148(avatar, enabled)` (FINDINGS 5d).
 pub unsafe extern "system" fn refresh_player_controls(mgr: u64) {
     let global_clear = rd_u64(va(0x1_4095_82a8)) == 0;
     for i in 1..4u64 {
@@ -204,8 +204,8 @@ pub unsafe extern "system" fn refresh_player_controls(mgr: u64) {
         }
         let enabled = rd_u64(mgr + SLOT_INDEX_BASE + i * SLOT_STRIDE + 0x50) == 0 && global_clear;
         if rd_u8(avatar + 0x428) != enabled as u8 {
-            log!("hook refresh_player_controls slot {i} controls -> {enabled}");
-            vcall0(avatar, 0x148);
+            vcall_u8(avatar, 0x148, enabled as u8);
+            log!("hook refresh_player_controls slot {i} controls -> {enabled} (now {})", rd_u8(avatar + 0x428));
         }
     }
 }

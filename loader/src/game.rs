@@ -43,10 +43,10 @@ pub unsafe fn rd_u8(addr: u64) -> u8 {
     std::ptr::read(addr as *const u8)
 }
 
-/// Calls `this->vtable[off](this)` with no other arguments.
-pub unsafe fn vcall0(this: u64, off: u64) {
-    let f: extern "system" fn(u64) = std::mem::transmute(rd_u64(rd_u64(this) + off) as usize);
-    f(this)
+/// Calls `this->vtable[off](this, a)` with a byte argument in DL.
+pub unsafe fn vcall_u8(this: u64, off: u64, a: u8) {
+    let f: extern "system" fn(u64, u8) = std::mem::transmute(rd_u64(rd_u64(this) + off) as usize);
+    f(this, a)
 }
 
 pub unsafe fn wr_i32(addr: u64, v: i32) {

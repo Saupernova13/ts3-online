@@ -3,6 +3,8 @@ name = "ts3online"
 version = "0.1.0"
 edition = "2021"
 description = "dinput8.dll proxy that patches Toy Story 3 in memory"
+license = "MIT"
+repository = "https://github.com/Saupernova13/ts3-online"
 
 [lib]
 name = "dinput8"

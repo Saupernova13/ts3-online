@@ -184,6 +184,10 @@ def main():
             *[w for i in range(NEW_SLOTS) for w in (
                 {"name": f"cstack{i}", "rva": f"{0x140AC61C0 + 0x58 + i * 8 - IMAGE_BASE:#x}", "type": "ptr"},
                 {"name": f"cstack{i}_count", "base": f"cstack{i}", "off": "0x0", "type": "i32"})],
+            # entries 0/1 of stacks 1-3 and their vtables, to see who receives each player's input
+            *[w for i in (1, 2, 3) for e in (0, 1) for w in (
+                {"name": f"cstack{i}_e{e}", "base": f"cstack{i}", "off": f"{8 + 8 * e:#x}", "type": "ptr"},
+                {"name": f"cstack{i}_e{e}_vt", "base": f"cstack{i}_e{e}", "off": "0x0", "type": "ptr"})],
             # "System" heap object (static at 0x1409bb8a0): +0x120 free bytes, logged in MB steps by the loader
             {"name": "sysheap_free", "rva": f"{0x1409BB8A0 + 0x120 - IMAGE_BASE:#x}", "type": "mb"},
         ],

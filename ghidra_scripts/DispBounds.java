@@ -2,7 +2,7 @@
 // compares (1..3) in the preceding instructions of the same function, with raw bytes and the jump.
 // Used to find inline `idx < 2` guards on per-player arrays that are not indexed by IMUL.
 //
-// args: <outfile> <disp> [window=24]
+// args: <outfile> <disp> [window=24] [after=0]   after>0 also scans that many instructions after the load
 //
 // @category ts3-online
 import ghidra.app.script.GhidraScript;
@@ -19,11 +19,12 @@ public class DispBounds extends GhidraScript {
     PrintWriter out = new PrintWriter(new FileWriter(a[0]));
     long disp = Long.decode(a[1]);
     int window = a.length > 2 ? Integer.parseInt(a[2]) : 24;
+    int after = a.length > 3 ? Integer.parseInt(a[3]) : 0;
     Set<String> seen = new HashSet<>();
     InstructionIterator ii = currentProgram.getListing().getInstructions(true);
     while (ii.hasNext() && !monitor.isCancelled()) {
       Instruction in = ii.next();
-      if (!in.getMnemonicString().equals("MOV")) continue;
+      if (!in.getMnemonicString().startsWith("MOV")) continue;
       boolean hit = false;
       if ((in.getOperandType(1) & OperandType.DYNAMIC) != 0)
         for (Object o : in.getOpObjects(1))
@@ -31,10 +32,12 @@ public class DispBounds extends GhidraScript {
       if (!hit) continue;
       Function f = getFunctionContaining(in.getAddress());
       if (f == null) continue;
-      Instruction p = in;
-      for (int k = 0; k < window; k++) {
-        p = p.getPrevious();
-        if (p == null || !f.getBody().contains(p.getAddress())) break;
+      List<Instruction> cand = new ArrayList<>();
+      Instruction q = in;
+      for (int k = 0; k < window; k++) { q = q.getPrevious(); if (q == null || !f.getBody().contains(q.getAddress())) break; cand.add(q); }
+      q = in;
+      for (int k = 0; k < after; k++) { q = q.getNext(); if (q == null || !f.getBody().contains(q.getAddress())) break; cand.add(q); }
+      for (Instruction p : cand) {
         if (!p.getMnemonicString().equals("CMP")) continue;
         Object[] last = p.getOpObjects(p.getNumOperands() - 1);
         if (last.length != 1 || !(last[0] instanceof Scalar)) continue;

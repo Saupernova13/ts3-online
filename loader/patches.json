@@ -181,6 +181,78 @@
    "type": "i32"
   },
   {
+   "name": "cstack1_e0",
+   "base": "cstack1",
+   "off": "0x8",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack1_e0_vt",
+   "base": "cstack1_e0",
+   "off": "0x0",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack1_e1",
+   "base": "cstack1",
+   "off": "0x10",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack1_e1_vt",
+   "base": "cstack1_e1",
+   "off": "0x0",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack2_e0",
+   "base": "cstack2",
+   "off": "0x8",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack2_e0_vt",
+   "base": "cstack2_e0",
+   "off": "0x0",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack2_e1",
+   "base": "cstack2",
+   "off": "0x10",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack2_e1_vt",
+   "base": "cstack2_e1",
+   "off": "0x0",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack3_e0",
+   "base": "cstack3",
+   "off": "0x8",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack3_e0_vt",
+   "base": "cstack3_e0",
+   "off": "0x0",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack3_e1",
+   "base": "cstack3",
+   "off": "0x10",
+   "type": "ptr"
+  },
+  {
+   "name": "cstack3_e1_vt",
+   "base": "cstack3_e1",
+   "off": "0x0",
+   "type": "ptr"
+  },
+  {
    "name": "sysheap_free",
    "rva": "0x9bb9c0",
    "type": "mb"

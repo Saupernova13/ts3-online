@@ -287,10 +287,15 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   placing a player, `0x1406a21b4`, `0x1406a262b`, `0x1406aa78f` (`0x1405bb040` is view-guarded).
 - **[obs]** Cosmetic, left alone: `0x14008ac70` (does something only for player 1),
   `0x1405fcf30` (a per-player value for players 0/1 only).
-- **[obs] Level teardown `0x1405b0ea0`** (callers `0x1405be720`, `0x1405f7c30`, `0x1405f8ed0`)
-  resets slots 0/1 only, unrolled: pops their mappers, clears the view's "Avatar", sets index -1,
-  avatar 0. **Slots 2/3 keep a stale avatar pointer after a level change.** Needs a hook before
-  4 players leave Toy Box.
+- **[obs] Level teardown `0x1405b0ea0`** (called from level unpublish `0x1405f8ed0` and two
+  other handlers) resets slots 0/1 only, unrolled: pops each avatar's mapper off its control stack,
+  detaches its `CameraState`, removes the view's "Avatar" camera, sets index -1 and avatar 0, and
+  clears the slot's disable list (`slot+0x18`). Slots 2/3 kept a dangling avatar after a level
+  change. The Rust hook `reset_player_slots` replaces the slot-1 block (`0x1405b0fd6`-`0x1405b10fb`,
+  no jumps into it from outside; RBX = mgr and R14 = 0 stay live) and resets slots 1..3. Slots 2/3
+  also release their pad, because level setup only restores players 0/1, so P3/P4 re-join with
+  Start. Not run in game yet.
+- **[unk]** How level load brings P2 back (to do the same for P3/P4 instead of re-joining).
 - **[obs]** `0x1401b5bc0` disables controls for players `< 2` from a list; its guard
   (`0x1401b5bec`) was already patched by the bounds pass.
 

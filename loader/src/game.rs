@@ -53,6 +53,10 @@ pub unsafe fn wr_i32(addr: u64, v: i32) {
     std::ptr::write_unaligned(addr as *mut i32, v)
 }
 
+pub unsafe fn wr_u64(addr: u64, v: u64) {
+    std::ptr::write_unaligned(addr as *mut u64, v)
+}
+
 /// Player-index field at the start of each manager slot; level setup only fills slots 0 and 1.
 pub const SLOT_INDEX_BASE: u64 = 0x198;
 
@@ -93,6 +97,23 @@ game_fn!(registry_get, 0x1_4055_8400, fn(entry: u64) -> u64);
 game_fn!(prop_string, 0x1_404f_dff0, fn(obj: u64, name: u64, flag: u8) -> u64);
 game_fn!(slot_init, 0x1_405f_0cf0, fn(slot: u64, avatar: u64) -> ());
 game_fn!(player_setup, 0x1_405b_0420, fn(mgr: u64, idx: u32) -> ());
+game_fn!(control_mapper, 0x1_4055_9010, fn(actor: u64) -> u64);
+game_fn!(cstack_pop, 0x1_4028_0930, fn(stacks: u64, entry: u64, player: u32) -> u64);
+game_fn!(cstack_unregister, 0x1_4028_1470, fn(stacks: u64, entry: u64, player: u32, flag: u8) -> ());
+game_fn!(component_ref, 0x1_4055_fd40, fn(actor: u64, name: u64) -> u64);
+game_fn!(component_set, 0x1_4045_8040, fn(comp: u64, value: u64) -> ());
+game_fn!(find_component, 0x1_4055_8fb0, fn(actor: u64, name: u64) -> u64);
+game_fn!(camera_state_set_view, 0x1_4066_d8c0, fn(state: u64, view: u64) -> ());
+game_fn!(view_find_camera, 0x1_403f_c110, fn(view: u64, name: u64) -> u64);
+game_fn!(view_pop_camera, 0x1_403f_f140, fn(view: u64, camera: u64) -> u64);
+game_fn!(view_remove_camera, 0x1_403f_ffc0, fn(view: u64, camera: u64) -> ());
+game_fn!(list_clear, 0x1_403f_b1e0, fn(list: u64) -> ());
+
+/// Per-player control stacks (`0x140ac61c0`).
+pub const CONTROL_STACKS: u64 = 0x1_40ac_61c0;
+pub const STR_CONTROL_MAPPER: u64 = 0x1_4076_59d8;
+pub const STR_CAMERA_STATE: u64 = 0x1_4075_e5a0;
+pub const STR_AVATAR: u64 = 0x1_4076_d098;
 
 /// Calls `this->vtable[off](this)` returning AL.
 pub unsafe fn vt_u8(this: u64, off: u64) -> u8 {

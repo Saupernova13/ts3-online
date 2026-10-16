@@ -11,6 +11,7 @@ pub fn resolve(name: &str) -> Option<u64> {
         "join_request" => join_request as *const () as u64,
         "find_avatar_by_class" => find_avatar_by_class as *const () as u64,
         "refresh_player_controls" => refresh_player_controls as *const () as u64,
+        "reset_player_slots" => reset_player_slots as *const () as u64,
         _ => return None,
     })
 }
@@ -206,6 +207,53 @@ pub unsafe extern "system" fn refresh_player_controls(mgr: u64) {
         if rd_u8(avatar + 0x428) != enabled as u8 {
             vcall_u8(avatar, 0x148, enabled as u8);
             log!("hook refresh_player_controls slot {i} controls -> {enabled} (now {})", rd_u8(avatar + 0x428));
+        }
+    }
+}
+
+/// Replaces the slot-1 block of level teardown (0x1405b0ea0), which resets slots 0/1 only, so
+/// slots 2/3 kept a dangling avatar after a level change (FINDINGS 5e). Same reset for slots
+/// 1..=3: pop the avatar's mapper off the player's control stack, detach its camera state, drop
+/// the view's "Avatar" camera, then clear the slot. Slots 2/3 also release their pad, since level
+/// setup only brings back players 0/1; those players join again with Start.
+pub unsafe extern "system" fn reset_player_slots(mgr: u64) {
+    let stacks = va(CONTROL_STACKS);
+    for i in 1..4u32 {
+        let slot = mgr + SLOT_INDEX_BASE + i as u64 * SLOT_STRIDE;
+        let avatar = rd_u64(slot + 8);
+        if avatar != 0 {
+            let mapper = control_mapper(avatar);
+            if mapper != 0 {
+                cstack_pop(stacks, mapper, i);
+                cstack_unregister(stacks, mapper, i, 1);
+                component_set(component_ref(avatar, va(STR_CONTROL_MAPPER)), 0);
+            }
+            let state = find_component(avatar, va(STR_CAMERA_STATE));
+            if state != 0 {
+                camera_state_set_view(state, 0);
+            }
+        }
+        let views = rd_u64(mgr + 0xd8);
+        if views != 0 && rd_i32(views) > i as i32 {
+            let view = rd_u64(rd_u64(views + 8) + i as u64 * 8);
+            if view != 0 {
+                let cam = view_find_camera(view, va(STR_AVATAR));
+                view_pop_camera(view, view_find_camera(view, va(STR_AVATAR)));
+                view_remove_camera(view, cam);
+            }
+        }
+        wr_i32(slot, -1);
+        wr_u64(slot + 8, 0);
+        wr_u64(slot + 0x10, 0);
+        list_clear(slot + 0x18);
+        if i >= 2 {
+            let input = global(INPUT_PTR);
+            if input != 0 && input_is_assigned(input, i) != 0 {
+                input_release(input, i);
+            }
+            if avatar != 0 {
+                log!("hook reset_player_slots slot {i}: avatar {avatar:#x} cleared, pad released");
+            }
         }
     }
 }

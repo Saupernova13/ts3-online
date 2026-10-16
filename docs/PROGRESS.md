@@ -45,6 +45,12 @@ Newest first. One entry per working session: what was learned, what changed, wha
 - Automated testing paused: virtual-pad presses reached the user's desktop when the game lost
   focus. Further in-game runs wait for an agreed test window.
 
-**Next:** in a test window, re-run T3/T4 (3 and 4 players in Toy Box) and check whose view each
-viewport shows and whether P3/P4 can move. Then look at what P3/P4 lack without
-`Meridian_Player_2/3` objects and per-player setup `0x1405b0420`.
+- Test window from the user: the slot-index fix works. 3 and 4 players join, with 3-way and 4-way
+  split, no crash, memory stable. Then: 4 per-player views plus per-player setup for slots 2/3
+  give viewports 3/4 working follow cameras (FINDINGS 5c). The controls-refresh hook re-enables
+  slots 2/3 (5d), but players 3/4 still do not move. Evidence: `work/evidence/` (screenshots + logs).
+- Test tooling: `tools/focus.ps1` (bring the game to front), `tools/padsend.sh` (sends pad
+  commands only while the game is foreground), `tools/shot.ps1` prints `foreground=`.
+
+**Next:** find the gate on `BuzzControlMapper` input for players 3/4 (FINDINGS 5d), then the HUD
+for players 3/4 and the streaming rig (PLAN phase 6).

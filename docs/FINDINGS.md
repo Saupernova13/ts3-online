@@ -234,6 +234,34 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
 - **[unk]** What players 3/4 lose without a `Meridian_Player_2/3` object and `0x1405b0420` setup
   (camera rig?).
 
+### 5c. Per-player views and cameras (`queries/49`-`53`)
+
+- **[obs]** `Meridian_Player_N` scene objects are character definitions (Toy Box: 0 Buzz,
+  1 Woody, 2 Jessie, 8/9 paratroopers), not per-player rigs.
+- **[obs]** The per-player objects at `mgr+0xd8` are views. Level setup calls
+  `FUN_1404ceed0(arr, 2)` (`MOV EDX,2` at `0x1405ae5a7`), which allocates a 5-entry array and creates
+  `n` views (`FUN_1403fb570`). Per-player setup `0x1405b0420(mgr, i)` gives view i a Path and a General
+  camera, then `0x14021cd70` adds Tether (follows the avatar), SpaceFlight, ToyCamera and ShowDown.
+  Level setup runs it for slots 0/1 only.
+- **[obs] Fixed and verified in game:** create 4 views, raise the 10 inline view-array guards,
+  and on a slot's first join run `slot index = idx`, `slot_init(slot, 0)` and
+  `player_setup(mgr, idx)`, exactly what level setup does for an absent player 2. Viewports 3/4
+  then follow players 3/4.
+
+### 5d. Input for players 3/4 (open)
+
+- **[obs]** The input dispatch `0x140280b90` loops over 11 players: it binds the controller of player
+  i to the top of control stack i (`vt+0x48`) and updates it (`vt+0x10`). After a P3 join, stack 2's
+  top is a `BuzzControlMapper` (vtable `0x1407aff60`, ctor `0x1401f98e0`), the same class as P2's.
+- **[obs]** The global controls-disabled add/remove functions (`0x1405d3200`, `0x1405f8a70`)
+  refresh the avatar controls flag (`avatar+0x428`, toggled via `vt+0x148`) for slots 0/1 only,
+  unrolled. Hooked to refresh slots 1..3 (`refresh_player_controls`); the log confirms slots 2/3
+  are re-enabled after each join menu.
+- **[obs]** Players 3/4 still do not move with their sticks. P2 does. Buttons on pads 3/4 work in
+  menus (Start, D-pad, A).
+- **[unk]** What gates `BuzzControlMapper` for players 2/3. Next: decompile its `vt+0x48`
+  (`0x1401ff4a0`) and `vt+0x10` (`0x1402194c0`) and watch its bound controller (`entry+0x8`).
+
 ## 6. Rendering and window
 
 - **[obs]** `-dxresolution WxH` is parsed with `strtok` (`0x1402a5930`); the window is created

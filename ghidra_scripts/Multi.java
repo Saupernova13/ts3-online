@@ -16,6 +16,7 @@
 //   str <text>          find defined strings equal to text, decompile referrers
 //   strre <regex>       find defined strings matching regex, list referrers only
 //   scalar <hex> [mn]   list instructions with that scalar operand (optionally only mnemonic mn)
+//   rangerefs <addr> <len>  list every reference into [addr, addr+len), grouped by target offset
 //
 // @category ts3-online
 import ghidra.app.script.GhidraScript;
@@ -143,6 +144,23 @@ public class Multi extends GhidraScript {
               Function f = getFunctionContaining(in.getAddress());
               fs.add(f);
               out.println("   " + in.getAddress() + " " + in + " in " + (f == null ? "?" : f.getName()));
+            }
+            out.println(" total functions: " + fs.size());
+            break;
+          }
+          case "rangerefs": {
+            String[] sp = arg.split("\\s+");
+            Address start = toAddr(sp[0]);
+            long len = Long.decode(sp[1]);
+            Set<Function> fs = new LinkedHashSet<>();
+            for (long i = 0; i < len; i++) {
+              Address t = start.add(i);
+              for (Reference r : getReferencesTo(t)) {
+                Function f = getFunctionContaining(r.getFromAddress());
+                fs.add(f);
+                out.println("   +0x" + Long.toHexString(i) + " <- " + r.getFromAddress() + " " + r.getReferenceType()
+                    + " in " + (f == null ? "?" : f.getName() + "@" + f.getEntryPoint()));
+              }
             }
             out.println(" total functions: " + fs.size());
             break;

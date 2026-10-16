@@ -1,0 +1,11 @@
+# Ghidra project, query output and any game files stay out of the repo
+work/
+*.exe
+*.exe.orig
+*.dll
+*.zip
+*.bik
+*.fsb
+*.bank
+__pycache__/
+*.pyc

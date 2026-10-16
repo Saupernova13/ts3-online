@@ -1,0 +1,24 @@
+# ts3-online
+
+Reverse engineering *Toy Story 3 Complete Edition* toward 4-player online co-op.
+
+## Rules
+
+- **Document as you go.** Each discovery goes into `docs/FINDINGS.md` with its address and an
+  [obs]/[inf]/[unk] tag, and each session gets an entry in `docs/PROGRESS.md`. Update
+  `docs/PLAN.md` when the approach or phase status changes. Commit after each step.
+- **No game data in git.** No exe, DLLs, assets, Ghidra project or full decompiler dumps; those
+  live in `work/` (gitignored). Short decompiled excerpts in docs are fine.
+- **Never modify the game install.** Patches are applied at runtime by our loader or to a copy.
+  The live exe already carries someone else's 7-byte patch; the analysed program is the
+  original (`.exe.orig` in the install folder).
+- Addresses are for the exe whose SHA-256 is in `docs/FINDINGS.md`. A Steam update invalidates
+  them; patch code should locate code by byte signature, not hardcoded addresses.
+
+## Analysis
+
+- Ghidra project: `work/ghidra/ts3.gpr` (already analysed). Ghidra 12.1.3 is at `C:\utils\ghidra`,
+  JDK 21 at `C:\Program Files\Java\jdk-21.0.12.1`.
+- Run queries with `tools/ghidra.sh query queries/NN-name.cmd`; add a new numbered query file
+  per investigation so the evidence can be reproduced.
+- Each headless run costs ~1 minute of startup: batch related commands into one query file.

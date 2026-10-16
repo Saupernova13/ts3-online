@@ -1071,6 +1071,15 @@
    "note": "guard: CMP ECX,1 JA in FUN_140114ac0"
   },
   {
+   "id": "bound_140114c40",
+   "group": "bounds",
+   "rva": "0x114c40",
+   "orig": "83f901",
+   "new": "83f903",
+   "kind": "bytes",
+   "note": "guard: CMP ECX,1 JA in FUN_140114c00"
+  },
+  {
    "id": "bound_140115486",
    "group": "bounds",
    "rva": "0x115486",
@@ -1305,6 +1314,15 @@
    "note": "guard: CMP EAX,1 JA in FUN_1401a04e0"
   },
   {
+   "id": "bound_1401a05f2",
+   "group": "bounds",
+   "rva": "0x1a05f2",
+   "orig": "83f801",
+   "new": "83f803",
+   "kind": "bytes",
+   "note": "guard: CMP EAX,1 JA in FUN_1401a0590"
+  },
+  {
    "id": "bound_1401a14ea",
    "group": "bounds",
    "rva": "0x1a14ea",
@@ -1321,6 +1339,15 @@
    "new": "83f803",
    "kind": "bytes",
    "note": "guard: CMP EAX,1 JA in FUN_1401a4a00"
+  },
+  {
+   "id": "bound_1401a4b12",
+   "group": "bounds",
+   "rva": "0x1a4b12",
+   "orig": "83f801",
+   "new": "83f803",
+   "kind": "bytes",
+   "note": "guard: CMP EAX,1 JA in FUN_1401a4ab0"
   },
   {
    "id": "bound_1401a4cb6",
@@ -1755,6 +1782,15 @@
    "note": "guard_moved: CMP EDX,1 JA in FUN_140139970"
   },
   {
+   "id": "bound_1401a4b8e",
+   "group": "bounds",
+   "rva": "0x1a4b8e",
+   "orig": "83fa01",
+   "new": "83fa03",
+   "kind": "bytes",
+   "note": "guard_moved: CMP EDX,1 JA in FUN_1401a4b70"
+  },
+  {
    "id": "bound_1402187e6",
    "group": "bounds",
    "rva": "0x2187e6",
@@ -1888,6 +1924,69 @@
    "new": "83fb04",
    "kind": "bytes",
    "note": "loop: CMP EBX,2 JC in FUN_140046d90"
+  },
+  {
+   "id": "bound_1405f1041",
+   "group": "bounds",
+   "rva": "0x5f1041",
+   "orig": "83fb01",
+   "new": "83fb03",
+   "kind": "bytes",
+   "note": "assign_avatar(mgr, idx, actor): idx < 2 -> < 4 (guard too far from its access for SlotBounds)"
+  },
+  {
+   "id": "bound_1405b043e",
+   "group": "bounds",
+   "rva": "0x5b043e",
+   "orig": "83fb01",
+   "new": "83fb03",
+   "kind": "bytes",
+   "note": "FUN_1405b0420 entry guard idx < 2 -> < 4"
+  },
+  {
+   "id": "bound_1405bb090",
+   "group": "bounds",
+   "rva": "0x5bb090",
+   "orig": "83fa01",
+   "new": "83fa03",
+   "kind": "bytes",
+   "note": "GetPlayerObject(mgr, idx): idx < 2 -> < 4; also bounded by the +0xd8 array count"
+  },
+  {
+   "id": "join_cb_14021fdb7",
+   "group": "join",
+   "rva": "0x21fdb7",
+   "orig": "83780402",
+   "new": "83780404",
+   "kind": "bytes",
+   "note": "join event callback: only while player_count < 2 -> < 4"
+  },
+  {
+   "id": "join_free_1400eb77c",
+   "group": "join",
+   "rva": "0xeb77c",
+   "orig": "ff90d0000000",
+   "new": "ff90d8000000",
+   "kind": "bytes",
+   "note": "join handler: input->count() (+0xd0) -> input->first_free_player() (+0xd8); -1 when none"
+  },
+  {
+   "id": "join_max_1400eb782",
+   "group": "join",
+   "rva": "0xeb782",
+   "orig": "83f802",
+   "new": "83f804",
+   "kind": "bytes",
+   "note": "join handler: unsigned index >= 2 -> >= 4 bails (also catches -1)"
+  },
+  {
+   "id": "join_idx_1400eb78b",
+   "group": "join",
+   "rva": "0xeb78b",
+   "orig": "488b0dee9b9d00488b01448bc6ba01000000",
+   "new": "89c2488b0dec9b9d00488b01448bc60f1f00",
+   "kind": "bytes",
+   "note": "join handler: assign(1, pad) -> assign(free_index, pad): MOV EDX,EAX; MOV RCX,[input] (disp re-encoded); MOV RAX,[RCX]; MOV R8D,ESI; NOP3"
   }
  ]
 }

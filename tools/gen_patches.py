@@ -5,6 +5,7 @@
 Inputs (all produced by the Ghidra pipeline, see README):
   work/out/08-relocation-table.txt   RIPREF lines: instructions addressing the player manager
   data/bounds-candidates.json        classified MAX_PLAYERS bound sites
+  data/patches-manual.json           hand-reviewed patches (join flow, far guards)
 
 Every patch carries the original bytes read from the exe; the script fails if the exe does not
 match the analysed build. Offsets are RVAs because the exe is ASLR-relocated.
@@ -57,6 +58,7 @@ def main():
     ap.add_argument("--out", default="loader/patches.json")
     ap.add_argument("--reloc", default="work/out/08-relocation-table.txt")
     ap.add_argument("--bounds", default="data/bounds-candidates.json")
+    ap.add_argument("--manual", default="data/patches-manual.json")
     a = ap.parse_args()
 
     exe = Exe(a.exe)
@@ -122,6 +124,11 @@ def main():
                 continue
             add(f"bound_{e['addr']}", "bounds", int(e["addr"], 16), raw, raw[:-1] + bytes([new]), kind="bytes",
                 note=f"{cls}: CMP {e['cmp']} {e['jcc']} in {e['func']}")
+
+    # 5. hand-reviewed patches the classifiers cannot find
+    for m in json.load(open(a.manual))["patches"]:
+        add(m["id"], m["group"], int(m["va"], 16), bytes.fromhex(m["orig"]), bytes.fromhex(m["new"]),
+            kind="bytes", note=m["note"])
 
     if errors:
         print("\n".join(errors), file=sys.stderr)

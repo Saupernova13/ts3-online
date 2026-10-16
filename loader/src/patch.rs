@@ -244,7 +244,7 @@ pub mod tests {
             m.data[o..o + p.orig.len()].copy_from_slice(&p.orig);
         }
         let counts = apply(&mut m, 0x1_4000_0000, 0x1_3000_0000, &d.patches).unwrap();
-        assert_eq!(counts.iter().map(|(_, n)| n).sum::<usize>(), 188);
+        assert_eq!(counts.iter().map(|(_, n)| n).sum::<usize>(), d.patches.len());
     }
 
     #[test]

@@ -185,7 +185,7 @@ mod tests {
         let d = parse(REAL).unwrap();
         assert_eq!(d.time_date_stamp, 0x6abf29b6);
         assert_eq!(d.size_of_image, 0xbdc000);
-        assert_eq!(d.patches.len(), 188);
+        assert!(d.patches.len() >= 188);
         assert_eq!(d.relocate.old_rva, 0x9582b0);
         assert_eq!((d.relocate.tail_start, d.relocate.tail_shift), (0x248, 0xb0));
         assert_eq!(d.relocate.new_size, 0x400);

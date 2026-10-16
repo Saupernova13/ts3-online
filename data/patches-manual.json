@@ -1,5 +1,8 @@
 {
  "about": "Hand-reviewed patches that the classifiers cannot find (FINDINGS 3a, 5a, 5b). VAs assume image base 0x140000000.",
+ "optional_groups": [
+  "quadrants"
+ ],
  "patches": [
   {
    "id": "bound_1405f1041",
@@ -160,6 +163,14 @@
    "orig": "4883fe01",
    "new": "4883fe03",
    "note": "per-player view array guard idx < 2 -> < 4 (FUN_1405fc5b0 loop over players)"
+  },
+  {
+   "id": "quadrants_1405f4718",
+   "group": "quadrants",
+   "va": "0x1405f4718",
+   "orig": "4863f9",
+   "new": "6a045f",
+   "note": "SetSplitScreenMode (0x1405f4700): movsxd rdi,ecx -> push 4; pop rdi, so every split request builds 4 quadrants and the event and mode global say 4 (for streaming each quadrant)"
   }
  ],
  "hooks": [

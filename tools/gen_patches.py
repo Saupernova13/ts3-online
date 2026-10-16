@@ -142,6 +142,11 @@ def main():
         add(m["id"], "hooks", int(m["va"], 16), orig, kind="hook", mode=m["mode"], hook=m["hook"],
             note=m["note"], **extra)
 
+    optional = manual.get("optional_groups", [])
+    for g in optional:
+        if not any(p["group"] == g for p in patches):
+            errors.append(f"optional group {g!r} has no patches")
+
     if errors:
         print("\n".join(errors), file=sys.stderr)
         sys.exit(1)
@@ -192,6 +197,7 @@ def main():
             # "System" heap object (static at 0x1409bb8a0): +0x120 free bytes, logged in MB steps by the loader
             {"name": "sysheap_free", "rva": f"{0x1409BB8A0 + 0x120 - IMAGE_BASE:#x}", "type": "mb"},
         ],
+        "optional_groups": optional,
         "patches": patches,
     }
     with open(a.out, "w", newline="\n") as f:

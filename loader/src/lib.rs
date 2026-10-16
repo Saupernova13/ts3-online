@@ -9,13 +9,15 @@ pub mod hooks;
 pub mod log;
 pub mod patch;
 pub mod watch;
+#[cfg(windows)]
+mod window;
 
 #[cfg(windows)]
 mod win;
 
 #[cfg(windows)]
 mod entry {
-    use crate::{config, doc, game, hooks, log, patch, watch, win};
+    use crate::{config, doc, game, hooks, log, patch, watch, win, window};
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use windows_sys::core::{GUID, HRESULT};
@@ -83,16 +85,26 @@ mod entry {
             log!("disabled by ts3online.ini");
             return;
         }
+        patch_game(&dir, &cfg);
+        if let Some(rect) = cfg.window {
+            window::start(rect);
+        }
+    }
 
+    fn patch_game(dir: &std::path::Path, cfg: &config::Config) {
         let external = dir.join("ts3online.patches.json");
         let (text, source) = match std::fs::read_to_string(&external) {
             Ok(t) => (t, "ts3online.patches.json"),
             Err(_) => (EMBEDDED_DOC.to_string(), "embedded patches.json"),
         };
-        let doc = match doc::parse(&text) {
+        let mut doc = match doc::parse(&text) {
             Ok(d) => d,
             Err(e) => return log!("{e}; leaving the game unpatched"),
         };
+        let (kept, skipped) = doc::select(std::mem::take(&mut doc.patches), &doc.optional_groups, &cfg.enable);
+        doc.patches = kept;
+        let on: Vec<&String> = doc.optional_groups.iter().filter(|g| cfg.enable.contains(g)).collect();
+        log!("optional groups: enabled {on:?}, skipped {skipped:?}");
         log!("patch doc: {source}, {} patches", doc.patches.len());
 
         let base = win::main_module_base();

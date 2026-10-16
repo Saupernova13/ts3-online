@@ -8,6 +8,8 @@ struct RawDoc {
     relocate: RawReloc,
     #[serde(default)]
     watch: Vec<RawWatch>,
+    #[serde(default)]
+    optional_groups: Vec<String>,
     patches: Vec<RawPatch>,
 }
 
@@ -116,6 +118,8 @@ pub struct Doc {
     pub size_of_image: u32,
     pub relocate: Relocate,
     pub watch: Vec<Watch>,
+    /// groups applied only when listed in the config's `enable`
+    pub optional_groups: Vec<String>,
     pub patches: Vec<Patch>,
 }
 
@@ -212,8 +216,27 @@ pub fn parse(text: &str) -> Result<Doc, String> {
         size_of_image: hex::parse_u64(&raw.game.size_of_image)? as u32,
         relocate,
         watch,
+        optional_groups: raw.optional_groups,
         patches,
     })
+}
+
+/// Drops patches of optional groups that are not enabled; returns the kept patches and the sorted skipped groups.
+pub fn select(patches: Vec<Patch>, optional: &[String], enable: &[String]) -> (Vec<Patch>, Vec<String>) {
+    let mut skipped: Vec<String> = Vec::new();
+    let kept = patches
+        .into_iter()
+        .filter(|p| {
+            let drop = optional.contains(&p.group) && !enable.contains(&p.group);
+            if drop {
+                skipped.push(p.group.clone());
+            }
+            !drop
+        })
+        .collect();
+    skipped.sort();
+    skipped.dedup();
+    (kept, skipped)
 }
 
 #[cfg(test)]
@@ -237,6 +260,7 @@ mod tests {
         assert!(hooks.len() >= 4);
         assert!(hooks.iter().any(|p| matches!(&p.op, Op::Hook { mode: HookMode::Call, prefix, .. } if !prefix.is_empty())));
         assert!(hooks.iter().any(|p| matches!(&p.op, Op::Hook { mode: HookMode::Entry, name, .. } if name == "join_request")));
+        assert!(d.optional_groups.iter().any(|g| g == "quadrants"));
         assert!(d.watch.iter().any(|w| w.name == "pobj_count"));
         assert!(d.watch.iter().any(|w| w.name == "mgr" && w.src == Source::Rva(0xb2ef50)));
     }
@@ -267,5 +291,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!((d.relocate.tail_start, d.relocate.tail_shift), (0x248, 0xb0));
+    }
+
+    fn p(id: &str, group: &str) -> Patch {
+        Patch { id: id.into(), group: group.into(), rva: 0, orig: vec![1], op: Op::Bytes(vec![2]) }
+    }
+
+    #[test]
+    fn select_drops_unenabled_optional_groups() {
+        let v = vec![p("a", "bounds"), p("b", "quadrants"), p("c", "zeta"), p("d", "quadrants")];
+        let optional = vec!["zeta".to_string(), "quadrants".to_string()];
+        let (kept, skipped) = select(v.clone(), &optional, &[]);
+        assert_eq!(kept.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["a"]);
+        assert_eq!(skipped, ["quadrants", "zeta"]);
+        let (kept, skipped) = select(v.clone(), &optional, &["quadrants".to_string()]);
+        assert_eq!(kept.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["a", "b", "d"]);
+        assert_eq!(skipped, ["zeta"]);
+        let (kept, skipped) = select(v, &[], &[]);
+        assert_eq!(kept.len(), 4);
+        assert!(skipped.is_empty());
     }
 }

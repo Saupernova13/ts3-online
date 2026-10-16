@@ -5,11 +5,15 @@ pub struct Config {
     pub enabled: bool,
     pub watch: bool,
     pub watch_interval_ms: u32,
+    /// optional patch groups to apply (`enable = quadrants`)
+    pub enable: Vec<String>,
+    /// `window = x,y,w,h`: borderless placement of the game window
+    pub window: Option<(i32, i32, i32, i32)>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, watch: true, watch_interval_ms: 500 }
+        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None }
     }
 }
 
@@ -39,6 +43,17 @@ pub fn parse(text: &str) -> Config {
                     c.watch_interval_ms = n.max(10);
                 }
             }
+            "enable" => {
+                c.enable = v.split(',').map(|g| g.trim().to_ascii_lowercase()).filter(|g| !g.is_empty()).collect();
+            }
+            "window" => {
+                let n: Vec<i32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                if let [x, y, w, h] = n[..] {
+                    if v.split(',').count() == 4 && w > 0 && h > 0 {
+                        c.window = Some((x, y, w, h));
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -51,13 +66,13 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(parse(""), Config { enabled: true, watch: true, watch_interval_ms: 500 });
+        assert_eq!(parse(""), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None });
     }
 
     #[test]
     fn overrides_and_comments() {
         let c = parse("# hi\n enabled = 0 \nwatch=false\nWATCH_INTERVAL_MS=250\nbogus=1\nnoequals\n");
-        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250 });
+        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None });
     }
 
     #[test]
@@ -65,5 +80,22 @@ mod tests {
         let c = parse("enabled=maybe\nwatch_interval_ms=abc\n");
         assert_eq!(c, Config::default());
         assert_eq!(parse("watch_interval_ms=0").watch_interval_ms, 10);
+    }
+
+    #[test]
+    fn enable_list() {
+        assert_eq!(parse("enable = Quadrants, ,foo ,\n").enable, ["quadrants", "foo"]);
+        assert!(parse("enable=\n").enable.is_empty());
+    }
+
+    #[test]
+    fn window_rect() {
+        assert_eq!(parse("window = 10, -20, 1920,1080").window, Some((10, -20, 1920, 1080)));
+        assert_eq!(parse("window=-1920,0,1280,720").window, Some((-1920, 0, 1280, 720)));
+        assert_eq!(parse("window=0,0,0,720").window, None);
+        assert_eq!(parse("window=0,0,100,-5").window, None);
+        assert_eq!(parse("window=0,0,100").window, None);
+        assert_eq!(parse("window=0,0,100,50,7").window, None);
+        assert_eq!(parse("window=a,0,100,50").window, None);
     }
 }

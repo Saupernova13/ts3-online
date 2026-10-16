@@ -22,6 +22,10 @@ Newest first. One entry per working session: what was learned, what changed, wha
   unguarded accesses, 12 tail-field sites. FINDINGS §3a has the details; PLAN.md has the
   phase 3 recipe.
 
-**Next:** phase 2, the Rust `dinput8.dll` proxy loader with a signature-based patch table. Then
-hand-review the 39 + 13 sites and look for per-player arrays outside the manager (HUD,
+- Phase 2, loader built (`loader/`, Rust `dinput8.dll` proxy): verifies the 188 patches against the
+  exe bytes, relocates the player manager into a buffer within +/-2 GiB of the module, applies
+  the set, and runs a watcher thread logging manager fields to `ts3online.log`. `cargo test`
+  passes; not yet run inside the game.
+
+**Next:** run the loader in the game and read its log (phase 3 check). Then hand-review the 39 + 13 sites and look for per-player arrays outside the manager (HUD,
 cameras, control mappers).

@@ -44,7 +44,7 @@ Expect `join ... joining_index 1`, `bind_joining_avatar idx=1`, `player_count 1 
 `viewport_count 1 -> 2`, `split_mode 0 -> 2` (vertical) or `1` (horizontal). Play for a few minutes,
 then have P2 leave. Anything different from the unmodded game is a regression.
 
-## T3: third player (run 1 on 2026-10-16: bind OK, then out of System heap; fix pending)
+## T3: third player (passed 2026-10-17)
 
 With two players in, press Start on pad 3 and pick a character.
 
@@ -52,7 +52,7 @@ Expect `input_dev2` set, `joining_index 2`, `bind_joining_avatar idx=2`, `player
 `viewport_count -> 3`, `split_mode -> 3` (two top quadrants plus a wide bottom view).
 Check whose view the bottom viewport shows, and whether pad 3 moves the new avatar.
 
-## T4: fourth player
+## T4: fourth player (passed 2026-10-17)
 
 Same with pad 4: expect `split_mode -> 4` (quadrants).
 
@@ -60,6 +60,15 @@ Same with pad 4: expect `split_mode -> 4` (quadrants).
 
 Have P3 leave, then rejoin on the same pad. Expect the free index to be reused and no stale avatar.
 Then cancel the join screen once and check that `join_cancel` releases the joining index, not 1.
+
+## T6: level change with 4 players (passed 2026-10-17)
+
+With 4 players in Toy Box: pad 1 `START` -> Exit to Game Board -> Yes (saves). Expect
+`reset_player_slots slot 2/3 ... pad released`, all slot indices -1, `input_count -> 2`, the board,
+no crash. Enter Toy Box again (the 2-player avatar select appears; P1 `A`), then pads 2-4 `START`
++ `A`: each joins and moves.
+
+Board note: the pencil cursor keeps its last position; from Toy Box's spot `A` alone enters it.
 
 ## Reporting
 

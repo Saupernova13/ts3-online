@@ -21,7 +21,7 @@ Native netcode is out (see FINDINGS §1). Instead:
 | 1 | Map every `MAX_PLAYERS` dependency | player manager size, slot accesses, bound sites (FINDINGS §3a) | manager layer done; review list + other per-player arrays open |
 | 2 | Patch loader | Rust `cdylib` posing as `dinput8.dll` (the exe imports DINPUT8; Rust + MSVC target and VS 2022 Build Tools are installed), applying patches in memory by byte signature before the CRT static initializers run; the exe stays untouched | next |
 | 3 | Relocate player slots + raise bounds | players 3/4 can be assigned; mode 3/4 split appears | done: manager relocated, 3-way split reached in game |
-| 4 | Join flow, cameras, HUD, pad binding | P3/P4 join from their pads, own camera and HUD | in progress: join, split, cameras work; P3/P4 movement fix awaiting test; HUD and level teardown open |
+| 4 | Join flow, cameras, HUD, pad binding | P3/P4 join from their pads, own camera and HUD | mostly done: join, split, cameras, movement and level change work for 4 players; HUD for P3/P4 open |
 | 5 | Game content | Toy Box first (open world, likely least scripted), then story missions | - |
 | 6 | Streaming rig | see below | - |
 

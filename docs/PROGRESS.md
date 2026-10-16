@@ -65,5 +65,11 @@ Newest first. One entry per working session: what was learned, what changed, wha
   Full-screen moments (shared screen, a player leaving) still use one viewport.
 - Deployed (220 patches with the optional group); not run in the game yet.
 
-**Next:** test window: confirm P3/P4 move, and that leaving Toy Box with 4 players does not crash.
-Then the HUD for players 3/4 and the streaming rig (PLAN phase 6).
+- Test window (2026-10-17): all four players move (T3, T4); exiting Toy Box with 4 players and
+  re-entering works, and pads 2-4 re-join and move (T6). The game's own regrouping of players
+  ran without trouble. Evidence: `work/evidence/2026-10-17-*`. Not tested: `enable=quadrants` and
+  `window=` (they need a `ts3online.ini` in the game folder).
+
+**Next:** streaming rig (PLAN phase 6): needs persistent virtual displays (user's call), then
+`enable=quadrants` + `window=` in game. Later: HUD for players 3/4, auto-restoring P3/P4 after a
+level change.

@@ -288,7 +288,9 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
 - **[obs]** `0x1405bb170(settings, player, i)` returns per-player keyboard bindings from
   `0x140b2eaa8` (2 x 12 ints) for players 0/1 only, -1 otherwise. Only applied when the
   controller's `+0x28c` is set (keyboard path in `0x1402150b0`), so pads are unaffected.
-- **[unk]** Whether P3/P4 move in game with the fix (needs a test window).
+- **[obs] Verified in game (2026-10-17):** with the argument passed, the log shows
+  `slot 2/3 controls -> true (now 1)` and players 3 and 4 run with their sticks, alongside P2
+  (`work/evidence/2026-10-17-*`).
 
 ### 5e. Other 2-player limits (`IndexChecks.java`, `queries/67`-`68`)
 
@@ -306,7 +308,8 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   change. The Rust hook `reset_player_slots` replaces the slot-1 block (`0x1405b0fd6`-`0x1405b10fb`,
   no jumps into it from outside; RBX = mgr and R14 = 0 stay live) and resets slots 1..3. Slots 2/3
   also release their pad, because level setup only restores players 0/1, so P3/P4 re-join with
-  Start. Not run in game yet.
+  Start. **Verified in game (2026-10-17):** "Exit to Game Board" with 4 players logs both slot
+  resets, the board loads, Toy Box loads again, and pads 2-4 re-join and move.
 - **[obs] How level load brings players back** (`0x1405ae570`, `queries/49`, `71`): the class
   for player 0 is the level's `DefaultAvatar` (or a fixed one for Buzz/train/Bonnie levels); for
   player 1 it is `DefaultAvatar2`, **only when the input driver has exactly 2 assigned players**

@@ -200,6 +200,27 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
 - **[unk]** How the world-streaming manager behaves with 3-4 players (two region slots), which
   viewport each player's camera renders to, and the per-player HUD.
 
+### 5b. First 3-player run (2026-10-16, `queries/37`-`41`, `tools/dump_stack.py`)
+
+- **[obs]** Toy Box with virtual pads: P2 dropped in through the hooks exactly like vanilla
+  (`bind idx=1`, vertical split). P3's Start was accepted (`input_dev2` set, first free index 2),
+  `JOIN IN` opened, and the bind ran with `idx=2`. `player_count`, `split_mode` and
+  `viewport_count` all went to 3.
+- **[obs]** The `JOIN IN` menu only reacted to pad 2. The handler opens it with
+  `push_screen(screen, 1)` (`MOV EDX,1` at `0x1400eb912`), and that 1 is the owning player index.
+- **[obs]** The game then raised `EXCEPTION_BREAKPOINT` in `DebugBreak`. Chain:
+  `assign_avatar 0x1405f1030` -> slot init `0x1405f0cf0` -> pool grow `0x140040bf0` (node 0x18) ->
+  heap alloc `0x140242630`. The allocator breaks when `FUN_140245790` finds no free block and the
+  heap has flag `0x2000`.
+- **[obs]** The heap object (`0x1409bb8a0`, the allocator's RSI) is named inline `"System"`
+  (`+0x28`). Its size is `0x20000000` (512 MB, `+0x48`) with `0xe4a6` bytes free (`+0x120`). The size
+  comes from the immediate at `0x1402440ec` in the heap setup `0x140244030`. `HeapSizes.lua` defines
+  no level heaps, so the System heap carries Toy Box.
+- **[obs]** The per-player object array at `mgr+0xd8` holds **2** entries in Toy Box, so
+  `GetPlayerObject(2|3)` returns null.
+- **[inf]** Two-player Toy Box already sits at the 512 MB budget. Raising the cap to 1 GB costs
+  nothing on a 64-bit PC.
+
 ## 6. Rendering and window
 
 - **[obs]** `-dxresolution WxH` is parsed with `strtok` (`0x1402a5930`); the window is created

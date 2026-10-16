@@ -17,7 +17,25 @@ Virtual pads are system-wide, so don't run them while another game on the PC is 
 
 Expect `identity OK`, `applied N patches`, `mgr relocated: OK`, and a clean exit from the menu.
 
-## T2: two players, vanilla regression
+## Driving it without a person at the PC
+
+```sh
+work/venv/Scripts/python -u tools/pad.py --pads 3 --follow work/out/pad_cmds.txt &   # virtual pads stay connected
+echo "press 1 START" >> work/out/pad_cmds.txt                                         # one command per line
+powershell -File tools/shot.ps1 <out.png> 3                                            # look at the game window
+echo quit >> work/out/pad_cmds.txt
+```
+
+Route used on 2026-10-16: title `START` -> Game Select `A` (Start Game) -> `A` (Load Game) -> `A`
+(save slot) -> board: left stick moves the pencil cursor; Toy Box is top right (`stick 1 L 1 0 450`
+from the start position) -> `A` -> character select (P1 `A`) -> load. In Toy Box, `START` on another
+pad opens JOIN IN. Back up `%APPDATA%\Disney\Toy Story 3 Complete Edition` first, because Toy Box
+autosaves.
+
+Crash triage: `tools/dump_stack.py` on the WER dump in `%LOCALAPPDATA%\CrashDumps` gives the real
+fault context and the game return addresses on the stack (VA of the analysed exe).
+
+## T2: two players, vanilla regression (passed 2026-10-16)
 
 1. Start Toy Box (or any level allowing drop-in) with pad 1.
 2. Press Start on pad 2 and pick a character.
@@ -26,7 +44,7 @@ Expect `join ... joining_index 1`, `bind_joining_avatar idx=1`, `player_count 1 
 `viewport_count 1 -> 2`, `split_mode 0 -> 2` (vertical) or `1` (horizontal). Play for a few minutes,
 then have P2 leave. Anything different from the unmodded game is a regression.
 
-## T3: third player
+## T3: third player (run 1 on 2026-10-16: bind OK, then out of System heap; fix pending)
 
 With two players in, press Start on pad 3 and pick a character.
 

@@ -131,6 +131,12 @@ pub fn alloc_near(module_base: u64, image_size: u64, size: usize, accept: &dyn F
     None
 }
 
+/// Small RWX allocation anywhere (hook thunks).
+pub fn alloc_exec(size: usize) -> Option<u64> {
+    let p = unsafe { VirtualAlloc(null(), size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE) };
+    (!p.is_null()).then_some(p as u64)
+}
+
 /// Copies `data` into our own buffer (RW, allocated by us).
 pub fn fill(buffer: u64, data: &[u8]) {
     unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), buffer as *mut u8, data.len()) };

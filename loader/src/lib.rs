@@ -1,7 +1,11 @@
 //! ts3online: a `dinput8.dll` proxy that patches Toy Story 3 in memory before its CRT initializers run.
 pub mod config;
 pub mod doc;
+#[cfg(windows)]
+pub mod game;
 pub mod hex;
+#[cfg(windows)]
+pub mod hooks;
 pub mod log;
 pub mod patch;
 pub mod watch;
@@ -11,7 +15,7 @@ mod win;
 
 #[cfg(windows)]
 mod entry {
-    use crate::{config, doc, log, patch, watch, win};
+    use crate::{config, doc, game, hooks, log, patch, watch, win};
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use windows_sys::core::{GUID, HRESULT};
@@ -108,6 +112,47 @@ mod entry {
             return log!("{} mismatches; nothing applied", bad.len());
         }
 
+        // every hook name must resolve, else nothing is applied
+        let mut unknown = false;
+        for p in &doc.patches {
+            if let doc::Op::Hook { name, .. } = &p.op {
+                if hooks::resolve(name).is_none() {
+                    log!("unknown hook {name:?} in patch {}", p.id);
+                    unknown = true;
+                }
+            }
+        }
+        if unknown {
+            return log!("unknown hook names; nothing applied");
+        }
+        game::set_module_base(base);
+
+        // thunks for entry_caller hooks, one per name, in a small RWX allocation
+        let mut thunk_names: Vec<&str> = Vec::new();
+        for p in &doc.patches {
+            if let doc::Op::Hook { mode: doc::HookMode::EntryCaller, name } = &p.op {
+                if !thunk_names.contains(&name.as_str()) {
+                    thunk_names.push(name);
+                }
+            }
+        }
+        let mut thunks: Vec<(&str, u64)> = Vec::new();
+        if !thunk_names.is_empty() {
+            let Some(page) = win::alloc_exec(thunk_names.len() * 32) else {
+                return log!("could not allocate the hook thunk page");
+            };
+            for (i, n) in thunk_names.iter().enumerate() {
+                let at = page + i as u64 * 32;
+                win::fill(at, &patch::thunk_bytes(hooks::resolve(n).unwrap_or(0)));
+                thunks.push((n, at));
+                log!("thunk for {n} at {at:#x}");
+            }
+        }
+        let resolve = |mode: doc::HookMode, name: &str| match mode {
+            doc::HookMode::EntryCaller => thunks.iter().find(|(n, _)| *n == name).map(|(_, a)| *a),
+            _ => hooks::resolve(name),
+        };
+
         let Some(old) = patch::Mem::read(&mem, base + rel.old_rva, rel.old_size) else {
             return log!("cannot read the old object at rva {:#x}", rel.old_rva);
         };
@@ -115,13 +160,13 @@ mod entry {
             Ok(v) => v,
             Err(e) => return log!("{e}"),
         };
-        let fits = |a: u64| patch::all_fit(&doc.patches, base, a);
+        let fits = |a: u64| patch::all_fit(&doc.patches, base, a, &resolve);
         let Some(buffer) = win::alloc_near(base, doc.size_of_image as u64, rel.new_size, &fits) else {
             return log!("no free address within reach of the module for the relocation buffer");
         };
         win::fill(buffer, &new_obj);
 
-        match patch::apply(&mut mem, base, buffer, &doc.patches) {
+        match patch::apply(&mut mem, base, buffer, &doc.patches, &resolve) {
             Ok(counts) => {
                 win::flush_icache();
                 let g: Vec<String> = counts.iter().map(|(g, n)| format!("{g}={n}")).collect();

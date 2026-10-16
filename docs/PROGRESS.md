@@ -76,6 +76,10 @@ Oldest first. One entry per working session: what was learned, what changed, wha
   notes; `tools/gen_patches.py` regenerates it with the patch set. README status and tool list
   brought up to date.
 
-**Next:** streaming rig (PLAN phase 6): needs persistent virtual displays (a driver install on the host), then
-`enable=quadrants` + `window=` in game. Later: HUD for players 3/4, auto-restoring P3/P4 after a
-level change.
+- Native online design (`docs/NETCODE.md`): deterministic lockstep with pad inputs as the only
+  network traffic, chosen over state replication. The exe's determinism surface is small and
+  centralised (FINDINGS §8): one game clock with a dormant fixed-time override, 6 `rand` callers
+  and no `srand`, Bullet physics, a job system and a few async tasks.
+
+**Next:** phase N0 of NETCODE.md (a replay harness: fixed clock, record and replay pad input, hash
+state per frame) to measure determinism. The streaming rig (PLAN phase 6) is the fallback.

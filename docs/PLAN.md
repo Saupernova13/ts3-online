@@ -45,6 +45,13 @@ rel32 retargeted to a stub allocated near the module.
 
 Loader features this needs: `hook` (entry jump), `call_redirect` (rel32 retarget via near stub).
 
+## Native online play
+
+Real netcode instead of streaming: deterministic lockstep, where every PC runs the same 4-player
+game and only pad inputs cross the network. Design, evidence and phases N0-N5 are in
+[NETCODE.md](NETCODE.md). It reuses everything from phases 3-5; the streaming rig below stays as
+the fallback that needs no determinism.
+
 ## Streaming options (phase 6)
 
 | Option | How | Cost |

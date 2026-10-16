@@ -4,6 +4,7 @@
     python -I tools/pe_info.py strings <exe> [regex]        ASCII + UTF-16LE, length >= 6
     python -I tools/pe_info.py va <exe> <file-offset-hex>
     python -I tools/pe_info.py diff <original-exe> <patched-exe>
+    python -I tools/pe_info.py qwords <exe> <va-hex> [count]  e.g. vtable slots (default 16)
 
 Needs pefile (pip install pefile).
 """
@@ -60,8 +61,18 @@ def cmd_diff(orig, patched):
         print(f"offset {s:#x} va {va:#x} len {e - s}: {a[s:e].hex()} -> {b[s:e].hex()}")
 
 
+def cmd_qwords(exe, va, count="16"):
+    pe = pefile.PE(exe, fast_load=True)
+    base = pe.OPTIONAL_HEADER.ImageBase
+    start = int(va, 16)
+    data = pe.get_data(start - base, int(count) * 8)
+    for i in range(int(count)):
+        q = int.from_bytes(data[i * 8:i * 8 + 8], "little")
+        print(f"{start + i * 8:#x} +{i * 8:#05x}: {q:#x}")
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print(__doc__)
         sys.exit(2)
-    {"imports": cmd_imports, "strings": cmd_strings, "va": cmd_va, "diff": cmd_diff}[sys.argv[1]](*sys.argv[2:])
+    {"imports": cmd_imports, "strings": cmd_strings, "va": cmd_va, "diff": cmd_diff, "qwords": cmd_qwords}[sys.argv[1]](*sys.argv[2:])

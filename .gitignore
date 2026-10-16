@@ -9,3 +9,4 @@ work/
 *.bank
 __pycache__/
 *.pyc
+loader/target/

@@ -218,8 +218,21 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   no level heaps, so the System heap carries Toy Box.
 - **[obs]** The per-player object array at `mgr+0xd8` holds **2** entries in Toy Box, so
   `GetPlayerObject(2|3)` returns null.
-- **[inf]** Two-player Toy Box already sits at the 512 MB budget. Raising the cap to 1 GB costs
-  nothing on a 64-bit PC.
+- **[obs] Correction, the real cause (run 2 with a 1 GB cap and a free-space watch):** the System
+  heap had ~865 MB free at the title screen, and a 1 GB cap was exhausted just like 512 MB.
+  It is a runaway loop, not a budget. Slot init `0x1405f0cf0(slot, avatar)` drains the
+  control stack of `slot->index` (`DAT_140ac61c0`; per-player stacks at `+0x58 + i*8`; top
+  `0x14027d390`, pop `0x140280930`), allocating a node per item. Level setup `0x1405ae570` writes
+  only `slot0.index = 0` (`mgr+0x198`) and `slot1.index = 1` (`mgr+0x1f0`). Slots 2/3 keep the slot
+  ctor's `-1` (`0x14059aac0`), so the loop runs on "stack -1" forever.
+  Fix: `bind_joining_avatar` writes `slot[idx].index = idx` when it is still -1. The 1 GB cap stays
+  as headroom.
+- **[obs]** Level setup `0x1405ae570` (callers `0x1405bec50`, `0x1405d81a0`) gathers up to 16
+  scene objects named `Meridian_Player_%d` as the per-player objects. Toy Box has two, which is
+  why `mgr+0xd8` has 2 entries. It spawns the avatars, then runs per-player setup
+  `0x1405b0420(mgr, 0|1)` for slots 0 and 1 only.
+- **[unk]** What players 3/4 lose without a `Meridian_Player_2/3` object and `0x1405b0420` setup
+  (camera rig?).
 
 ## 6. Rendering and window
 

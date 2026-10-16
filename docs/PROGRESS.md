@@ -37,5 +37,14 @@ Newest first. One entry per working session: what was learned, what changed, wha
   assign, screen owner and release); the `release_joining` call hook and the three join byte
   patches are gone, and a 1 GB "System" heap patch was added. Not run in the game yet.
 
-**Next:** run the loader in the game and read its log (phase 3 check). Then hand-review the 39 + 13 sites and look for per-player arrays outside the manager (HUD,
-cameras, control mappers).
+- In-game runs (virtual pads, Toy Box): loader boots and exits cleanly (T1); 2-player drop-in
+  through the Rust hooks matches vanilla (T2). Three players: P3 joins with its own pad, binds
+  to slot 2, and the engine switches to the 3-way split, then dies in a runaway loop in slot init.
+  Root cause: slots 2/3 keep player index -1 (FINDINGS 5b). Fixed in `bind_joining_avatar`; not
+  re-run yet.
+- Automated testing paused: virtual-pad presses reached the user's desktop when the game lost
+  focus. Further in-game runs wait for an agreed test window.
+
+**Next:** in a test window, re-run T3/T4 (3 and 4 players in Toy Box) and check whose view each
+viewport shows and whether P3/P4 can move. Then look at what P3/P4 lack without
+`Meridian_Player_2/3` objects and per-player setup `0x1405b0420`.

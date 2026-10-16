@@ -2,6 +2,8 @@
 
     work/venv/Scripts/python tools/pad.py --pads 4 script.txt
     work/venv/Scripts/python tools/pad.py --pads 4 -          (script from stdin)
+    work/venv/Scripts/python tools/pad.py --pads 4 --follow cmds.txt
+        keeps the pads connected and runs lines as they are appended to cmds.txt; `quit` ends it
 
 The pads exist until the script ends. Script lines (pad numbers are 1-based, in creation order):
     wait <ms>
@@ -66,16 +68,37 @@ def run(pads, lines):
         print(f"[{time.strftime('%H:%M:%S')}] {line}", flush=True)
 
 
+def follow(pads, path):
+    pos = 0
+    while True:
+        with open(path, encoding="utf-8") as f:
+            f.seek(pos)
+            chunk = f.read()
+            pos = f.tell()
+        lines = chunk.splitlines()
+        if any(l.strip() == "quit" for l in lines):
+            run(pads, lines[:[l.strip() for l in lines].index("quit")])
+            return
+        run(pads, lines)
+        time.sleep(0.1)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pads", type=int, default=1)
-    ap.add_argument("script")
+    ap.add_argument("--follow", help="command file to tail instead of a script")
+    ap.add_argument("script", nargs="?")
     a = ap.parse_args()
-    lines = sys.stdin.readlines() if a.script == "-" else open(a.script, encoding="utf-8").readlines()
     pads = [vg.VX360Gamepad() for _ in range(a.pads)]
     time.sleep(1.0)  # let Windows enumerate the new devices
     try:
-        run(pads, lines)
+        if a.follow:
+            open(a.follow, "a").close()
+            print(f"following {a.follow} with {a.pads} pads", flush=True)
+            follow(pads, a.follow)
+        else:
+            lines = sys.stdin.readlines() if a.script == "-" else open(a.script, encoding="utf-8").readlines()
+            run(pads, lines)
     finally:
         for p in pads:
             p.reset()

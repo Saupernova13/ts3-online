@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(rip, 65);
         let hooks: Vec<_> = d.patches.iter().filter(|p| matches!(p.op, Op::Hook { .. })).collect();
         assert_eq!(hooks.len(), 4);
-        assert!(hooks.iter().any(|p| matches!(&p.op, Op::Hook { mode: HookMode::Call, name } if name == "release_joining")));
+        assert!(hooks.iter().any(|p| matches!(&p.op, Op::Hook { mode: HookMode::Entry, name } if name == "join_request")));
         assert!(d.watch.iter().any(|w| w.name == "pobj_count"));
         assert!(d.watch.iter().any(|w| w.name == "mgr" && w.src == Source::Rva(0xb2ef50)));
     }

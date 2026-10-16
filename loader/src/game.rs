@@ -22,6 +22,7 @@ pub const EVENTS: u64 = 0x1_40b2_9a70;
 pub const FLAGS: u64 = 0x1_40b2_ac90;
 pub const RIDES: u64 = 0x1_4099_b8b0;
 pub const STREAMING: u64 = 0x1_40b2_ef20;
+pub const UI_PTR: u64 = 0x1_40b2_ef10;
 
 pub const SLOT_AVATAR_BASE: u64 = 0x1a0;
 pub const SLOT_STRIDE: u64 = 0x58;
@@ -66,8 +67,31 @@ game_fn!(lvltest, 0x1_4050_2bb0, fn(flags: u64, level_info: u64, h: u64) -> u8);
 game_fn!(autodrive, 0x1_4019_b110, fn(rides: u64, idx: u32, avatar: u64, start: u64) -> ());
 game_fn!(streaming, 0x1_405d_6ae0, fn(s: u64, idx: u32, level_info: u64, flag: u8) -> ());
 game_fn!(join_cancel_tail, 0x1_400e_7450, fn(screen: u64) -> u64);
+game_fn!(can_join, 0x1_405c_e0e0, fn(mgr: u64) -> u8);
+game_fn!(post_event, 0x1_4047_8530, fn(name: u64, arg: u64) -> ());
+game_fn!(level_name, 0x1_405b_b6a0, fn() -> u64);
+game_fn!(get_screen, 0x1_404b_26c0, fn(ui: u64, name: u64) -> u64);
+game_fn!(push_screen, 0x1_405d_6590, fn(screen: u64, idx: u32) -> u8);
 game_fn!(registry_get, 0x1_4055_8400, fn(entry: u64) -> u64);
 game_fn!(prop_string, 0x1_404f_dff0, fn(obj: u64, name: u64, flag: u8) -> u64);
+
+/// Calls `this->vtable[off](this)` returning AL.
+pub unsafe fn vt_u8(this: u64, off: u64) -> u8 {
+    let f: extern "system" fn(u64) -> u8 = std::mem::transmute(rd_u64(rd_u64(this) + off) as usize);
+    f(this)
+}
+
+/// Calls `this->vtable[off](this)` returning EAX.
+pub unsafe fn vt_u32(this: u64, off: u64) -> u32 {
+    let f: extern "system" fn(u64) -> u32 = std::mem::transmute(rd_u64(rd_u64(this) + off) as usize);
+    f(this)
+}
+
+/// Input driver vtable +0x80: assign(this, player, device).
+pub unsafe fn input_assign(input: u64, player: u32, device: u32) {
+    let f: extern "system" fn(u64, u32, u32) = std::mem::transmute(rd_u64(rd_u64(input) + 0x80) as usize);
+    f(input, player, device)
+}
 
 /// Input driver vtable +0x88: release(this, player).
 pub unsafe fn input_release(input: u64, player: u32) {

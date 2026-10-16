@@ -33,5 +33,9 @@ Newest first. One entry per working session: what was learned, what changed, wha
   the watch list now includes the input driver and the player-object count. Unit-tested
   encodings only; not run in the game.
 
+- Join handler `0x1400eb6f0` is now the Rust hook `join_request` (first free player index for
+  assign, screen owner and release); the `release_joining` call hook and the three join byte
+  patches are gone, and a 1 GB "System" heap patch was added. Not run in the game yet.
+
 **Next:** run the loader in the game and read its log (phase 3 check). Then hand-review the 39 + 13 sites and look for per-player arrays outside the manager (HUD,
 cameras, control mappers).

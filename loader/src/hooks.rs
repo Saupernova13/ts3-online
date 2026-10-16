@@ -1,14 +1,14 @@
 //! Rust replacements for game code with a hardcoded player index (FINDINGS 5a).
 use crate::game::*;
 use crate::log;
-use std::ffi::c_char;
+use std::ffi::{c_char, CStr};
 
 /// Address of the Rust function behind a hook name, or None if unknown.
 pub fn resolve(name: &str) -> Option<u64> {
     Some(match name {
         "bind_joining_avatar" => bind_joining_avatar as *const () as u64,
         "join_cancel" => join_cancel as *const () as u64,
-        "release_joining" => release_joining as *const () as u64,
+        "join_request" => join_request as *const () as u64,
         "find_avatar_by_class" => find_avatar_by_class as *const () as u64,
         _ => return None,
     })
@@ -78,11 +78,60 @@ pub unsafe extern "system" fn join_cancel(screen: u64) -> u64 {
     join_cancel_tail(screen)
 }
 
-/// Called from the join handler's failure path instead of `release(1)`.
-pub unsafe extern "system" fn release_joining() {
-    let idx = joining_index();
-    log!("hook release_joining idx={idx}");
-    input_release(global(INPUT_PTR), idx);
+/// Levels where joining asks to restart the level first.
+const RESTART_LEVELS: [&str; 14] = [
+    "st_train",
+    "trainstub",
+    "st_prisonbreak",
+    "st_bonnie_woody",
+    "st_bonnie_woody_rocket",
+    "st_hauntedbakery",
+    "st_buzzgame",
+    "st_buzzgame_int",
+    "st_buzzflight",
+    "st_junkyard",
+    "holotest-multiplayer",
+    "st_andysroom",
+    "st_andysbasement",
+    "st_daycare",
+];
+
+pub fn needs_restart(level: &str) -> bool {
+    RESTART_LEVELS.iter().any(|l| l.eq_ignore_ascii_case(level))
+}
+
+/// Replaces 0x1400eb6f0: a pad asks to join. Uses the first free player index throughout.
+pub unsafe extern "system" fn join_request(pad: u32) {
+    let ui = global(UI_PTR);
+    if vt_u8(ui, 0xa0) == 0 && pad != 1 {
+        return;
+    }
+    let mgr = global(MGR_PTR);
+    let p1 = rd_u64(mgr + SLOT_AVATAR_BASE);
+    let blocked = if p1 != 0 { flagtest(global(FLAGS), rd_u64(p1 + 0x408), hash(0xd1)) } else { 0 };
+    if can_join(mgr) == 0 || blocked != 0 {
+        log!("hook join_request pad={pad} refused (can_join/blocked={blocked})");
+        post_event(va(0x1_4078_dbb0), 0); // "PlayerJoinDisallowed"
+        return;
+    }
+    let input = global(INPUT_PTR);
+    let idx = vt_u32(input, 0xd8); // first free player, 0xffffffff when none
+    if idx >= 4 {
+        log!("hook join_request pad={pad} no free player index ({idx:#x})");
+        return;
+    }
+    input_assign(input, idx, pad);
+    let lp = level_name();
+    let level = if lp != 0 { CStr::from_ptr(lp as *const c_char).to_string_lossy().into_owned() } else { String::new() };
+    let screen_name = if needs_restart(&level) { va(0x1_4078_6d28) } else { va(0x1_4078_0570) };
+    let scr = get_screen(ui, screen_name);
+    let name = CStr::from_ptr(screen_name as *const c_char).to_string_lossy();
+    log!("hook join_request pad={pad} idx={idx} level={level:?} screen={name} scr={scr:#x}");
+    let ok = push_screen(scr, idx); // no null check, like the original
+    if ok == 0 {
+        log!("hook join_request screen failed to open, releasing idx={idx}");
+        input_release(input, idx);
+    }
 }
 
 /// Replaces 0x1405bae40: avatar-by-class lookup; pick-handler calls skip avatars that belong to a player.
@@ -111,4 +160,17 @@ pub unsafe extern "system" fn find_avatar_by_class(mgr: u64, class: u64, ret: u6
         log!("hook find_avatar_by_class -> none");
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restart_levels_match_case_insensitively() {
+        assert!(needs_restart("ST_Train"));
+        assert!(needs_restart("holotest-multiplayer"));
+        assert!(!needs_restart("st_toybox"));
+        assert!(!needs_restart(""));
+    }
 }

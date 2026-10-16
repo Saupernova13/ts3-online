@@ -54,6 +54,33 @@ Loader features this needs: `hook` (entry jump), `call_redirect` (rel32 retarget
 
 Audio is the host's single mix for everyone in both options.
 
+### Rig design (2026-10-16)
+
+Host inventory: Apollo 0.4.6 (running as a service for the user's own remote play, so the rig
+uses separate instances with their own config and ports and never edits that config), the
+SudoMaker virtual display adapter, Tailscale 1.102.2, ViGEm Bus 1.21, Moonlight 6.1. Primary
+display: a 1920x1080 TV.
+
+Game side (loader, opt-in through `ts3online.ini`):
+- `enable = quadrants`: every split request builds 4 quadrants (patch `0x1405f4718`), so each
+  player always has the same 16:9 quarter of the frame, whatever the player count. Without it, 2
+  players get half-screens and player 3 gets a full-width strip (mode 3).
+- `window = x,y,w,h`: borderless game window at that rect; with `-dxresolution 3840x2160` the
+  quarters are 1920x1080 each.
+
+| | A. Spanning | C. Crop mirror |
+|---|---|---|
+| Layout | TV + 3 virtual 1920x1080 displays in a 2x2 grid; the game window spans them | game window on one 3840x2160 display; a mirror app shows quadrant k full screen on display k |
+| Streams | one Apollo instance per virtual display (`output_name`, own port base) | same |
+| Cost | no new code beyond the loader options | an extra GPU copy and about a frame of latency |
+| Full-screen UI | menus, cutscenes and loading screens are split across the four players | the mirror shows the whole frame, scaled, when the game has one viewport or a full-screen menu (the loader can publish that state) |
+
+Input: each Apollo instance creates a virtual X360 pad per client, and XInput order follows
+connection order, so the connection order decides player numbers. The host's own pad is player 1.
+
+Plan: prove the loop with A (two machines on the tailnet, two quadrants), then decide whether the
+full-screen UI problem needs C.
+
 ## Risks
 
 - `< 2` literals that are not `MAX_PLAYERS` (patching the wrong ones breaks unrelated logic).

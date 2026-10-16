@@ -53,6 +53,10 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   (read in `0x14021e830`, `0x140190750`), the Lua binding `Players_SetSplitScreenVertical`
   (`0x1405ec690`) and the choreography node `MNode::SplitScreenMode` (`0x1406bfa50`).
   `0x1405f2440` re-applies the mode when the flag flips with exactly 2 players.
+- **[obs]** `0x1405f4700` loads the mode with `movsxd rdi, ecx` (`0x1405f4718`) before it fires
+  `SplitScreenChanging`, stores the mode global and dispatches, so replacing that one instruction
+  with `push 4; pop rdi` forces quadrants everywhere (`queries/72`). Opt-in loader group
+  `quadrants` (PLAN, rig design).
 
 ## 3. Player manager is compiled for 2 players
 

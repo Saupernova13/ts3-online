@@ -59,7 +59,11 @@ Newest first. One entry per working session: what was learned, what changed, wha
   (FINDINGS 5e). Level teardown reset slots 0/1 only (stale P3/P4 avatars on level change): new
   `reset_player_slots` call hook resets slots 1..3 and releases the P3/P4 pads. 219 patches.
   `tools/pe_info.py qwords` reads vtables without Ghidra.
-- Deployed; not run in the game yet.
+- Streaming groundwork: rig design in PLAN (Apollo instances on persistent virtual displays;
+  Apollo's per-stream virtual display only works for one instance). Loader options, off by
+  default: `enable=quadrants` (optional patch groups) and `window=x,y,w,h` (borderless placement).
+  Full-screen moments (shared screen, a player leaving) still use one viewport.
+- Deployed (220 patches with the optional group); not run in the game yet.
 
 **Next:** test window: confirm P3/P4 move, and that leaving Toy Box with 4 players does not crash.
 Then the HUD for players 3/4 and the streaming rig (PLAN phase 6).

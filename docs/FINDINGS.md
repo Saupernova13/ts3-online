@@ -57,6 +57,14 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `SplitScreenChanging`, stores the mode global and dispatches, so replacing that one instruction
   with `push 4; pop rdi` forces quadrants everywhere (`queries/72`). Opt-in loader group
   `quadrants` (PLAN, rig design).
+- **[obs] Full-screen moments bypass it.** Shared-screen mode (`0x1405f2200`,
+  `SharedScreenModeChanged`) and a player leaving (`0x1405f1030`) set mode 0 and one viewport
+  inline, without `0x1405f4700`. So forced quadrants still drop to one full-screen viewport there,
+  visible as viewport count `0x1409581a8 == 1` (`queries/72`). Shared mode also switches only
+  slots 0/1's `CameraState`.
+- **[obs]** The pre-level avatar select (`ScreenBGAvatarSelect2`, `queries/73`) is built for 2:
+  `P1ToLeft`, `Scn_AvatarSelect_Player1/2`, owner index `< 2`, and it releases pad 1. Because the
+  teardown hook releases the P3/P4 pads, it only involves P1/P2; P3/P4 re-join in the level.
 
 ## 3. Player manager is compiled for 2 players
 

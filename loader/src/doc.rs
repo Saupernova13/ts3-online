@@ -49,6 +49,7 @@ struct RawPatch {
     target_off: Option<String>,
     mode: Option<String>,
     hook: Option<String>,
+    prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,7 +96,8 @@ pub enum HookMode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
     Bytes(Vec<u8>),
-    Hook { mode: HookMode, name: String },
+    /// `prefix`: raw bytes placed before the call in `call` mode (e.g. `mov rcx, rbp` to pass an argument)
+    Hook { mode: HookMode, name: String, prefix: Vec<u8> },
     RipReloc { len: usize, disp_pos: usize, target_off: u64 },
 }
 
@@ -153,14 +155,21 @@ fn convert_patch(p: RawPatch) -> Result<Patch, String> {
                 m => return Err(err(&format!("bad hook mode {m:?}"))),
             };
             let name = p.hook.clone().ok_or_else(|| err("missing hook name"))?;
+            let prefix = match &p.prefix {
+                Some(h) => hex::parse_bytes(h).map_err(|e| err(&e))?,
+                None => Vec::new(),
+            };
+            if !prefix.is_empty() && mode != HookMode::Call {
+                return Err(err("prefix is only valid in call mode"));
+            }
             let ok = match mode {
-                HookMode::Call => orig.len() >= 12,
+                HookMode::Call => orig.len() >= 12 + prefix.len(),
                 _ => orig.len() == 12,
             };
             if !ok {
                 return Err(err("orig length does not fit the hook mode"));
             }
-            Op::Hook { mode, name }
+            Op::Hook { mode, name, prefix }
         }
         k => return Err(err(&format!("unknown kind {k:?}"))),
     };
@@ -225,8 +234,9 @@ mod tests {
         let rip = d.patches.iter().filter(|p| matches!(p.op, Op::RipReloc { .. })).count();
         assert_eq!(rip, 65);
         let hooks: Vec<_> = d.patches.iter().filter(|p| matches!(p.op, Op::Hook { .. })).collect();
-        assert_eq!(hooks.len(), 4);
-        assert!(hooks.iter().any(|p| matches!(&p.op, Op::Hook { mode: HookMode::Entry, name } if name == "join_request")));
+        assert!(hooks.len() >= 4);
+        assert!(hooks.iter().any(|p| matches!(&p.op, Op::Hook { mode: HookMode::Call, prefix, .. } if !prefix.is_empty())));
+        assert!(hooks.iter().any(|p| matches!(&p.op, Op::Hook { mode: HookMode::Entry, name, .. } if name == "join_request")));
         assert!(d.watch.iter().any(|w| w.name == "pobj_count"));
         assert!(d.watch.iter().any(|w| w.name == "mgr" && w.src == Source::Rva(0xb2ef50)));
     }

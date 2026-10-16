@@ -130,7 +130,7 @@ mod entry {
         // thunks for entry_caller hooks, one per name, in a small RWX allocation
         let mut thunk_names: Vec<&str> = Vec::new();
         for p in &doc.patches {
-            if let doc::Op::Hook { mode: doc::HookMode::EntryCaller, name } = &p.op {
+            if let doc::Op::Hook { mode: doc::HookMode::EntryCaller, name, .. } = &p.op {
                 if !thunk_names.contains(&name.as_str()) {
                     thunk_names.push(name);
                 }

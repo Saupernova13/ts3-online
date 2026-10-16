@@ -138,8 +138,9 @@ def main():
             errors.append(f"hook {m['id']}: {m['mode']} needs 12 orig bytes")
         if m["mode"] == "call" and len(orig) < 12:
             errors.append(f"hook {m['id']}: call needs >= 12 orig bytes")
+        extra = {"prefix": m["prefix"]} if m.get("prefix") else {}
         add(m["id"], "hooks", int(m["va"], 16), orig, kind="hook", mode=m["mode"], hook=m["hook"],
-            note=m["note"])
+            note=m["note"], **extra)
 
     if errors:
         print("\n".join(errors), file=sys.stderr)

@@ -166,6 +166,26 @@
    "hook": "find_avatar_by_class",
    "orig": "48895c240848896c24104889",
    "note": "avatar-by-class lookup: unchanged except calls from the pick handler skip player-owned avatars"
+  },
+  {
+   "id": "hook_controls_1405f8b3a",
+   "group": "hooks",
+   "va": "0x1405f8b3a",
+   "mode": "call",
+   "hook": "refresh_player_controls",
+   "prefix": "4889e9",
+   "orig": "4883bd40020000000f94c24d85c00f94c022d0488b8df80100004885c97412389128040000740a488b01ff904801000090",
+   "note": "global controls-disabled remove (0x1405f8a70): slot-1 refresh block -> refresh slots 1..3; mgr in RBP"
+  },
+  {
+   "id": "hook_controls_1405d32da",
+   "group": "hooks",
+   "va": "0x1405d32da",
+   "mode": "call",
+   "hook": "refresh_player_controls",
+   "prefix": "4889f1",
+   "orig": "4883be40020000000f94c24d85c00f94c022d0488b8ef80100004885c97412389128040000740a488b01ff904801000090",
+   "note": "global controls-disabled add (0x1405d3200): slot-1 refresh block -> refresh slots 1..3; mgr in RSI"
   }
  ],
  "deferred": [

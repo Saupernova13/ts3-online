@@ -39,6 +39,16 @@ pub unsafe fn rd_i32(addr: u64) -> i32 {
     std::ptr::read_unaligned(addr as *const i32)
 }
 
+pub unsafe fn rd_u8(addr: u64) -> u8 {
+    std::ptr::read(addr as *const u8)
+}
+
+/// Calls `this->vtable[off](this)` with no other arguments.
+pub unsafe fn vcall0(this: u64, off: u64) {
+    let f: extern "system" fn(u64) = std::mem::transmute(rd_u64(rd_u64(this) + off) as usize);
+    f(this)
+}
+
 pub unsafe fn wr_i32(addr: u64, v: i32) {
     std::ptr::write_unaligned(addr as *mut i32, v)
 }

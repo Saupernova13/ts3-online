@@ -69,7 +69,7 @@ fn nops(mut n: usize) -> Vec<u8> {
 /// The bytes a patch writes, given the module base, relocation buffer and hook resolver.
 pub fn patch_bytes(p: &Patch, module_base: u64, buffer: u64, resolve: Resolver) -> Result<Vec<u8>, String> {
     match &p.op {
-        Op::Hook { mode, name } => {
+        Op::Hook { mode, name, prefix } => {
             let target = resolve(*mode, name).ok_or_else(|| format!("patch {}: unknown hook {name:?}", p.id))?;
             let mut b = match mode {
                 HookMode::Entry | HookMode::EntryCaller => {
@@ -79,10 +79,12 @@ pub fn patch_bytes(p: &Patch, module_base: u64, buffer: u64, resolve: Resolver) 
                     mov_rax_then(target, [0xff, 0xe0])
                 }
                 HookMode::Call => {
-                    if p.orig.len() < 12 {
-                        return Err(format!("patch {}: call hook needs >= 12 bytes", p.id));
+                    if p.orig.len() < 12 + prefix.len() {
+                        return Err(format!("patch {}: call hook needs >= {} bytes", p.id, 12 + prefix.len()));
                     }
-                    mov_rax_then(target, [0xff, 0xd0])
+                    let mut b = prefix.clone();
+                    b.extend(mov_rax_then(target, [0xff, 0xd0]));
+                    b
                 }
             };
             b.extend(nops(p.orig.len() - b.len()));
@@ -229,7 +231,7 @@ pub mod tests {
             group: "hooks".into(),
             rva: 0,
             orig: vec![0xcc; len],
-            op: Op::Hook { mode, name: "f".into() },
+            op: Op::Hook { mode, name: "f".into(), prefix: Vec::new() },
         }
     }
 

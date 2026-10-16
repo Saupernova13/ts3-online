@@ -295,7 +295,15 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   no jumps into it from outside; RBX = mgr and R14 = 0 stay live) and resets slots 1..3. Slots 2/3
   also release their pad, because level setup only restores players 0/1, so P3/P4 re-join with
   Start. Not run in game yet.
-- **[unk]** How level load brings P2 back (to do the same for P3/P4 instead of re-joining).
+- **[obs] How level load brings players back** (`0x1405ae570`, `queries/49`, `71`): the class
+  for player 0 is the level's `DefaultAvatar` (or a fixed one for Buzz/train/Bonnie levels); for
+  player 1 it is `DefaultAvatar2`, **only when the input driver has exactly 2 assigned players**
+  (`0x14021fa80`, `vt+0xd0 == 2`). The same `== 2` sets `mgr+0` (1 or 2). Picks made in the join
+  menu are not remembered. So with P3/P4 pads still assigned, P2 would not come back either; the
+  teardown hook's pad release keeps vanilla P2 behaviour.
+- **[inf]** Bringing P3/P4 back automatically needs: remember their class and pad at teardown,
+  then after level setup assign the pad and run the join bind with a spawned copy (no
+  `DefaultAvatar3/4` exists). Deferred until the basics are tested in game.
 - **[obs]** `0x1401b5bc0` disables controls for players `< 2` from a list; its guard
   (`0x1401b5bec`) was already patched by the bounds pass.
 

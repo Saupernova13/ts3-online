@@ -81,6 +81,8 @@ game_fn!(get_screen, 0x1_404b_26c0, fn(ui: u64, name: u64) -> u64);
 game_fn!(push_screen, 0x1_405d_6590, fn(screen: u64, idx: u32) -> u8);
 game_fn!(registry_get, 0x1_4055_8400, fn(entry: u64) -> u64);
 game_fn!(prop_string, 0x1_404f_dff0, fn(obj: u64, name: u64, flag: u8) -> u64);
+game_fn!(slot_init, 0x1_405f_0cf0, fn(slot: u64, avatar: u64) -> ());
+game_fn!(player_setup, 0x1_405b_0420, fn(mgr: u64, idx: u32) -> ());
 
 /// Calls `this->vtable[off](this)` returning AL.
 pub unsafe fn vt_u8(this: u64, off: u64) -> u8 {

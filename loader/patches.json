@@ -2091,6 +2091,105 @@
    "note": "\"System\" heap 512 MB -> 1 GB; a third player's slot setup exhausted it in Toy Box (FINDINGS 5b)"
   },
   {
+   "id": "views_1405ae5a7",
+   "group": "views",
+   "rva": "0x5ae5a7",
+   "orig": "ba02000000",
+   "new": "ba04000000",
+   "kind": "bytes",
+   "note": "level setup creates per-player views with FUN_1404ceed0(arr, 2) -> 4 (array capacity is 5)"
+  },
+  {
+   "id": "view_bound_1405bb040",
+   "group": "views",
+   "rva": "0x5bb040",
+   "orig": "83fa01",
+   "new": "83fa03",
+   "kind": "bytes",
+   "note": "per-player view array guard idx < 2 -> < 4 (FUN_1405bb040)"
+  },
+  {
+   "id": "view_bound_1405bccd0",
+   "group": "views",
+   "rva": "0x5bccd0",
+   "orig": "83fa01",
+   "new": "83fa03",
+   "kind": "bytes",
+   "note": "per-player view array guard idx < 2 -> < 4 (FUN_1405bccd0 player view Avatar group)"
+  },
+  {
+   "id": "view_bound_1405e5ead",
+   "group": "views",
+   "rva": "0x5e5ead",
+   "orig": "4183f801",
+   "new": "4183f803",
+   "kind": "bytes",
+   "note": "per-player view array guard idx < 2 -> < 4 (FUN_1405e5e80)"
+  },
+  {
+   "id": "view_bound_1405e5f46",
+   "group": "views",
+   "rva": "0x5e5f46",
+   "orig": "4183f801",
+   "new": "4183f803",
+   "kind": "bytes",
+   "note": "per-player view array guard idx < 2 -> < 4 (FUN_1405e5f10)"
+  },
+  {
+   "id": "view_bound_1405e6006",
+   "group": "views",
+   "rva": "0x5e6006",
+   "orig": "4183f801",
+   "new": "4183f803",
+   "kind": "bytes",
+   "note": "per-player view array guard idx < 2 -> < 4 (FUN_1405e5fd0)"
+  },
+  {
+   "id": "view_bound_1405e60c6",
+   "group": "views",
+   "rva": "0x5e60c6",
+   "orig": "4183f801",
+   "new": "4183f803",
+   "kind": "bytes",
+   "note": "per-player view array guard idx < 2 -> < 4 (FUN_1405e6090)"
+  },
+  {
+   "id": "view_bound_1405e61fd",
+   "group": "views",
+   "rva": "0x5e61fd",
+   "orig": "83ff01",
+   "new": "83ff03",
+   "kind": "bytes",
+   "note": "per-player view array guard idx < 2 -> < 4 (FUN_1405e6150)"
+  },
+  {
+   "id": "view_bound_1405e6393",
+   "group": "views",
+   "rva": "0x5e6393",
+   "orig": "83ff01",
+   "new": "83ff03",
+   "kind": "bytes",
+   "note": "per-player view array guard idx < 2 -> < 4 (FUN_1405e62b0)"
+  },
+  {
+   "id": "view_bound_1405fbf33",
+   "group": "views",
+   "rva": "0x5fbf33",
+   "orig": "4883fe01",
+   "new": "4883fe03",
+   "kind": "bytes",
+   "note": "per-player view array guard idx < 2 -> < 4 (FUN_1405fbef0 loop over players)"
+  },
+  {
+   "id": "view_bound_1405fc620",
+   "group": "views",
+   "rva": "0x5fc620",
+   "orig": "4883fe01",
+   "new": "4883fe03",
+   "kind": "bytes",
+   "note": "per-player view array guard idx < 2 -> < 4 (FUN_1405fc5b0 loop over players)"
+  },
+  {
    "id": "hook_join_1400eb6f0",
    "group": "hooks",
    "rva": "0xeb6f0",

@@ -27,5 +27,11 @@ Newest first. One entry per working session: what was learned, what changed, wha
   the set, and runs a watcher thread logging manager fields to `ts3online.log`. `cargo test`
   passes; not yet run inside the game.
 
+- Phase 4 start: loader gained `hook` patches (`entry`, `entry_caller` via an R8 thunk, `call`)
+  and Rust hooks for the join bind, join cancel, join failure release and avatar-by-class
+  lookup (`hooks.rs`, `game.rs`); gen_patches.py emits them from `data/patches-manual.json` and
+  the watch list now includes the input driver and the player-object count. Unit-tested
+  encodings only; not run in the game.
+
 **Next:** run the loader in the game and read its log (phase 3 check). Then hand-review the 39 + 13 sites and look for per-player arrays outside the manager (HUD,
 cameras, control mappers).

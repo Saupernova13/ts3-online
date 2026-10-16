@@ -248,19 +248,51 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `player_setup(mgr, idx)`, exactly what level setup does for an absent player 2. Viewports 3/4
   then follow players 3/4.
 
-### 5d. Input for players 3/4 (open)
+### 5d. Input for players 3/4 (`queries/58`-`66`)
 
-- **[obs]** The input dispatch `0x140280b90` loops over 11 players: it binds the controller of player
-  i to the top of control stack i (`vt+0x48`) and updates it (`vt+0x10`). After a P3 join, stack 2's
-  top is a `BuzzControlMapper` (vtable `0x1407aff60`, ctor `0x1401f98e0`), the same class as P2's.
-- **[obs]** The global controls-disabled add/remove functions (`0x1405d3200`, `0x1405f8a70`)
-  refresh the avatar controls flag (`avatar+0x428`, toggled via `vt+0x148`) for slots 0/1 only,
-  unrolled. Hooked to refresh slots 1..3 (`refresh_player_controls`); the log confirms slots 2/3
-  are re-enabled after each join menu.
-- **[obs]** Players 3/4 still do not move with their sticks. P2 does. Buttons on pads 3/4 work in
-  menus (Start, D-pad, A).
-- **[unk]** What gates `BuzzControlMapper` for players 2/3. Next: decompile its `vt+0x48`
-  (`0x1401ff4a0`) and `vt+0x10` (`0x1402194c0`) and watch its bound controller (`entry+0x8`).
+- **[obs] Pad to mapper.** The input dispatch `0x140280b90` loops over 11 players: if player i has
+  a pad (driver `vt+0x90`), it binds the pad's controller (`vt+0x70`) to the top of control stack
+  i (mapper `vt+0x48` stores it at `+0x8`) and updates it (`vt+0x10`). No player-count limit.
+- **[obs] Slot init pushes the avatar's own mapper.** `0x1405f0cf0(slot, avatar)` gets the
+  avatar's `ControlMapper` component (`0x140559010`), registers it (`0x14027a480`), pushes it on
+  stack `slot.index` (`0x140280d40`), then calls `avatar vt+0x130(avatar, index)`. For Buzz the
+  mapper class is `BuzzControlMapper` (vtable `0x1407aff60`, ctor `0x1401f98e0`, size 0x180).
+- **[obs] Mapper gates (all per object):** axis reads (`0x14027da20`, `vt+0x18`) need a bound
+  controller (`+0x8`), the enabled flag (`+0x10`) and the stack-top flag (`+0x154`, set on push,
+  cleared on the entry below). Values are `controller[0x64 + code*4] * scale[+0x60 + axis*4]`.
+- **[obs] Locomotion.** `PlayerDriver` (vtable `0x1407608c0`) update `vt+0x80` (`0x140050240`)
+  returns early unless its `vt+0x38` (`0x14009fa60`: component `+0x14` set, `+0x16` clear) passes,
+  then reads axes 0/1 of the avatar's mapper into the anim variables `stickX`/`stickY`.
+- **[obs] Controls on/off.** `avatar vt+0x148(avatar, enabled)` (`0x1401d7e50` ->
+  `0x1405565c0`) sets `avatar+0x428` and mapper `+0x10`; when off, it activates the
+  `KinematicDriver` and `ViewDriver` instead. Slot init and the global refreshers
+  (`0x1405d3200`, `0x1405f8a70`) pass `dl = (slot+0x50 empty && 0x1409582a8 empty)`.
+- **[obs] Why P3/P4 did not move.** They join while the join menu has controls disabled, so slot
+  init turns their controls off. The global refreshers only turn slots 0/1 back on (unrolled).
+  The first `refresh_player_controls` hook called `vt+0x148` **without the `enabled` argument**
+  (garbage DL). The log shows it: "slot 1 controls -> true" repeats on every refresh because the
+  flag never changed. Fixed by passing the flag (`vcall_u8`); the log now also prints the flag
+  after the call.
+- **[obs]** `0x1405bb170(settings, player, i)` returns per-player keyboard bindings from
+  `0x140b2eaa8` (2 x 12 ints) for players 0/1 only, -1 otherwise. Only applied when the
+  controller's `+0x28c` is set (keyboard path in `0x1402150b0`), so pads are unaffected.
+- **[unk]** Whether P3/P4 move in game with the fix (needs a test window).
+
+### 5e. Other 2-player limits (`IndexChecks.java`, `queries/67`-`68`)
+
+- **[obs]** `0x1405bcd10(mgr, actor_id)` returns an actor's player index (113 callers).
+  `IndexChecks.java` follows that result (and reads of `actor+0x484`) to small compares. The
+  `idx <= 1` guards it found that were unpatched are now raised to `<= 3`: ForceMountNode
+  `0x14018d846` (per-slot disable add/remove, both bounds-patched) and three view refreshes after
+  placing a player, `0x1406a21b4`, `0x1406a262b`, `0x1406aa78f` (`0x1405bb040` is view-guarded).
+- **[obs]** Cosmetic, left alone: `0x14008ac70` (does something only for player 1),
+  `0x1405fcf30` (a per-player value for players 0/1 only).
+- **[obs] Level teardown `0x1405b0ea0`** (callers `0x1405be720`, `0x1405f7c30`, `0x1405f8ed0`)
+  resets slots 0/1 only, unrolled: pops their mappers, clears the view's "Avatar", sets index -1,
+  avatar 0. **Slots 2/3 keep a stale avatar pointer after a level change.** Needs a hook before
+  4 players leave Toy Box.
+- **[obs]** `0x1401b5bc0` disables controls for players `< 2` from a list; its guard
+  (`0x1401b5bec`) was already patched by the bounds pass.
 
 ## 6. Rendering and window
 

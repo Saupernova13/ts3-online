@@ -52,5 +52,13 @@ Newest first. One entry per working session: what was learned, what changed, wha
 - Test tooling: `tools/focus.ps1` (bring the game to front), `tools/padsend.sh` (sends pad
   commands only while the game is foreground), `tools/shot.ps1` prints `foreground=`.
 
-**Next:** find the gate on `BuzzControlMapper` input for players 3/4 (FINDINGS 5d), then the HUD
-for players 3/4 and the streaming rig (PLAN phase 6).
+- Static trace of P3/P4 input (FINDINGS 5d): pad -> mapper -> `PlayerDriver` has no player
+  limit. The real bug was ours: `refresh_player_controls` called the avatar's controls setter
+  without its `enabled` argument, so P3/P4 stayed controls-disabled from the join menu. Fixed.
+- New `IndexChecks.java` sweep of player-index compares: four more `idx <= 1` guards raised
+  (FINDINGS 5e), 218 patches. Level teardown resets slots 0/1 only (stale P3/P4 avatars on level
+  change), still open. `tools/pe_info.py qwords` reads vtables without Ghidra.
+- Deployed; not run in the game yet.
+
+**Next:** test window: confirm P3/P4 move. Then hook level teardown for slots 2/3, the HUD for
+players 3/4 and the streaming rig (PLAN phase 6).

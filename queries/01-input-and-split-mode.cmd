@@ -1,0 +1,12 @@
+symonly XInputGetState
+symonly XInputSetState
+symonly XInputGetCapabilities
+symonly XInputEnable
+vt XInputInputDriver
+func 1405ec4c0
+func 1405ec210
+func 1405ec520
+func 1405f4700
+func 14010fbd0
+func 1405c5240
+func 1405fc7d0

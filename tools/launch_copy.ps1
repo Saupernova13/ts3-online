@@ -29,7 +29,8 @@ function Find-GameDir {
         if ($line -match '^\s*"path"\s*"(.*)"') { $libs += ($Matches[1] -replace '\\\\', '\') }
     }
     foreach ($lib in $libs) {
-        $dir = Join-Path $lib "steamapps\common\$game"
+        # [IO.Path]::Combine, not Join-Path: a library on an unplugged drive must not throw
+        $dir = [System.IO.Path]::Combine($lib, "steamapps\common\$game")
         if (Test-Path -LiteralPath $dir -PathType Container) { return $dir }
     }
     throw 'game folder not found (set TS3_DIR)'

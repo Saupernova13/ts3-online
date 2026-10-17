@@ -259,7 +259,8 @@
   }
  ],
  "optional_groups": [
-  "quadrants"
+  "quadrants",
+  "instances"
  ],
  "patches": [
   {
@@ -2308,6 +2309,33 @@
    "new": "6a045f",
    "kind": "bytes",
    "note": "SetSplitScreenMode (0x1405f4700): movsxd rdi,ecx -> push 4; pop rdi, so every split request builds 4 quadrants and the event and mode global say 4 (for streaming each quadrant)"
+  },
+  {
+   "id": "instances_14027e154",
+   "group": "instances",
+   "rva": "0x27e154",
+   "orig": "3db7000000",
+   "new": "3dffffffff",
+   "kind": "bytes",
+   "note": "OctaneApp single-instance mutex (0x14027e130): compare ERROR_ALREADY_EXISTS against an impossible code so a second copy starts"
+  },
+  {
+   "id": "instances_14027e5aa",
+   "group": "instances",
+   "rva": "0x27e5aa",
+   "orig": "3db7000000",
+   "new": "3dffffffff",
+   "kind": "bytes",
+   "note": "app-name mutex in startup (0x14027e490): same, so the second copy keeps its mutex handle instead of exiting"
+  },
+  {
+   "id": "instances_140283a78",
+   "group": "instances",
+   "rva": "0x283a78",
+   "orig": "ff15da634d00",
+   "new": "31c090909090",
+   "kind": "bytes",
+   "note": "SteamAPI_RestartAppIfNecessary(4049180) call -> xor eax,eax: a copy started outside Steam is not relaunched through Steam"
   },
   {
    "id": "hook_join_1400eb6f0",

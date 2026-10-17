@@ -1,7 +1,8 @@
 {
  "about": "Hand-reviewed patches that the classifiers cannot find (FINDINGS 3a, 5a, 5b). VAs assume image base 0x140000000.",
  "optional_groups": [
-  "quadrants"
+  "quadrants",
+  "instances"
  ],
  "patches": [
   {
@@ -171,6 +172,30 @@
    "orig": "4863f9",
    "new": "6a045f",
    "note": "SetSplitScreenMode (0x1405f4700): movsxd rdi,ecx -> push 4; pop rdi, so every split request builds 4 quadrants and the event and mode global say 4 (for streaming each quadrant)"
+  },
+  {
+   "id": "instances_14027e154",
+   "group": "instances",
+   "va": "0x14027e154",
+   "orig": "3db7000000",
+   "new": "3dffffffff",
+   "note": "OctaneApp single-instance mutex (0x14027e130): compare ERROR_ALREADY_EXISTS against an impossible code so a second copy starts"
+  },
+  {
+   "id": "instances_14027e5aa",
+   "group": "instances",
+   "va": "0x14027e5aa",
+   "orig": "3db7000000",
+   "new": "3dffffffff",
+   "note": "app-name mutex in startup (0x14027e490): same, so the second copy keeps its mutex handle instead of exiting"
+  },
+  {
+   "id": "instances_140283a78",
+   "group": "instances",
+   "va": "0x140283a78",
+   "orig": "ff15da634d00",
+   "new": "31c090909090",
+   "note": "SteamAPI_RestartAppIfNecessary(4049180) call -> xor eax,eax: a copy started outside Steam is not relaunched through Steam"
   }
  ],
  "hooks": [

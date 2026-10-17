@@ -46,6 +46,11 @@ GROUPS = {
         "FINDINGS 2; PLAN rig design",
         "not tested in game",
     ),
+    "instances": (
+        "Optional (`enable=instances`): lets a second copy of the game run on the same PC for host/client play.",
+        "FINDINGS 9",
+        "not tested in game",
+    ),
     "hooks": (
         "Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which "
         "hardcodes player 1 or only handles players 0/1.",

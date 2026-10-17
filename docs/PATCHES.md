@@ -17,9 +17,10 @@ Relocation: `0x258` bytes at RVA `0x9582b0` -> a `0x400` buffer; fields from `+0
 | memory | 1 | Doubles the "System" heap (512 MB to 1 GB) as headroom for 4 players. | FINDINGS 5b | verified in game 2026-10-16 |
 | views | 11 | Level setup creates 4 per-player views instead of 2, and the inline view-array guards accept 4. | FINDINGS 5c | verified in game 2026-10-16 |
 | quadrants (optional) | 1 | Optional (`enable=quadrants` in `ts3online.ini`): every split request builds 4 quadrants, so each player keeps the same 16:9 quarter for streaming. | FINDINGS 2; PLAN rig design | not tested in game |
+| instances (optional) | 3 | Optional (`enable=instances`): lets a second copy of the game run on the same PC for host/client play. | FINDINGS 9 | not tested in game |
 | hooks | 7 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5e | all verified in game (teardown and the controls fix 2026-10-17) |
 
-Total: 220 patches.
+Total: 223 patches.
 
 ## relocate
 
@@ -263,6 +264,14 @@ Total: 220 patches.
 | VA | change | note |
 |---|---|---|
 | `0x1405f4718` | `4863f9` -> `6a045f` | SetSplitScreenMode (0x1405f4700): movsxd rdi,ecx -> push 4; pop rdi, so every split request builds 4 quadrants and the event and mode global say 4 (for streaming each quadrant) |
+
+## instances
+
+| VA | change | note |
+|---|---|---|
+| `0x14027e154` | `3db7000000` -> `3dffffffff` | OctaneApp single-instance mutex (0x14027e130): compare ERROR_ALREADY_EXISTS against an impossible code so a second copy starts |
+| `0x14027e5aa` | `3db7000000` -> `3dffffffff` | app-name mutex in startup (0x14027e490): same, so the second copy keeps its mutex handle instead of exiting |
+| `0x140283a78` | `ff15da634d00` -> `31c090909090` | SteamAPI_RestartAppIfNecessary(4049180) call -> xor eax,eax: a copy started outside Steam is not relaunched through Steam |
 
 ## hooks
 

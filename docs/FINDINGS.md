@@ -412,6 +412,12 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   spawn point is next to player 1 (`p1+0x1d0`) or the level's `StartPosition_P2_<region>`.
 - **[inf]** With controls off, an avatar's `KinematicDriver` is active (`0x1405565c0`, §5d), which
   suits a proxy placed from network data.
+- **[obs] A once-per-frame hook site on the game thread** (`queries/82`): the input dispatch
+  `0x140280b90` runs once per frame and, at `0x140280c18`-`0x140280c2a` (18 bytes), makes three calls
+  with no arguments, each followed by a nop: `0x140227920`, `0x1402292a0`, `0x140229660`. A `call`
+  hook can replace the block with one Rust function that makes the same three calls and then does
+  per-frame network work (read slot 0, place proxies). The stack is 16-byte aligned there.
+- **[obs]** The `PrepareForPlacing` event name is at `0x140771420`.
 - **[obs] Pads** are read through `XINPUT1_4` ordinals 2, 3 and 4 (`XInputGetState`,
   `XInputSetState`, `XInputGetCapabilities`).
 

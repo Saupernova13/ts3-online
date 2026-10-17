@@ -402,6 +402,14 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   (`0x14056dab0(node)`), build a yaw quaternion and set it with `0x140568b50(node, quat)` (rotation
   at node `+0x40` = `actor+0x90`), then call the node's `vt+0x8`. Reading those fields gives the
   local player's transform; repeating the sequence places a proxy.
+- **[obs] Spawning an avatar without the menu** (pick handler `0x140104190`, `queries/16`): build a
+  property set (`0x140288540`) from a string such as
+  `class=woody; model_name=characters/Woody/Woody` (`0x14050d490`), spawn with
+  `0x1405af7e0(mgr, props, &pos, yaw, 0)` (the spawner level setup uses; an async variant
+  `0x1405af9e0` is used when `0x14094cce2` is set), name it (`0x1400e7550`), free the property set
+  (`0x1404f8cb0`), activate it if `avatar+0x17c` bit 0 is clear (`0x1405503e0(world, avatar)`,
+  `0x14055b850(avatar, 0)`), then bind it (`0x1400e2490`, hooked as `bind_joining_avatar`). The
+  spawn point is next to player 1 (`p1+0x1d0`) or the level's `StartPosition_P2_<region>`.
 - **[inf]** With controls off, an avatar's `KinematicDriver` is active (`0x1405565c0`, §5d), which
   suits a proxy placed from network data.
 - **[obs] Pads** are read through `XINPUT1_4` ordinals 2, 3 and 4 (`XInputGetState`,

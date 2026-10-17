@@ -77,15 +77,22 @@ players 1 and 2. The character select before a level also only knows players 1 a
 
 ## Configuration
 
-Optional `ts3online.ini` next to the game exe, `key=value` lines:
+Optional `ts3online.ini` next to the game exe (if absent, `%LOCALAPPDATA%\ts3online\ts3online.ini`),
+`key=value` lines:
 
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `1` | `0` turns the loader off entirely |
 | `watch` | `1` | log player-manager, input and split-screen state changes |
 | `watch_interval_ms` | `500` | how often the watcher samples |
-| `enable` | (none) | optional patch groups, comma-separated. `quadrants` always splits into 4 equal quarters |
+| `enable` | (none) | optional patch groups, comma-separated. `quadrants` always splits into 4 equal quarters; `instances` lets a second copy of the game run on the same PC |
 | `window` | (none) | `x,y,w,h`: make the game window borderless at that rect and keep it there |
+| `pad` | (none) | `1`-`4`: the physical XInput pad this copy's player 1 uses; the other game pad indices read as unplugged |
+| `[copy1]` .. `[copy4]` | | section header: the lines below it apply only to that copy and override the shared lines above the first section |
+
+With `enable=instances`, each copy picks its number (first free, 1-4) at start. Copy 1 logs to
+`ts3online.log`, copy n to `ts3online.copyN.log`; copies 2-4 keep their saves in
+`%LOCALAPPDATA%\ts3online\copyN`. `tools/launch_copy.ps1` starts another copy.
 
 The game window size comes from the game's own `-dxresolution WxH` launch option.
 

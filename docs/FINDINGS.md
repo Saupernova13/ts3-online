@@ -356,3 +356,49 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   after a `divss xmm3, xmm1` and before a `comiss`.
 - **[inf]** Removes a clamp on a computed ratio (probably aspect ratio or FOV). Not made in this
   repo; purpose unverified.
+
+## 8. Determinism surface (for native netcode, `queries/74`-`77`)
+
+- **[obs] No networking code**: no Winsock or other socket imports (also §1). Steam is linked
+  (`steam_api64.dll`, 7 imports) but only for callbacks/achievements.
+- **[obs] One game clock.** `0x14025a5e0` returns milliseconds from `QueryPerformanceCounter`; the
+  per-frame update `0x14025a470` averages the last 15 frame times from the same source, clamps to
+  0.1 s, and writes the frame delta (`0x14094ecf0`) and a frame counter (`0x1409c2928`).
+- **[obs] A built-in clock override.** Both functions return a stored time (`0x1409c2918`) instead of
+  reading the counter when the byte `0x1409c27b9` is set. Nothing in the exe writes either, so it is
+  a dormant debug or capture mode the loader can turn on and drive frame by frame.
+- **[obs] RNG.** The CRT `rand` has 6 callers (`0x1400c4660` town-person spawn, `0x140189bd0`,
+  `0x140268470`, `0x14046a660`, `0x140522f70`, `0x1407127a0`) and `srand` is never called, so it runs
+  from the CRT's default seed. The UCRT keeps `rand` state per thread. One more generator: an LCG
+  with multiplier `0x19660d` in `0x14070b840`. Engine-level random nodes exist (`RandomIntNode`,
+  `RandomFloatNode`, `Navigate::RandomPointSearch`); their source is not traced yet.
+- **[obs] Concurrency.** Threads come from 2 creators (`0x140250010`, `0x140257bc0`) and fibers from 2
+  (`0x14025a8b0`, `0x14025ae20`): a job system. Asynchronous work exists: `AsyncActorCreator`
+  (`AsyncActorTask`), `ChoreographyNode::AsyncChoreographyTask`, `Navigate::DeferredWorker`, and the
+  world streaming manager.
+- **[obs] Physics is Bullet** (`btCollisionWorld`, `CBulletVehicle`, `CRigidBody`), which repeats
+  exactly given the same step size, inputs and object order on one thread.
+- **[obs]** The game reads FMOD Studio timeline positions (`getTimelinePosition`), so some timing may
+  follow audio playback.
+- **[unk]** Whether the job system or async tasks finish in an order that changes gameplay; whether
+  any gameplay depends on what is rendered (culling, LOD); where the random nodes get numbers;
+  whether CPU-specific CRT math paths differ between machines. Only the lockstep alternative in
+  NETCODE.md depends on these.
+
+## 9. Running copies side by side (for host/client play, `queries/78`-`80`)
+
+- **[obs] Single instance.** `0x14027e130` creates the named mutex `OctaneApp`; if it already exists
+  (`ERROR_ALREADY_EXISTS`) or access is denied, the game shows "Cannot start Octane Application
+  because another instance is already running." and exits.
+- **[obs] Steam relaunch.** Startup `0x1402839d0` calls `SteamAPI_RestartAppIfNecessary(4049180)`
+  (`0x3dc91c`) at `0x140283a78`, then `SteamInternal_SteamAPI_Init`. A copy started outside Steam
+  is relaunched through Steam.
+- **[obs] Focus.** The window class (registered in `0x1402a5930`, WndProc `0x1402b6d70` ->
+  `0x1402b08f0`) handles `WM_ACTIVATE` by releasing or restoring the cursor clip and re-acquiring
+  input (driver `vt+0x100`); it sets no pause flag. `WM_SIZE` minimise sets flags at `+0x681`-`+0x684`.
+- **[obs] Transforms.** `0x140568b50(node, transform)` sets a node's rotation (quaternion at
+  `+0x40`) and updates a rotated vector at `+0x80`; the placing handler calls it before `vt+0x8`.
+  Avatar position fields still need confirming at runtime.
+- **[obs] Pads** are read through `XINPUT1_4` ordinals 2, 3 and 4 (`XInputGetState`,
+  `XInputSetState`, `XInputGetCapabilities`).
+

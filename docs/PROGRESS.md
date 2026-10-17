@@ -76,6 +76,13 @@ Oldest first. One entry per working session: what was learned, what changed, wha
   notes; `tools/gen_patches.py` regenerates it with the patch set. README status and tool list
   brought up to date.
 
-**Next:** streaming rig (PLAN phase 6): needs persistent virtual displays (a driver install on the host), then
-`enable=quadrants` + `window=` in game. Later: HUD for players 3/4, auto-restoring P3/P4 after a
-level change.
+- Native online design (`docs/NETCODE.md`): one player per copy, full screen, one copy hosts and
+  the others connect; remote players are proxy avatars in slots 1-3, driven by the owner's input
+  and corrected by the owner's position; the host owns the world. A lockstep variant was drafted
+  first and kept as an alternative; its determinism survey is FINDINGS §8.
+- Side-by-side copies (FINDINGS §9): the game blocks a second instance with the `OctaneApp` mutex
+  and relaunches through Steam when started directly; both can be bypassed in the loader. It
+  does not pause on focus loss.
+
+**Next:** phase H0 of NETCODE.md (two copies on one PC, each with its own pad), then H1-H2 (connect,
+and see each other move). The streaming rig (PLAN phase 6) is the fallback.

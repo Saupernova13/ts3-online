@@ -418,6 +418,17 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   hook can replace the block with one Rust function that makes the same three calls and then does
   per-frame network work (read slot 0, place proxies). The stack is 16-byte aligned there.
 - **[obs]** The `PrepareForPlacing` event name is at `0x140771420`.
+- **[obs] Verified in game (2026-10-17):** with `enable=instances`, copy 1 started from Steam and copy 2
+  started through Explorer run side by side, each with its own number, log, pad mapping and window
+  rect; copy 2's saves go to `%LOCALAPPDATA%	s3online\copy2`. Pad isolation holds: a copy ignores
+  the other copy's pad.
+- **[obs] Only the focused copy reads its pad.** An unfocused copy keeps running (attract demo at
+  about 15 fps) but ignores its own pad. `GetFocus` is only used for the cursor, and the XInput
+  read `0x14027c000` (the controller's update, via the thunk `0x140717a60`) has no focus check, so
+  the gate is upstream, where the driver decides to update controllers. Open.
+- **[obs]** On deactivation the window handler sends the window to the bottom of the z-order
+  (`SetWindowPos(HWND_BOTTOM)` in the `WM_ACTIVATE` branch of `0x1402b08f0`), so only the focused copy
+  stays visible; `tools/shot.ps1` uses `PrintWindow` to capture a covered copy.
 - **[obs] Pads** are read through `XINPUT1_4` ordinals 2, 3 and 4 (`XInputGetState`,
   `XInputSetState`, `XInputGetCapabilities`).
 

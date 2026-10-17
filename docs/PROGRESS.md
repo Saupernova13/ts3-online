@@ -84,5 +84,11 @@ Oldest first. One entry per working session: what was learned, what changed, wha
   and relaunches through Steam when started directly; both can be bypassed in the loader. It
   does not pause on focus loss.
 
-**Next:** phase H0 of NETCODE.md (two copies on one PC, each with its own pad), then H1-H2 (connect,
-and see each other move). The streaming rig (PLAN phase 6) is the fallback.
+- H0 built and run: optional `instances` group (single-instance checks and Steam relaunch), copy
+  numbers through named mutexes, `[copyN]` config sections with a `%LOCALAPPDATA%` fallback, per-copy
+  logs, `pad=N` through an XInput import hook, per-copy saves through an `SHGetFolderPathA` hook,
+  `tools/launch_copy.ps1`. In game: two copies run side by side with isolated pads and saves (T7).
+  Gap: an unfocused copy ignores its pad.
+
+**Next:** find the input focus gate so both local copies can be played at once, then H1 (connect)
+and H2 (see each other move).

@@ -1,4 +1,4 @@
-//! `ts3online.ini`: optional `key=value` lines, `#` comments.
+//! `ts3online.ini`: optional `key=value` lines, `#` comments. `[copy1]`..`[copy4]` sections apply to that copy only.
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -9,11 +9,13 @@ pub struct Config {
     pub enable: Vec<String>,
     /// `window = x,y,w,h`: borderless placement of the game window
     pub window: Option<(i32, i32, i32, i32)>,
+    /// `pad = N` (1-4): the physical XInput pad this copy's player 1 uses
+    pub pad: Option<u32>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None }
+        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None }
     }
 }
 
@@ -25,12 +27,27 @@ fn parse_bool(v: &str) -> Option<bool> {
     }
 }
 
-/// Unknown keys and unparsable values are ignored (the default stays).
-pub fn parse(text: &str) -> Config {
+/// Copy number named by a section header (`[copy2]`), if it is one.
+fn section_copy(line: &str) -> Option<u32> {
+    let name = line.strip_prefix('[')?.strip_suffix(']')?.trim().to_ascii_lowercase();
+    name.strip_prefix("copy")?.parse().ok()
+}
+
+/// Lines before any section apply to every copy; `[copyN]` lines only to copy N, later ones win.
+/// Unknown sections, keys and unparsable values are ignored (the default stays).
+pub fn parse(text: &str, copy: u32) -> Config {
     let mut c = Config::default();
+    let mut active = true;
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            active = section_copy(line) == Some(copy);
+            continue;
+        }
+        if !active {
             continue;
         }
         let Some((k, v)) = line.split_once('=') else { continue };
@@ -54,6 +71,11 @@ pub fn parse(text: &str) -> Config {
                     }
                 }
             }
+            "pad" => {
+                if let Ok(n @ 1..=4) = v.parse::<u32>() {
+                    c.pad = Some(n);
+                }
+            }
             _ => {}
         }
     }
@@ -66,36 +88,74 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(parse(""), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None });
+        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None });
     }
 
     #[test]
     fn overrides_and_comments() {
-        let c = parse("# hi\n enabled = 0 \nwatch=false\nWATCH_INTERVAL_MS=250\nbogus=1\nnoequals\n");
-        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None });
+        let c = parse("# hi\n enabled = 0 \nwatch=false\nWATCH_INTERVAL_MS=250\nbogus=1\nnoequals\n", 1);
+        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None });
     }
 
     #[test]
     fn bad_values_keep_defaults() {
-        let c = parse("enabled=maybe\nwatch_interval_ms=abc\n");
+        let c = parse("enabled=maybe\nwatch_interval_ms=abc\n", 1);
         assert_eq!(c, Config::default());
-        assert_eq!(parse("watch_interval_ms=0").watch_interval_ms, 10);
+        assert_eq!(parse("watch_interval_ms=0", 1).watch_interval_ms, 10);
     }
 
     #[test]
     fn enable_list() {
-        assert_eq!(parse("enable = Quadrants, ,foo ,\n").enable, ["quadrants", "foo"]);
-        assert!(parse("enable=\n").enable.is_empty());
+        assert_eq!(parse("enable = Quadrants, ,foo ,\n", 1).enable, ["quadrants", "foo"]);
+        assert!(parse("enable=\n", 1).enable.is_empty());
+    }
+
+    #[test]
+    fn pad_key() {
+        assert_eq!(parse("pad=3", 1).pad, Some(3));
+        assert_eq!(parse("pad=0", 1).pad, None);
+        assert_eq!(parse("pad=5", 1).pad, None);
+        assert_eq!(parse("pad=x", 1).pad, None);
+    }
+
+    #[test]
+    fn copy_sections() {
+        let t = "watch=0
+pad=1
+[copy2]
+pad = 2
+watch=1
+[Copy3]
+pad=3
+[other]
+pad=4
+[ COPY2 ]
+enable=instances
+";
+        let c1 = parse(t, 1);
+        assert_eq!((c1.pad, c1.watch, c1.enable.len()), (Some(1), false, 0));
+        let c2 = parse(t, 2);
+        assert_eq!((c2.pad, c2.watch, c2.enable), (Some(2), true, vec!["instances".to_string()]));
+        assert_eq!(parse(t, 3).pad, Some(3));
+        assert_eq!(parse(t, 4).pad, Some(1));
+    }
+
+    #[test]
+    fn section_headers() {
+        assert_eq!(section_copy("[copy2]"), Some(2));
+        assert_eq!(section_copy("[Copy1]"), Some(1));
+        assert_eq!(section_copy("[copy]"), None);
+        assert_eq!(section_copy("[other]"), None);
     }
 
     #[test]
     fn window_rect() {
-        assert_eq!(parse("window = 10, -20, 1920,1080").window, Some((10, -20, 1920, 1080)));
-        assert_eq!(parse("window=-1920,0,1280,720").window, Some((-1920, 0, 1280, 720)));
-        assert_eq!(parse("window=0,0,0,720").window, None);
-        assert_eq!(parse("window=0,0,100,-5").window, None);
-        assert_eq!(parse("window=0,0,100").window, None);
-        assert_eq!(parse("window=0,0,100,50,7").window, None);
-        assert_eq!(parse("window=a,0,100,50").window, None);
+        assert_eq!(parse("window = 10, -20, 1920,1080", 1).window, Some((10, -20, 1920, 1080)));
+        assert_eq!(parse("window=-1920,0,1280,720", 1).window, Some((-1920, 0, 1280, 720)));
+        assert_eq!(parse("window=0,0,0,720", 1).window, None);
+        assert_eq!(parse("window=0,0,100,-5", 1).window, None);
+        assert_eq!(parse("window=0,0,100", 1).window, None);
+        assert_eq!(parse("window=0,0,100,50,7", 1).window, None);
+        assert_eq!(parse("window=a,0,100,50", 1).window, None);
     }
 }

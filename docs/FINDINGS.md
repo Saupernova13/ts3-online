@@ -396,9 +396,14 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
 - **[obs] Focus.** The window class (registered in `0x1402a5930`, WndProc `0x1402b6d70` ->
   `0x1402b08f0`) handles `WM_ACTIVATE` by releasing or restoring the cursor clip and re-acquiring
   input (driver `vt+0x100`); it sets no pause flag. `WM_SIZE` minimise sets flags at `+0x681`-`+0x684`.
-- **[obs] Transforms.** `0x140568b50(node, transform)` sets a node's rotation (quaternion at
-  `+0x40`) and updates a rotated vector at `+0x80`; the placing handler calls it before `vt+0x8`.
-  Avatar position fields still need confirming at runtime.
+- **[obs] Transforms.** An actor embeds its scene node at `actor+0x50`. The placing handler
+  (`0x1406a2010`, `queries/68`) teleports an actor like this: fire `PrepareForPlacing` with the actor
+  id, write the position to `actor+0x80/+0x84/+0x88` (x, y, z), mark the node dirty
+  (`0x14056dab0(node)`), build a yaw quaternion and set it with `0x140568b50(node, quat)` (rotation
+  at node `+0x40` = `actor+0x90`), then call the node's `vt+0x8`. Reading those fields gives the
+  local player's transform; repeating the sequence places a proxy.
+- **[inf]** With controls off, an avatar's `KinematicDriver` is active (`0x1405565c0`, §5d), which
+  suits a proxy placed from network data.
 - **[obs] Pads** are read through `XINPUT1_4` ordinals 2, 3 and 4 (`XInputGetState`,
   `XInputSetState`, `XInputGetCapabilities`).
 

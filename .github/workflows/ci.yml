@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            loader/target
+          key: cargo-${{ hashFiles('loader/Cargo.lock') }}
+      - name: Test
+        working-directory: loader
+        run: cargo test
+      - name: Build
+        working-directory: loader
+        run: cargo build --release
+      - name: Package
+        run: |
+          mkdir -p dist/ts3-online
+          cp loader/target/release/dinput8.dll tools/install.ps1 LICENSE dist/ts3-online/
+          cp docs/PLAYING.md dist/ts3-online/README.md
+          cd dist && 7z a -tzip ts3-online.zip ts3-online >/dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ts3-online
+          path: dist/ts3-online.zip
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/ts3-online.zip --title "$GITHUB_REF_NAME" --notes-file docs/PLAYING.md

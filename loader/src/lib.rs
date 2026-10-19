@@ -15,6 +15,8 @@ pub mod net;
 pub mod pad;
 pub mod patch;
 #[cfg(windows)]
+pub mod proxy;
+#[cfg(windows)]
 pub mod saves;
 pub mod watch;
 #[cfg(windows)]

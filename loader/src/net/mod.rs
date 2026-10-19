@@ -26,6 +26,11 @@ pub fn build_id(headers: &[u8]) -> Option<u64> {
     Some((u32_at(nt + 8)? as u64) << 32 | u32_at(nt + 24 + 56)? as u64)
 }
 
+/// A session was started.
+pub fn active() -> bool {
+    SESSION.lock().ok().is_some_and(|g| g.is_some())
+}
+
 /// Local player's state for the next outgoing update.
 pub fn set_local_state(pos: [f32; 3], yaw: f32, flags: u32) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {

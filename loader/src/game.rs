@@ -39,6 +39,10 @@ pub unsafe fn rd_i32(addr: u64) -> i32 {
     std::ptr::read_unaligned(addr as *const i32)
 }
 
+pub unsafe fn rd_f32(addr: u64) -> f32 {
+    std::ptr::read_unaligned(addr as *const f32)
+}
+
 pub unsafe fn rd_u8(addr: u64) -> u8 {
     std::ptr::read(addr as *const u8)
 }
@@ -110,11 +114,32 @@ game_fn!(view_pop_camera, 0x1_403f_f140, fn(view: u64, camera: u64) -> u64);
 game_fn!(view_remove_camera, 0x1_403f_ffc0, fn(view: u64, camera: u64) -> ());
 game_fn!(list_clear, 0x1_403f_b1e0, fn(list: u64) -> ());
 
+game_fn!(frame_a, 0x1_4022_7920, fn() -> ());
+game_fn!(frame_b, 0x1_4022_92a0, fn() -> ());
+game_fn!(frame_c, 0x1_4022_9660, fn() -> ());
+game_fn!(props_init, 0x1_4028_8540, fn(props: *mut u64) -> u64);
+game_fn!(props_parse, 0x1_4050_d490, fn(props: *mut u64, spec: *const c_char) -> ());
+game_fn!(props_free, 0x1_404f_8cb0, fn(props: *mut u64) -> ());
+game_fn!(spawn_avatar, 0x1_405a_f7e0, fn(mgr: u64, props: *mut u64, pos: *const f32, yaw: f32, flag: u8) -> u64);
+game_fn!(name_avatar, 0x1_400e_7550, fn(avatar: u64, name: *const c_char, h: u64) -> ());
+game_fn!(activate, 0x1_4055_03e0, fn(world: u64, avatar: u64) -> ());
+game_fn!(wake, 0x1_4055_b850, fn(avatar: u64, flag: u64) -> ());
+game_fn!(remove_avatar, 0x1_4055_6230, fn(avatar: u64) -> ());
+game_fn!(node_dirty, 0x1_4056_dab0, fn(node: u64) -> ());
+game_fn!(quat_to_mat, 0x1_4025_6d00, fn(mat: *mut f32, quat: *const f32) -> ());
+game_fn!(node_set_rot, 0x1_4056_8b50, fn(node: u64, mat: *const f32) -> ());
+
 /// Per-player control stacks (`0x140ac61c0`).
 pub const CONTROL_STACKS: u64 = 0x1_40ac_61c0;
 pub const STR_CONTROL_MAPPER: u64 = 0x1_4076_59d8;
 pub const STR_CAMERA_STATE: u64 = 0x1_4075_e5a0;
 pub const STR_AVATAR: u64 = 0x1_4076_d098;
+
+/// Calls `this->vtable[off](this)`.
+pub unsafe fn vt_call(this: u64, off: u64) {
+    let f: extern "system" fn(u64) = std::mem::transmute(rd_u64(rd_u64(this) + off) as usize);
+    f(this)
+}
 
 /// Calls `this->vtable[off](this)` returning AL.
 pub unsafe fn vt_u8(this: u64, off: u64) -> u8 {

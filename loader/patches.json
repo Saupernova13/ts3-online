@@ -2420,6 +2420,16 @@
    "hook": "level_player_setup",
    "note": "level setup (0x1405ae570): player 2's view setup + view-array finish -> view setup for players 2..4; mgr in R14, view array at [RBP+0x398]",
    "prefix": "4c89f1488b9598030000"
+  },
+  {
+   "id": "hook_frame_140280c18",
+   "group": "hooks",
+   "rva": "0x280c18",
+   "orig": "e8036dfaff90e87d86faff90e8378afaff90",
+   "kind": "hook",
+   "mode": "call",
+   "hook": "frame_tick",
+   "note": "input dispatch (0x140280b90): three per-frame calls -> same calls, then the net proxy update"
   }
  ]
 }

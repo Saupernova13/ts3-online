@@ -246,6 +246,18 @@ pub fn take_world_apply() -> Vec<(u32, String, String)> {
     SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()).map(|s| s.take_world_apply()).unwrap_or_default()
 }
 
+/// Host: sends the transforms of moving named actors of `level` to every client (unreliable).
+pub fn set_npcs(level: u32, entries: &[(u32, [f32; 3], f32)]) {
+    if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
+        s.set_npcs(level, entries);
+    }
+}
+
+/// Client: the host's actor transforms received since the last call, as (hash, position, yaw).
+pub fn take_npcs() -> Vec<(u32, [f32; 3], f32)> {
+    SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()).map(|s| s.take_npcs()).unwrap_or_default()
+}
+
 /// Everything `start` needs besides the mode.
 #[derive(Debug, Clone)]
 pub struct Options {

@@ -196,3 +196,14 @@ town.
   showed `CARRY_START` on both copies with the right target (also at a 110 degree pose error), and
   the throw landed within 0.1 m. Jumps no longer snap the partner (PR 21). Townspeople turned out to
   share reference names across copies but walk differently, the starting point for NPC sync.
+
+- 2026-10-19, NPC sync (protocol 10): the host streams the transforms of moving named actors
+  (`Npcs`, unreliable, 15 Hz sampling, mover rule 5 cm / resend 2 cm, 2 degrees or 1 s) and clients
+  override the same actors by reference-name hash, smoothed (lerp 0.3, snap beyond 3 m), skipping
+  avatars and carried actors. In game (T16): 21 movers streamed; all 760 shared named actors within
+  0.5 m across copies (townspeople 0.14-0.18 m, where they had been tens of metres apart); loader
+  work per frame rose to 41-54 us and host upload by 3.6 kB/s. Also checked (T15): single and double
+  jumps rise the same on both copies (1.47 / 1.47 m, 2.37 / 2.32 m), tool switches (B) replay one for
+  one. Open: X next to a townsperson started a conversation rather than a pick-up on the host, so
+  carrying townspeople is not verified; the client's AI still runs underneath the override. See
+  NETCODE.md "NPCs (H6c)".

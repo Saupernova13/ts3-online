@@ -6,7 +6,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 9;
+pub const VERSION: u16 = 10;
 /// Length of the authentication tag that ends every datagram.
 pub const TAG_LEN: usize = 16;
 /// Zero bytes after a `Probe`'s build, so a probe is never shorter than the reply it provokes.
@@ -22,6 +22,8 @@ pub const MAX_WALLETS: usize = 16;
 pub const MAX_SPENDS: usize = 64;
 /// Most entries in a `World` message (8 x up to 117 bytes stays well under 1200).
 pub const MAX_WORLD: usize = 8;
+/// Most entries in an `Npcs` message (20 bytes each, a datagram stays under ~1000 bytes).
+pub const MAX_NPCS: usize = 48;
 
 pub const REFUSE_FULL: u8 = 1;
 pub const REFUSE_BUILD: u8 = 2;
@@ -48,6 +50,7 @@ const T_SPEND: u8 = 17;
 const T_WORLD: u8 = 18;
 const T_WORLD_ACK: u8 = 19;
 const T_WORLD_REPORT: u8 = 20;
+const T_NPCS: u8 = 21;
 
 /// Controller state in the XINPUT_GAMEPAD layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -136,6 +139,9 @@ pub enum Msg {
     WorldAck { level: u32, seq: u32 },
     /// Client to host: a world event the client's own game produced, resent until the host lists it.
     WorldReport { level: u32, event: String, refname: String },
+    /// Host to clients, unreliable (latest wins): transforms of moving named actors of `level` as
+    /// (reference-name hash, position, yaw).
+    Npcs { level: u32, entries: Vec<(u32, [f32; 3], f32)> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,6 +329,18 @@ pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
             put_str(&mut o, event);
             put_str(&mut o, refname);
         }
+        Msg::Npcs { level, entries } => {
+            o.push(T_NPCS);
+            o.extend_from_slice(&level.to_le_bytes());
+            let entries = &entries[..entries.len().min(MAX_NPCS)];
+            o.push(entries.len() as u8);
+            for (hash, pos, yaw) in entries {
+                o.extend_from_slice(&hash.to_le_bytes());
+                for v in pos.iter().chain(std::iter::once(yaw)) {
+                    o.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+        }
     }
     let mut m = mac(if public(o[6]) { &[] } else { key });
     m.update(&o);
@@ -396,7 +414,7 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
         return Err(DecodeError::Version(version));
     }
     let kind = *bytes.get(6).ok_or(Malformed)?;
-    if !(T_HELLO..=T_WORLD_REPORT).contains(&kind) || bytes.len() < 7 + TAG_LEN {
+    if !(T_HELLO..=T_NPCS).contains(&kind) || bytes.len() < 7 + TAG_LEN {
         return Err(Malformed);
     }
     let (signed, tag) = bytes.split_at(bytes.len() - TAG_LEN);
@@ -499,6 +517,24 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
                 event: r.checked(world::MAX_REF, world::synced)?,
                 refname: r.checked(world::MAX_REF, world::valid_ref)?,
             },
+            T_NPCS => {
+                let level = r.u32()?;
+                let n = r.u8()? as usize;
+                if n > MAX_NPCS {
+                    return None;
+                }
+                let mut entries = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let hash = r.u32()?;
+                    let pos = [r.f32()?, r.f32()?, r.f32()?];
+                    let yaw = r.f32()?;
+                    if !pos.iter().all(|v| v.is_finite() && v.abs() <= MAX_COORD) || !yaw.is_finite() {
+                        return None;
+                    }
+                    entries.push((hash, pos, yaw));
+                }
+                Msg::Npcs { level, entries }
+            }
             _ => return None,
         })
     };
@@ -568,6 +604,8 @@ mod tests {
             Msg::World { level: 0, entries: Vec::new() },
             Msg::WorldAck { level: 77, seq: 9 },
             Msg::WorldReport { level: 77, event: "ExploderDestroy".into(), refname: "EXP_Crate_40".into() },
+            Msg::Npcs { level: 77, entries: vec![(1, [1.0, -2.5, 3.0], 0.5), (u32::MAX, [0.0; 3], -3.1)] },
+            Msg::Npcs { level: 0, entries: Vec::new() },
         ]
     }
 
@@ -731,6 +769,34 @@ b")] {
         }
         let long = Msg::WorldReport { level: 1, event: "ExploderDestroy".into(), refname: "x".repeat(world::MAX_REF + 1) };
         assert_eq!(dec(&enc(&long)), Err(DecodeError::Malformed));
+    }
+
+    #[test]
+    fn npc_messages_are_capped_and_validated() {
+        let entry = |i: u32| (i, [i as f32, 0.0, -1.0], 0.25);
+        let many: Vec<_> = (0..200).map(entry).collect();
+        match dec(&enc(&Msg::Npcs { level: 5, entries: many })) {
+            Ok(Msg::Npcs { entries, .. }) => assert_eq!(entries.len(), MAX_NPCS),
+            other => panic!("{other:?}"),
+        }
+        let full = enc(&Msg::Npcs { level: 5, entries: (0..MAX_NPCS as u32).map(entry).collect() });
+        assert!(full.len() < 1100, "{}", full.len());
+        // truncated at every length
+        for cut in 0..full.len() {
+            assert!(dec(&full[..cut]).is_err(), "cut {cut}");
+        }
+        // forged count
+        let mut forged = enc(&Msg::Npcs { level: 1, entries: vec![entry(1)] });
+        forged[11] = 200;
+        retag(&mut forged, &[]);
+        assert_eq!(dec(&forged), Err(DecodeError::Malformed));
+        forged[11] = 2; // more than the body holds
+        retag(&mut forged, &[]);
+        assert_eq!(dec(&forged), Err(DecodeError::Malformed));
+        // non-finite and out-of-range numbers
+        for bad in [(1, [f32::NAN, 0.0, 0.0], 0.0), (1, [0.0, 2.0e6, 0.0], 0.0), (1, [0.0; 3], f32::INFINITY), (1, [0.0, 0.0, f32::NEG_INFINITY], 0.0)] {
+            assert_eq!(dec(&enc(&Msg::Npcs { level: 1, entries: vec![bad] })), Err(DecodeError::Malformed), "{bad:?}");
+        }
     }
 
     #[test]

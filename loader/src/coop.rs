@@ -491,6 +491,7 @@ pub unsafe fn update() {
     follow_levels(level);
     crate::wallet::update(level);
     crate::world::update(level);
+    crate::npc::update(level);
     let Ok(mut guard) = PARTNERS.lock() else { return };
     let partners = guard.get_or_insert_with(HashMap::new);
     if switched && !partners.is_empty() {
@@ -769,7 +770,7 @@ unsafe fn avatar_yaw(avatar: u64) -> f32 {
 }
 
 /// Sets only the rotation: node refresh, matrix from the yaw quaternion, setter, node `vt+0x8`.
-unsafe fn set_rotation(actor: u64, yaw: f32) {
+pub unsafe fn set_rotation(actor: u64, yaw: f32) {
     let node = actor + 0x50;
     node_dirty(node);
     let quat = quat_from_yaw(yaw);
@@ -780,7 +781,7 @@ unsafe fn set_rotation(actor: u64, yaw: f32) {
 }
 
 /// Position and rotation, without `PrepareForPlacing` (that event may reset carry state).
-unsafe fn place_pose(actor: u64, pos: [f32; 3], yaw: f32) {
+pub unsafe fn place_pose(actor: u64, pos: [f32; 3], yaw: f32) {
     for (i, v) in pos.iter().enumerate() {
         std::ptr::write_unaligned((actor + 0x80 + i as u64 * 4) as *mut f32, *v);
     }

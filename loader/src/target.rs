@@ -141,8 +141,8 @@ mod live {
         (p != 0).then(|| CStr::from_ptr(p as *const c_char).to_string_lossy().into_owned())
     }
 
-    /// Every (reference name, actor id) in the actor manager's three lists.
-    unsafe fn named_actors() -> Vec<(String, u64)> {
+    /// Every (reference name, actor id, actor pointer) in the actor manager's three lists.
+    pub unsafe fn named_actor_ptrs() -> Vec<(String, u64, u64)> {
         let mgr = global(ACTOR_MGR);
         let mut out = Vec::new();
         if mgr == 0 {
@@ -155,7 +155,7 @@ mod live {
                 let a = rd_u64(n + 8);
                 if a != 0 {
                     if let Some(r) = refname(a) {
-                        out.push((r, rd_u64(a + ACTOR_ID)));
+                        out.push((r, rd_u64(a + ACTOR_ID), a));
                     }
                 }
                 n = rd_u64(n + 0x30);
@@ -165,8 +165,13 @@ mod live {
         out
     }
 
+    /// Every (reference name, actor id) in the actor manager's three lists.
+    unsafe fn named_actors() -> Vec<(String, u64)> {
+        named_actor_ptrs().into_iter().map(|(n, id, _)| (n, id)).collect()
+    }
+
     /// Resolves a named target, rebuilding the index on a new level or (rate-limited) on a miss.
-    unsafe fn named(level: u32, hash: u32) -> u64 {
+    pub unsafe fn named(level: u32, hash: u32) -> u64 {
         let Ok(mut guard) = INDEX.lock() else { return 0 };
         let g = guard.get_or_insert_with(|| Index { level: 0, built: None, index: RefIndex::default() });
         let stale = g.level != level || (g.index.get(hash).is_none() && g.built.is_none_or(|t| t.elapsed().as_millis() >= REBUILD_MS));

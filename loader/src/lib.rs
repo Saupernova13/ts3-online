@@ -18,6 +18,7 @@ pub mod menu;
 pub mod menu_model;
 pub mod log;
 pub mod net;
+pub mod npc;
 #[cfg(windows)]
 pub mod pad;
 pub mod patch;

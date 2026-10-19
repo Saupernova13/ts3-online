@@ -72,7 +72,7 @@ from input, and the game already treats it as a player for co-op moves and inter
   devices. `net_key` (a shared password in `ts3online.ini`) gates who can join and authenticates
   every datagram, but it does not encrypt: payloads are readable by anyone who can see the link.
   Without a `net_key`, anyone who can reach the host's UDP port on the tailnet or LAN can join.
-- **Tag.** Protocol version 7. Every datagram ends with a 16-byte tag, the first 16 bytes of
+- **Tag.** Protocol version 8. Every datagram ends with a 16-byte tag, the first 16 bytes of
   HMAC-SHA256 over all bytes before it, keyed with `net_key` (empty when none is set, so
   passwordless sessions work). Checked in constant time before anything is parsed. `Probe`,
   `ProbeReply` and `Refuse` always use the empty key, so a host can be found and can tell a wrong
@@ -91,6 +91,9 @@ from input, and the game already treats it as a player for co-op moves and inter
   - The host rejects a spend below -1,000,000 (still acknowledged, never applied), on top of the
     existing rejection of positive deltas and unknown wallets.
   - The host answers a client's `SaveRequest` at most once per 200 ms.
+  - World events: the event must be on the whitelist (`world::SYNCED`) and the reference name 1-96
+    bytes of `[A-Za-z0-9_:/.-]`; both are checked on encode and decode, a report is accepted only for
+    the host's current level, and a list holds at most 512 entries.
 
 ## Phases
 
@@ -106,7 +109,7 @@ never puppets with interactions turned off.
 | H3 | Co-op partners: the owner's pad state is sent every frame and fed to a virtual XInput pad 1-3; the remote avatar is bound to a player slot through the join path, so it moves, animates and interacts through the game's own code; the owner's position corrects drift; the `online` patch keeps one full-screen view of slot 0 | partners run, jump, pick each other up and throw on both screens |
 | H4 | Connect: `net=auto` finds a host among the online tailnet peers (`tailscale status`) or becomes the host; two hosts that meet merge; explicit `net=client:<tailnet name>:27777` still works | two PCs on one tailnet connect with the same ini and no addresses |
 | H5 | One world: the host sends its save at connect and the client plays it from a session folder without saving back, as local P2 plays P1's save; the client follows the host into its level (`SwitchLevel`, `0x14012e800`) | done (T11, T12) |
-| H6 | Shared world state, system by system: gold and pickups, enemies and NPCs owned by the host, missions, shops, rides and vehicles; wallets (gold, imagination points) are built (H6a) | both players see the same enemies, pickups and mission state |
+| H6 | Shared world state, system by system: gold and pickups, enemies and NPCs owned by the host, missions, shops, rides and vehicles; wallets (gold, imagination points) are built (H6a), and so are world events by reference name (H6b: crates breaking) | both players see the same enemies, pickups and mission state |
 | H7 | Release: install/uninstall script, sample ini, README for players, 2-PC tailnet test | a friend installs it and plays |
 
 **Level follow (H5b).** The host sends `Level { name }` (its current level, empty outside one) to
@@ -130,6 +133,28 @@ and sends every unacknowledged one in `Spend { spends }` (about 10 Hz) until the
 game's own stat add (`0x140632130`), so resends are harmless and a lost datagram only delays. While
 a spend is unacknowledged the client shows the host value plus its pending spends, so the counter
 does not flicker back. Only spending is forwarded; a host that spends needs no message.
+
+**World events (H6b).** Actor ids differ between copies, so a one-off event on an actor is carried
+by the actor's reference name (`actor+0x150`, unique and equal in both copies for most actors;
+FINDINGS 10). Only events in `world::SYNCED` (now `ExploderDestroy`, a crate breaking) posted with
+a=0 and b=0 are synced; more are added to that list once verified. `ExploderDestroy` is only the notice
+of a break, so a replay breaks the actor's `MExploder` component itself (FINDINGS 10), and waits
+until the local player has been in the level for 3 s (a replay during the load is lost). The targeted-post detour
+(`0x14049e0b0`) resolves the actor, reads its reference name safely and queues `(event, name)` for
+the game thread. The host keeps the authoritative list for its play level: `(seq, event, name)`,
+seq from 1, no duplicates, cleared when its level changes. It sends each client
+`World { level, entries }` (at most 8 per datagram) when something is new and every 200 ms while
+unacknowledged; the client answers `WorldAck { level, seq }` with the highest contiguous seq (entries
+are taken in order; a late joiner starts at 0 and receives everything). A client whose own game
+produced a synced event sends `WorldReport { level, event, name }` every 200 ms until the entry shows
+up in the host's list; the host accepts it only for its current level with a whitelisted event and a
+valid name, applies it in its own game and lists it. Applying looks the actor up by reference name
+(`0x140557f60`) and posts the event with `call_post_actor`, which bypasses the detour, so a replay is
+never captured again. An actor that does not exist yet is retried each frame for 10 s, then given
+up with one log line. Events the local game produced count as applied. Each copy forgets its applied
+state when its level changes. Wire layouts (little-endian, after the common header): `World` = level
+u32, count u8, then count x (seq u32, event len u8 + bytes, name len u8 + bytes); `WorldAck` =
+level u32, seq u32; `WorldReport` = level u32, event len u8 + bytes, name len u8 + bytes.
 
 `net_sim=delay,jitter,loss` adds artificial latency and loss for testing on one PC.
 

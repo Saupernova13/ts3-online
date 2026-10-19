@@ -549,3 +549,29 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   an id and class, and 163 `Npc` with the same id stood at different places: the same set of
   positions under other ids, from a different spawn order. Ids therefore cannot match NPCs or enemies
   across copies; a world sync has to match them another way (name, spawner, start position).
+- **[obs] Actor names and reference names (2026-10-19, `queries/116`-`118`, in game).** Every actor has
+  an actor name `char*` at `actor+0x148` and a reference name `char*` at `actor+0x150`. The actor manager
+  is `[0x140b2bb70]`. `0x140557e10(mgr, name)` finds an actor by actor name and `0x140557f60(mgr, name)`
+  by reference name: they walk three lists at `mgr+0x100`, `+0x1c0` and `+0x1a8` (node `+8` actor, `+0x30`
+  next), compare with `_stricmp` and return the actor or 0. The script bindings `FindActorByActorName`
+  and `FindActorByReferenceName` (registered at `0x14056b02e` / `0x14056b062`) point at them. The actor
+  id is the u64 at `actor+0x38`; `0x140558400(id)` returns the actor for an id. In Toy Box 756 of 822
+  actors had a reference name that was unique and identical in both copies; the ambiguous rest were
+  runtime spawns (50 `PICKUP` coins, 8 `CowAmmo`, a few vehicles) and actors with an empty reference
+  name. So a reference name identifies most placed actors across copies where ids do not.
+- **[obs] Crate break event sequence and cross-copy replay (2026-10-19, in game).** Breaking a crate on
+  the host posted, through the targeted post `0x14049e0b0` (events, name, a, b, actor id),
+  `ExploderDestroy a=0 b=0 actor=0x33e` (the crate, reference name
+  `EXP_CrateSmallREDUCEDEXP_CrateSmallREDUCED_40`), followed by the broadcasts `SpawnGoldPickup` and
+  `SmashCrate` with b=0x33e and `TriggerPickup` on the new coin actors. On the client the same crate
+  had id 0x34b, and it broke there too, but by the client's copy of the host's player hitting it.
+- **[obs] `ExploderDestroy` is a notice, the break is `MExploder` (2026-10-19, `queries/119`-`120`, in
+  game).** `0x140652ac0(exploder)` does the break (debris, `Slave` and kinematic controller off, sets
+  `exploder+0xdc` bit 0) and posts `ExploderDestroy` to the owner (`exploder+8`) afterwards. It runs
+  when `exploder+0xdc & 3 == 2` (bit 1 requested, bit 0 done) and the vcall at `+0x38` agrees; its only
+  caller is the handler `0x140656710` of the `Explode@MExploder` message. The component is
+  `MExploder`, found with `0x140558fb0(actor, "MExploder")` (component lookup by name through
+  `actor+0x370`; a script getter `0x1405ea4b0` reads bit 0 as "exploded"). Posting `ExploderDestroy`
+  to a crate a late-joining client had intact changed nothing; setting bit 1 and calling
+  `0x140652ac0` broke it with its coins (screenshot), and `actor+0x3f8` became 0 as on a crate broken
+  by hand.

@@ -216,6 +216,23 @@ pub fn send_spends(spends: &[(u32, u8, i32)]) {
     }
 }
 
+/// The local play level hash (0 outside one) world events are about.
+pub fn set_world_level(level: u32) {
+    if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
+        s.set_world_level(level);
+    }
+}
+
+/// A world event the local game produced: listed (host) or reported (client). True when new.
+pub fn world_local(level: u32, event: &str, name: &str) -> bool {
+    SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()).is_some_and(|s| s.world_local(level, event, name))
+}
+
+/// World events to replay in the local game, as (level, event, reference name).
+pub fn take_world_apply() -> Vec<(u32, String, String)> {
+    SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()).map(|s| s.take_world_apply()).unwrap_or_default()
+}
+
 /// Everything `start` needs besides the mode.
 #[derive(Debug, Clone)]
 pub struct Options {

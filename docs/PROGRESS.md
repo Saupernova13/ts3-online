@@ -170,4 +170,16 @@ town.
   type an address or host. Nothing times out while it is open (`menu_open` in the net state: `wait_decision`
   starts its clock only after it closes). Name, password and the joined address (`menu_last`) are written
   back to the ini. `install.ps1` now writes `net=menu`. Logic in `menu_model.rs` (tested), window in `menu.rs`
-  (not exercised without the game).
+  (exercised in game with two copies: the joining copy listed the host, joined, downloaded the save
+  and bound its partner in Toy Box; `window=` placement now skips the menu window).
+
+- 2026-10-19, H6b (protocol 8): world events by reference name. Actor ids differ between copies but the
+  reference name (`actor+0x150`) is unique and equal for most placed actors (756 of 822 in Toy Box).
+  `ExploderDestroy` turned out to be the notice after a break; the break is `0x140652ac0` on the
+  actor's `MExploder` component (queries 119-120), which a replay now calls. The
+  targeted-post detour now queues whitelisted events (`world::SYNCED`) with the actor's reference name;
+  the host keeps a per-level list that clients acknowledge (`World`, `WorldAck`), clients report their
+  own events (`WorldReport`), and each copy replays entries by reference name (`0x140557f60`), 3 s
+  after its player appeared, retrying for 10 s. In game (two copies, T14): a crate and a barrel
+  broken on the host were listed, and a client that joined later broke both on arrival. See
+  NETCODE.md "World events".

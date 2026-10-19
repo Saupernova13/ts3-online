@@ -1,11 +1,12 @@
 //! Wire format: `b"TS3O"`, protocol version u16, message type u8, body, 16-byte tag. Little-endian, no padding.
 //! The tag is the first 16 bytes of HMAC-SHA256 over everything before it; `Probe`, `ProbeReply` and
 //! `Refuse` use the empty key so a host can be found and can turn a wrong key away, the rest the session key.
+use crate::world;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 7;
+pub const VERSION: u16 = 8;
 /// Length of the authentication tag that ends every datagram.
 pub const TAG_LEN: usize = 16;
 /// Zero bytes after a `Probe`'s build, so a probe is never shorter than the reply it provokes.
@@ -19,6 +20,8 @@ pub const MAX_LEVEL: usize = 64;
 pub const MAX_WALLETS: usize = 16;
 /// Most spends in a `Spend` message.
 pub const MAX_SPENDS: usize = 64;
+/// Most entries in a `World` message (8 x up to 117 bytes stays well under 1200).
+pub const MAX_WORLD: usize = 8;
 
 pub const REFUSE_FULL: u8 = 1;
 pub const REFUSE_BUILD: u8 = 2;
@@ -42,6 +45,9 @@ const T_LEVEL: u8 = 14;
 const T_LEVEL_REQUEST: u8 = 15;
 const T_WALLET: u8 = 16;
 const T_SPEND: u8 = 17;
+const T_WORLD: u8 = 18;
+const T_WORLD_ACK: u8 = 19;
+const T_WORLD_REPORT: u8 = 20;
 
 /// Controller state in the XINPUT_GAMEPAD layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -122,6 +128,12 @@ pub enum Msg {
     Wallet { values: Vec<i32>, acked: u32 },
     /// Client to host: every unacknowledged spend as (seq, wallet index, delta), resent until acked.
     Spend { spends: Vec<(u32, u8, i32)> },
+    /// Host to one client: the world events of `level` the client has not acknowledged, as (seq, event, reference name).
+    World { level: u32, entries: Vec<(u32, String, String)> },
+    /// Client to host: the highest contiguous `World` seq received for `level`.
+    WorldAck { level: u32, seq: u32 },
+    /// Client to host: a world event the client's own game produced, resent until the host lists it.
+    WorldReport { level: u32, event: String, refname: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +174,13 @@ fn put_level(out: &mut Vec<u8>, name: &str) {
     let n = clamp_level(name);
     out.push(n.len() as u8);
     out.extend_from_slice(n.as_bytes());
+}
+
+/// Writes a length-prefixed string of at most 255 bytes (callers keep world strings valid and short).
+fn put_str(out: &mut Vec<u8>, s: &str) {
+    let b = &s.as_bytes()[..s.len().min(255)];
+    out.push(b.len() as u8);
+    out.extend_from_slice(b);
 }
 
 /// Whether datagrams of type `t` are tagged with the empty key.
@@ -279,6 +298,28 @@ pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
                 o.extend_from_slice(&delta.to_le_bytes());
             }
         }
+        Msg::World { level, entries } => {
+            o.push(T_WORLD);
+            o.extend_from_slice(&level.to_le_bytes());
+            let entries: Vec<_> = entries.iter().filter(|(_, e, n)| world::valid_entry(e, n)).take(MAX_WORLD).collect();
+            o.push(entries.len() as u8);
+            for (seq, event, name) in entries {
+                o.extend_from_slice(&seq.to_le_bytes());
+                put_str(&mut o, event);
+                put_str(&mut o, name);
+            }
+        }
+        Msg::WorldAck { level, seq } => {
+            o.push(T_WORLD_ACK);
+            o.extend_from_slice(&level.to_le_bytes());
+            o.extend_from_slice(&seq.to_le_bytes());
+        }
+        Msg::WorldReport { level, event, refname } => {
+            o.push(T_WORLD_REPORT);
+            o.extend_from_slice(&level.to_le_bytes());
+            put_str(&mut o, event);
+            put_str(&mut o, refname);
+        }
     }
     let mut m = mac(if public(o[6]) { &[] } else { key });
     m.update(&o);
@@ -323,6 +364,14 @@ impl<'a> Reader<'a> {
         }
         Some(String::from_utf8_lossy(self.take(n)?).chars().map(|c| if c.is_control() { '?' } else { c }).collect())
     }
+    /// A length-prefixed string of at most `max` bytes that `ok` accepts.
+    fn checked(&mut self, max: usize, ok: impl Fn(&str) -> bool) -> Option<String> {
+        let n = self.u8()? as usize;
+        if n > max {
+            return None;
+        }
+        std::str::from_utf8(self.take(n)?).ok().filter(|s| ok(s)).map(String::from)
+    }
     fn level(&mut self) -> Option<String> {
         let n = self.u8()? as usize;
         if n > MAX_LEVEL {
@@ -344,7 +393,7 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
         return Err(DecodeError::Version(version));
     }
     let kind = *bytes.get(6).ok_or(Malformed)?;
-    if !(T_HELLO..=T_SPEND).contains(&kind) || bytes.len() < 7 + TAG_LEN {
+    if !(T_HELLO..=T_WORLD_REPORT).contains(&kind) || bytes.len() < 7 + TAG_LEN {
         return Err(Malformed);
     }
     let (signed, tag) = bytes.split_at(bytes.len() - TAG_LEN);
@@ -425,6 +474,27 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
                 }
                 Msg::Spend { spends }
             }
+            T_WORLD => {
+                let level = r.u32()?;
+                let n = r.u8()? as usize;
+                if n > MAX_WORLD {
+                    return None;
+                }
+                let mut entries = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let seq = r.u32()?;
+                    let event = r.checked(world::MAX_REF, world::synced)?;
+                    let name = r.checked(world::MAX_REF, world::valid_ref)?;
+                    entries.push((seq, event, name));
+                }
+                Msg::World { level, entries }
+            }
+            T_WORLD_ACK => Msg::WorldAck { level: r.u32()?, seq: r.u32()? },
+            T_WORLD_REPORT => Msg::WorldReport {
+                level: r.u32()?,
+                event: r.checked(world::MAX_REF, world::synced)?,
+                refname: r.checked(world::MAX_REF, world::valid_ref)?,
+            },
             _ => return None,
         })
     };
@@ -489,6 +559,10 @@ mod tests {
             Msg::Wallet { values: Vec::new(), acked: 0 },
             Msg::Spend { spends: vec![(1, 0, -300), (2, 1, -1), (u32::MAX, 15, i32::MIN)] },
             Msg::Spend { spends: Vec::new() },
+            Msg::World { level: 77, entries: vec![(1, "ExploderDestroy".into(), "EXP_Crate_40".into()), (u32::MAX, "ExploderDestroy".into(), "a:b/c.d-e".into())] },
+            Msg::World { level: 0, entries: Vec::new() },
+            Msg::WorldAck { level: 77, seq: 9 },
+            Msg::WorldReport { level: 77, event: "ExploderDestroy".into(), refname: "EXP_Crate_40".into() },
         ]
     }
 
@@ -616,6 +690,42 @@ mod tests {
         forged[7] = 200;
         retag(&mut forged, &[]);
         assert_eq!(dec(&forged), Err(DecodeError::Malformed));
+    }
+
+    #[test]
+    fn world_messages_are_capped_and_validated() {
+        let entry = |i: u32| (i, "ExploderDestroy".to_string(), format!("Crate_{i}"));
+        // too many entries are cut on encode; invalid ones are skipped
+        let mut entries: Vec<_> = (1..=30).map(entry).collect();
+        entries.insert(0, (99, "ExploderDestroy".into(), "bad name".into()));
+        entries.insert(1, (98, "Unlisted".into(), "Crate".into()));
+        match dec(&enc(&Msg::World { level: 5, entries })) {
+            Ok(Msg::World { entries, .. }) => assert_eq!(entries.iter().map(|e| e.0).collect::<Vec<_>>(), (1..=MAX_WORLD as u32).collect::<Vec<_>>()),
+            other => panic!("{other:?}"),
+        }
+        // the largest legal datagram stays well under the MTU
+        let big = (0..MAX_WORLD as u32).map(|i| (i, "ExploderDestroy".to_string(), "x".repeat(world::MAX_REF))).collect();
+        assert!(enc(&Msg::World { level: 1, entries: big }).len() < 1200);
+        // forged count / names are refused
+        let mut forged = enc(&Msg::World { level: 1, entries: vec![entry(1)] });
+        forged[11] = 200;
+        retag(&mut forged, &[]);
+        assert_eq!(dec(&forged), Err(DecodeError::Malformed));
+        for (event, name) in [("Unlisted", "Crate_1"), ("ExploderDestroy", "bad name"), ("ExploderDestroy", ""), ("ExploderDestroy", "a
+b")] {
+            let mut b = vec![];
+            b.extend_from_slice(MAGIC);
+            b.extend_from_slice(&VERSION.to_le_bytes());
+            b.push(T_WORLD_REPORT);
+            b.extend_from_slice(&1u32.to_le_bytes());
+            put_str(&mut b, event);
+            put_str(&mut b, name);
+            b.extend_from_slice(&[0; TAG_LEN]);
+            retag(&mut b, &[]);
+            assert_eq!(dec(&b), Err(DecodeError::Malformed), "{event:?} {name:?}");
+        }
+        let long = Msg::WorldReport { level: 1, event: "ExploderDestroy".into(), refname: "x".repeat(world::MAX_REF + 1) };
+        assert_eq!(dec(&enc(&long)), Err(DecodeError::Malformed));
     }
 
     #[test]

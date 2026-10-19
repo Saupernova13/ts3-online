@@ -321,7 +321,7 @@ impl<'a> Reader<'a> {
         if n > MAX_NAME {
             return None;
         }
-        Some(String::from_utf8_lossy(self.take(n)?).chars().map(|c| if c.is_ascii_control() { '?' } else { c }).collect())
+        Some(String::from_utf8_lossy(self.take(n)?).chars().map(|c| if c.is_control() { '?' } else { c }).collect())
     }
     fn level(&mut self) -> Option<String> {
         let n = self.u8()? as usize;
@@ -468,7 +468,7 @@ mod tests {
                 level: level_hash("ST_ToyBox"),
                 class: 1,
                 pos: [1.5, -2.0, 300.25],
-                yaw: 3.14,
+                yaw: 3.0,
                 cam: -1.25,
                 pad: Pad { buttons: 0x3001, lt: 5, rt: 255, lx: -32768, ly: 32767, rx: -1, ry: 1234 },
                 flags: 0xdead_beef,

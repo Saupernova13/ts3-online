@@ -129,7 +129,7 @@ and H2 (see each other move).
 - H4/H5a (T11 passed, OBS recording): `net=auto` hosts or joins with no addresses (tailnet peers from
   `tailscale status --json`, or `net_peers=`; a taken port means a host on this PC; lone hosts merge).
   A client downloads the host's save at connect (CRC-checked) and plays it from
-  `%LOCALAPPDATA%	s3online\session`, never writing to its own saves. The save-folder hook waits up
+  `%LOCALAPPDATA%\ts3online\session`, never writing to its own saves. The save-folder hook waits up
   to 8 s at startup for that decision. The host's first run triggers a Windows Firewall prompt.
 
 **Next:** follow the host's level automatically (H5b), an event logger to plan world sync (H6), then

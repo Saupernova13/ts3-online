@@ -454,7 +454,7 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   the placing handler resolves its target this way, so a stored id survives a level change safely.
 - **[obs] Verified in game (2026-10-17):** with `enable=instances`, copy 1 started from Steam and copy 2
   started through Explorer run side by side, each with its own number, log, pad mapping and window
-  rect; copy 2's saves go to `%LOCALAPPDATA%	s3online\copy2`. Pad isolation holds: a copy ignores
+  rect; copy 2's saves go to `%LOCALAPPDATA%\ts3online\copy2`. Pad isolation holds: a copy ignores
   the other copy's pad.
 - **[obs] Only the focused copy reads its pad.** An unfocused copy keeps running (attract demo at
   about 15 fps) but ignores its own pad. `GetFocus` is only used for the cursor, and the XInput

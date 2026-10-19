@@ -72,7 +72,7 @@ Board note: the pencil cursor keeps its last position; from Toy Box's spot `A` a
 
 ## T7: two copies on one PC (H0, passed 2026-10-17 except input focus)
 
-Config in `%LOCALAPPDATA%	s3online	s3online.ini`: `enable=instances`, then `[copy1]` with `pad=1` and
+Config in `%LOCALAPPDATA%\ts3online\ts3online.ini`: `enable=instances`, then `[copy1]` with `pad=1` and
 `window=0,0,960,540`, `[copy2]` with `pad=2` and `window=960,0,960,540`. Start 2 virtual pads, launch
 copy 1 from Steam, then `tools/launch_copy.ps1 -CopySave`. Expect `copy 1 of 4` / `copy 2 of 4` in
 `ts3online.log` / `ts3online.copy2.log`, both pad hooks, and the saves redirect in copy 2's log. Use
@@ -110,7 +110,7 @@ read positions from both processes and steer a player to a spot.
 
 Both copies with `net=auto` (no addresses). Copy 1 probes the online tailnet peers for 2.5 s, finds
 no host and hosts; copy 2 finds the port taken and joins the local host. Expect in copy 2's log
-`net: save: received N bytes (crc ok)` before `saves: SHGetFolderPathA(APPDATA) -> ...	s3online\session`,
+`net: save: received N bytes (crc ok)` before `saves: SHGetFolderPathA(APPDATA) -> ...\ts3online\session`,
 and in copy 1's `net: save: sent N bytes to player 1`. Then T10's partner checks pass unchanged. The
 first time a copy hosts, Windows Firewall asks about the game: on a tailnet the host must allow it.
 

@@ -18,6 +18,8 @@ const LEVEL_US: u64 = 1_000_000;
 const WALLET_US: u64 = 1_000_000;
 /// World entries and client reports are resent this often until acknowledged.
 const WORLD_US: u64 = 200_000;
+/// Most distinct actors a client keeps host transforms for.
+const MAX_NPCS_IN: usize = 4096;
 /// Most unlisted reports a client keeps.
 const MAX_REPORTS: usize = 32;
 /// The host answers a client's `SaveRequest` at most this often.
@@ -146,6 +148,8 @@ pub struct Session {
     world_seen: Vec<(String, String)>,
     /// entries for the game thread to replay: the host list on a client, accepted reports on the host
     world_apply: Vec<(u32, String, String)>,
+    /// client: the latest host transform per actor hash for `world_level`, until taken
+    npcs_in: HashMap<u32, ([f32; 3], f32)>,
 }
 
 /// `new` is ahead of `old` in wrapping sequence order.
@@ -198,6 +202,7 @@ impl Session {
             last_report: None,
             world_seen: Vec::new(),
             world_apply: Vec::new(),
+            npcs_in: HashMap::new(),
         }
     }
 
@@ -329,6 +334,7 @@ impl Session {
         self.reports.clear();
         self.world_seen.clear();
         self.world_apply.clear();
+        self.npcs_in.clear();
         for p in &mut self.peers {
             p.world_acked = 0;
             p.world_sent = 0;
@@ -408,6 +414,38 @@ impl Session {
             let addr = p.addr;
             self.send(addr, &Msg::World { level: self.world_level, entries });
         }
+    }
+
+    /// Host: sends the moving actors' transforms of `level` to every client, in as many datagrams as needed.
+    /// Unreliable: the caller resends whatever is still moving.
+    pub fn set_npcs(&mut self, level: u32, entries: &[(u32, [f32; 3], f32)]) {
+        if !self.is_host() || level == 0 || level != self.world_level {
+            return;
+        }
+        for chunk in entries.chunks(proto::MAX_NPCS) {
+            let msg = Msg::Npcs { level, entries: chunk.to_vec() };
+            for i in 0..self.peers.len() {
+                let addr = self.peers[i].addr;
+                self.send(addr, &msg);
+            }
+        }
+    }
+
+    /// Client: keeps the host's transforms for our level; the latest per actor wins.
+    fn on_npcs(&mut self, level: u32, entries: Vec<(u32, [f32; 3], f32)>) {
+        if level == 0 || level != self.world_level {
+            return;
+        }
+        for (hash, pos, yaw) in entries {
+            if self.npcs_in.len() < MAX_NPCS_IN || self.npcs_in.contains_key(&hash) {
+                self.npcs_in.insert(hash, (pos, yaw));
+            }
+        }
+    }
+
+    /// Client: the host transforms received since the last call.
+    pub fn take_npcs(&mut self) -> Vec<(u32, [f32; 3], f32)> {
+        self.npcs_in.drain().map(|(h, (p, y))| (h, p, y)).collect()
     }
 
     /// Host: a client report becomes a list entry and something the local game replays.
@@ -696,6 +734,7 @@ impl Session {
             Msg::Level { name } if proto::valid_level(&name) => self.host_level = Some(name),
             Msg::Wallet { values, acked } => self.host_wallet = Some((values, acked)),
             Msg::World { level, entries } => self.on_world(from, level, entries),
+            Msg::Npcs { level, entries } => self.on_npcs(level, entries),
             Msg::SaveInfo { total, crc } if self.want_save && !self.save_done => {
                 if total == 0 {
                     self.save_done = true;
@@ -1352,6 +1391,58 @@ mod tests {
         let out = host.drain_outgoing();
         assert_eq!(out.len(), 1);
         assert_eq!(decode(&out[0].1), Ok(Msg::ProbeReply { build: BUILD, host: true, players: 1, locked: true, name: "hoster".into() }));
+    }
+
+    #[test]
+    fn npcs_go_to_every_client_in_chunks_and_the_latest_wins() {
+        let (mut host, mut a, mut b) = two_clients();
+        let mover = |i: u32| (i, [i as f32, 0.0, 1.0], 0.5);
+        // not in a level: nothing goes out
+        host.set_npcs(7, &[mover(1)]);
+        assert!(host.drain_outgoing().is_empty());
+        for s in [&mut host, &mut a, &mut b] {
+            s.set_world_level(7);
+        }
+        let many: Vec<_> = (0..(proto::MAX_NPCS as u32 + 5)).map(mover).collect();
+        host.set_npcs(7, &many);
+        host.set_npcs(8, &[mover(1)]); // another level: dropped
+        let out = host.drain_outgoing();
+        assert_eq!(out.len(), 4, "two datagrams for each of two clients");
+        for (to, bytes) in out {
+            match (to, &mut a, &mut b) {
+                (t, a, _) if t == addr(1) => a.handle(addr(H), &bytes, MS),
+                (_, _, b) => b.handle(addr(H), &bytes, MS),
+            }
+        }
+        let got = a.take_npcs();
+        assert_eq!(got.len(), many.len());
+        assert!(a.take_npcs().is_empty(), "taken once");
+        // a newer transform replaces the older one
+        host.set_npcs(7, &[(3, [9.0, 9.0, 9.0], 1.0)]);
+        deliver(addr(H), &mut host, addr(1), &mut a, MS);
+        assert_eq!(a.take_npcs(), vec![(3, [9.0, 9.0, 9.0], 1.0)]);
+        // a client in another level, or after a level change, ignores and forgets
+        b.set_world_level(9);
+        assert!(b.take_npcs().is_empty());
+        host.set_npcs(7, &[mover(2)]);
+        deliver(addr(H), &mut host, addr(2), &mut b, MS);
+        assert!(b.take_npcs().is_empty());
+        a.handle(addr(H), &proto::encode(&Msg::Npcs { level: 7, entries: vec![mover(4)] }, &[]), MS);
+        a.set_world_level(8);
+        assert!(a.take_npcs().is_empty());
+    }
+
+    #[test]
+    fn a_client_does_not_send_or_accept_npcs_from_a_stranger() {
+        let (mut host, mut a, _) = two_clients();
+        host.set_world_level(7);
+        a.set_world_level(7);
+        a.set_npcs(7, &[(1, [0.0; 3], 0.0)]);
+        assert!(a.drain_outgoing().is_empty(), "only the host sends");
+        // from an address that is not the host
+        let m = proto::encode(&Msg::Npcs { level: 7, entries: vec![(1, [0.0; 3], 0.0)] }, &[]);
+        a.handle(addr(77), &m, MS);
+        assert!(a.take_npcs().is_empty());
     }
 
     fn state_at(pos: [f32; 3], yaw: f32) -> State {

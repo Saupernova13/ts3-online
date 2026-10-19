@@ -109,5 +109,14 @@ and H2 (see each other move).
   leaves, forgotten on level change. Spawn and rotation details: FINDINGS 9. Not run in the game
   yet (T9). 225 patches.
 
-**Next:** run T9 (two copies connect and see each other), then H3 (drive proxies from the owner's
-input) and H4 (networked-session rules).
+- T9 passed (recorded with OBS, `tools/obsctl.py`): host and client copies side by side. The client
+  connected as player 1 within 10 ms of starting, round trip about 5 ms. In Toy Box each copy spawned
+  a proxy of the other player (host Woody saw a Buzz proxy, client Buzz saw a Woody proxy), and each
+  proxy followed its owner's moves in both directions. The client saved, exited to the board and
+  re-entered: no crash in either copy, and the client respawned the host's proxy. Evidence:
+  `work/evidence/2026-10-19-t9-*`.
+- Seen in T9: the host shows the "X Pick up" prompt next to the Buzz proxy, so the game treats a
+  proxy as a co-op partner that can be picked up and thrown; proxies slide in their idle pose.
+
+**Next:** H3 (drive proxies from the owner's input, so they run, jump and animate), then H4
+(networked-session rules: no pick-up/throw of proxies, no regrouping).

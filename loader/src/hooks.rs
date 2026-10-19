@@ -78,7 +78,9 @@ pub unsafe extern "system" fn frame_tick() {
     }
 
     if crate::net::active() {
+        let t = std::time::Instant::now();
         crate::coop::update();
+        crate::perf::frame(t.elapsed());
     }
     crate::evlog::tick();
     crate::devcmd::tick();

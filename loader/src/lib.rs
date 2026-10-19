@@ -21,6 +21,7 @@ pub mod net;
 #[cfg(windows)]
 pub mod pad;
 pub mod patch;
+pub mod perf;
 #[cfg(windows)]
 pub mod coop;
 #[cfg(windows)]

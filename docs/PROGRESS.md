@@ -183,3 +183,8 @@ town.
   after its player appeared, retrying for 10 s. In game (two copies, T14): a crate and a barrel
   broken on the host were listed, and a client that joined later broke both on arrival. See
   NETCODE.md "World events".
+
+- 2026-10-19, performance: `perf:` log lines every 30 s (frame rate, loader work per frame, session
+  thread passes, datagrams, bytes and lock time); socket calls moved out of the session lock. In
+  game: 60 frames/s, loader work avg 4-5 us per frame, 4 kB/s each way at 60 datagrams/s, lock held
+  avg 2 us. Nothing needed optimizing; numbers in NETCODE.md "Performance".

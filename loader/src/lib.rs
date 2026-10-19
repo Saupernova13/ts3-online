@@ -22,6 +22,7 @@ pub mod patch;
 pub mod coop;
 #[cfg(windows)]
 pub mod saves;
+pub mod wallet;
 pub mod watch;
 #[cfg(windows)]
 mod window;

@@ -57,5 +57,4 @@ The loader writes `ts3online.log` next to the game exe; attach it to bug reports
 
 - Each PC runs its own world. Players and everything they do with their own buttons match on both
   screens; enemies, gold and missions are simulated on each PC and can drift apart.
-- Both players' button prompts show on each screen.
 - Only Toy Box has been tested.

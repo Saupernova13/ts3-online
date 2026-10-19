@@ -152,4 +152,8 @@ and H2 (see each other move).
   counter flicked back for a frame).
 
 **Next:** world sync beyond wallets (H6): enemies, missions, shops and the purchases that change the
-town; the partner's HUD prompts on the local screen.
+town.
+
+- HUD prompts: `HudControllerLayout` adds a player's prompts only for players below the view count,
+  so with one view the partner's prompts never show; the "X Pick up" next to the partner is the
+  local player's own (FINDINGS 10). No change needed.

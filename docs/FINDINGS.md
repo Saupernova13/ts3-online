@@ -499,8 +499,15 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   owner's at the moment of an action press (pose error 0.00-0.11 m, under 1 degree). Buzz picking up
   Woody and Woody picking up Buzz both showed on both copies; after the throw the thrown player landed
   within 0.3 m on both.
-- **[obs] HUD prompts of every player show on the one viewport.** With slot 1 bound, the partner's
-  context prompts (for example "X Pick up" next to a pickup) appear on the local screen as well.
+- **[obs] Context prompts are per view (`queries/110`-`114`).** The context prompts ("X Pick up") are
+  `HudControllerLayout` (screen `ControllerLayoutHUD`), with two panels: P1's at `+0x260` ("LeftIn")
+  and P2's at `+0x2f0` ("RightIn"). `0x140218770(hud, text, id, player)` adds a prompt to
+  `panel[player]` only when `player < min(view count, 2)` (`[0x140b2ef50]+4`; the bound at
+  `0x1402187e6` is raised to 4, but the view-count test still holds players 2-3 out), and to both
+  panels when `player >= 4` (prompts for every player). With the `online` patch's single view, the
+  partner's own prompts are dropped, so the "X Pick up" next to the partner is the local player's own
+  prompt to pick the partner up. (This corrects an earlier note that said partner prompts showed on
+  the local screen.)
 - **[obs] Level changes are events.** The app registers `SwitchLevel`, `ProcessSwitchLevel` and
   `LoadLevel` (3 arguments) with the event system (`0x1405cc7d0`). Leaving the avatar select for Toy
   Box posts `SwitchLevel` with the string `"WesternTown"` (`0x14012e800`, also sets `0x140992e77`);

@@ -499,6 +499,22 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   owner's at the moment of an action press (pose error 0.00-0.11 m, under 1 degree). Buzz picking up
   Woody and Woody picking up Buzz both showed on both copies; after the throw the thrown player landed
   within 0.3 m on both.
+- **[obs] The pick-up target is the `PlayerPerception` candidate (2026-10-19, `queries/97`-`99`,
+  `121`, in game).** The avatar's `PlayerPerception` component holds the nearest thing it could pick
+  up at `+0x280` while its state `+0x278` is 0 or 1; on the X press the state goes to 24 and `+0x208`
+  becomes the carried actor (`PlayerPerception_GetCarryActor`, `0x1400ba380`, reads `+0x208`, else
+  `+0x280` in states 0-1). The game posts `CARRY_START a=0 b=<carrier id> actor=<target id>`, then on
+  RT `StartThrowAction`, `StartThrow`, `CARRY_END`, and `CarriedThrowLand` on the thrown actor.
+  Button replay picked whatever was nearest on the receiving copy: one test grabbed a townsperson
+  that stood elsewhere on the owner's copy. Writing the partner avatar's `+0x280` each frame to the
+  owner's target holds (the game did not rewrite it in testing), and the replayed X then picked the
+  right target even with a 110 degree pose error. `PlayerPerception_CarryBegin` (`0x140056b30`) only
+  posts `StartPickup` (a=0, b=carrier) to a non-AI target: posting that alone put the target in its
+  "being lifted" pose with no carrier, so a carry has to start from the carrier's own action.
+- **[obs] Townspeople have the same reference names on every copy (2026-10-19).** Spawned
+  townspeople, cactus toys and help capsules are named after their spawner (`TownpersonSpawn
+  Actor165_167`, `ENV_CactusToySpawn Actor105_164`) and those names matched on both copies; static
+  ones stood at the same places, but townspeople had walked to different places on each.
 - **[obs] Context prompts are per view (`queries/110`-`114`).** The context prompts ("X Pick up") are
   `HudControllerLayout` (screen `ControllerLayoutHUD`), with two panels: P1's at `+0x260` ("LeftIn")
   and P2's at `+0x2f0` ("RightIn"). `0x140218770(hud, text, id, player)` adds a prompt to

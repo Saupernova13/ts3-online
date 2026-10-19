@@ -17,6 +17,8 @@ pub enum Cmd {
     /// like `event`, but through the game's post entry, so the loader's own detour sees it
     Post { name: String, arg: Option<String> },
     EventActor { name: String, actor: u64, arg: Option<String> },
+    /// a targeted post with raw `a` and `b`
+    Post5 { name: String, a: u64, b: u64, actor: u64 },
     Log(String),
 }
 
@@ -31,7 +33,8 @@ pub fn cmd_path(local_app_data: &str, copy: u32) -> std::path::PathBuf {
 /// The game's broadcast post entry; with the hooks group applied it jumps into `hooks::post_broadcast`.
 const POST_BROADCAST: u64 = 0x1_4049_e160;
 
-/// One command line: `event NAME [STR]`, `post NAME [STR]`, `event_actor NAME ACTORID_HEX [STR]`, `log TEXT`.
+/// One command line: `event NAME [STR]`, `post NAME [STR]`, `event_actor NAME ACTORID_HEX [STR]`,
+/// `post5 NAME A_HEX B_HEX ACTORID_HEX` (raw targeted post), `log TEXT`.
 pub fn parse(line: &str) -> Result<Cmd, String> {
     let line = line.trim();
     let (verb, rest) = line.split_once(char::is_whitespace).map_or((line, ""), |(v, r)| (v, r.trim()));
@@ -58,6 +61,13 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
                 return Err("event_actor needs a name".into());
             }
             Ok(Cmd::EventActor { name: name.into(), actor, arg: arg.map(String::from) })
+        }
+        "post5" => {
+            let mut w = rest.split_whitespace();
+            let name = w.next().ok_or("post5 needs a name")?;
+            let mut num = |what: &str| crate::hex::parse_u64(w.next().unwrap_or("")).map_err(|e| format!("{what}: {e}"));
+            let (a, b, actor) = (num("a")?, num("b")?, num("actor id")?);
+            Ok(Cmd::Post5 { name: name.into(), a, b, actor })
         }
         "log" => Ok(Cmd::Log(rest.to_string())),
         "" => Err("empty line".into()),
@@ -96,6 +106,10 @@ unsafe fn run(cmd: &Cmd) {
             let r = post(events, leak_cstr(name), arg.as_deref().map_or(0, leak_cstr), 0);
             log!("dev: post {name} {arg:?} -> {r:#x}");
         }
+        Cmd::Post5 { name, a, b, actor } => match hooks::call_post_actor(events, leak_cstr(name), *a, *b, *actor) {
+            Some(r) => log!("dev: post5 {name} {a:#x} {b:#x} {actor:#x} -> {r:#x}"),
+            None => log!("dev: post5 {name}: the post detour is not installed"),
+        },
         Cmd::Log(t) => log!("dev: log {t}"),
     }
 }
@@ -138,6 +152,7 @@ mod tests {
         assert_eq!(parse("  event   Jump   some text here "), Ok(Cmd::Event { name: "Jump".into(), arg: Some("some text here".into()) }));
         assert_eq!(parse("event_actor Hit 1f2a"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x1f2a, arg: None }));
         assert_eq!(parse("event_actor Hit 0x10 STR"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x10, arg: Some("STR".into()) }));
+        assert_eq!(parse("post5 StartPickup 0 317 0x28c"), Ok(Cmd::Post5 { name: "StartPickup".into(), a: 0, b: 0x317, actor: 0x28c }));
         assert_eq!(parse("post SwitchLevel westerntown"), Ok(Cmd::Post { name: "SwitchLevel".into(), arg: Some("westerntown".into()) }));
         assert_eq!(parse("log hello world"), Ok(Cmd::Log("hello world".into())));
         assert_eq!(parse("log"), Ok(Cmd::Log(String::new())));
@@ -148,6 +163,7 @@ mod tests {
         assert!(parse("").is_err());
         assert!(parse("event").is_err());
         assert!(parse("event_actor Hit").is_err());
+        assert!(parse("post5 StartPickup 0 317").is_err());
         assert!(parse("event_actor Hit zz").is_err());
         assert!(parse("nope x").is_err());
     }

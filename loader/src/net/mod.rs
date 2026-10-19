@@ -152,6 +152,18 @@ pub fn set_local_state(level: u32, class: u8, pos: [f32; 3], yaw: f32, cam: f32,
     }
 }
 
+/// The local player's pick-up or carry target for the next outgoing state.
+pub fn set_local_target(target: u32) {
+    if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
+        s.set_local_target(target);
+    }
+}
+
+/// This copy's player id in the session.
+pub fn local_id() -> Option<u8> {
+    SESSION.lock().ok().and_then(|g| g.as_ref().and_then(|s| s.local_id()))
+}
+
 /// Latest state of every remote player.
 pub fn remote_states() -> Vec<(u8, State)> {
     SESSION.lock().ok().and_then(|g| g.as_ref().map(|s| s.remote_states())).unwrap_or_default()

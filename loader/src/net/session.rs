@@ -103,6 +103,8 @@ pub struct Session {
     rtt: BTreeMap<u8, u32>,
     states: BTreeMap<u8, State>,
     pending: Option<Local>,
+    /// `State.target` of the local player
+    local_target: u32,
     state_seq: u32,
     last_state: Option<u64>,
     last_hello: Option<u64>,
@@ -167,6 +169,7 @@ impl Session {
             rtt: BTreeMap::new(),
             states: BTreeMap::new(),
             pending: None,
+            local_target: 0,
             state_seq: 0,
             last_state: None,
             last_hello: None,
@@ -250,6 +253,11 @@ impl Session {
             pad.buttons |= old.pad.buttons;
         }
         self.pending = Some(Local { level, class, pos, yaw, cam, pad, flags });
+    }
+
+    /// The local player's pick-up or carry target (`State.target`), sent with each state.
+    pub fn set_local_target(&mut self, target: u32) {
+        self.local_target = target;
     }
 
     /// Host: the level name of the local game ("" outside a level); a change goes out at once.
@@ -506,7 +514,7 @@ impl Session {
             if Self::due(&mut self.last_state, now, STATE_US) {
                 self.pending = None;
                 self.state_seq = self.state_seq.wrapping_add(1);
-                let m = Msg::State(State { id, seq: self.state_seq, level: l.level, class: l.class, pos: l.pos, yaw: l.yaw, cam: l.cam, pad: l.pad, flags: l.flags });
+                let m = Msg::State(State { id, seq: self.state_seq, level: l.level, class: l.class, pos: l.pos, yaw: l.yaw, cam: l.cam, pad: l.pad, flags: l.flags, target: self.local_target });
                 for a in &addrs {
                     self.send(*a, &m);
                 }
@@ -885,7 +893,7 @@ mod tests {
     fn protocol_mismatch_is_refused() {
         let mut host = Session::host(BUILD, "h");
         let mut hello = encode(&Msg::Hello { build: BUILD, name: "bob".into() });
-        hello[4] = 9;
+        hello[4] = 200;
         host.handle(addr(1), &hello, 0);
         assert_eq!(msgs(&mut host), vec![(addr(1), Msg::Refuse { reason: proto::REFUSE_PROTOCOL })]);
         host.handle(addr(1), b"junk", 0);
@@ -992,7 +1000,7 @@ mod tests {
         a.set_local_state(77, 1, [1.0, 2.0, 3.0], 0.5, 0.25, pad, 7);
         a.tick(100 * MS);
         deliver(addr(1), &mut a, addr(H), &mut host, 100 * MS);
-        let want = State { id: 1, seq: 1, level: 77, class: 1, pos: [1.0, 2.0, 3.0], yaw: 0.5, cam: 0.25, pad, flags: 7 };
+        let want = State { id: 1, seq: 1, level: 77, class: 1, pos: [1.0, 2.0, 3.0], yaw: 0.5, cam: 0.25, pad, flags: 7, target: 0 };
         assert_eq!(host.remote_states(), vec![(1, want)]);
         // relayed to b only, unchanged
         let relayed = msgs(&mut host);
@@ -1327,7 +1335,7 @@ mod tests {
         host.drain_events();
         host.drain_outgoing();
         // a spoofed state and bye with the wrong key change nothing and draw no answer
-        let st = State { id: 1, seq: 9, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0 };
+        let st = State { id: 1, seq: 9, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0 };
         host.handle(addr(1), &encode(&Msg::State(st)), MS);
         host.handle(addr(1), &encode(&Msg::Bye { id: 1 }), MS);
         assert!(host.remote_states().is_empty());
@@ -1347,7 +1355,7 @@ mod tests {
     }
 
     fn state_at(pos: [f32; 3], yaw: f32) -> State {
-        State { id: 1, seq: 1, level: 0, class: 0, pos, yaw, cam: 0.0, pad: Pad::default(), flags: 0 }
+        State { id: 1, seq: 1, level: 0, class: 0, pos, yaw, cam: 0.0, pad: Pad::default(), flags: 0, target: 0 }
     }
 
     #[test]

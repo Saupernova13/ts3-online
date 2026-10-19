@@ -188,3 +188,11 @@ town.
   thread passes, datagrams, bytes and lock time); socket calls moved out of the session lock. In
   game: 60 frames/s, loader work avg 4-5 us per frame, 4 kB/s each way at 60 datagrams/s, lock held
   avg 2 us. Nothing needed optimizing; numbers in NETCODE.md "Performance".
+
+- 2026-10-19, pick-up targets (protocol 9): playtesting showed partners picking up different things
+  than their owners (a townsperson standing next to the partner on one copy only). `State` now
+  carries the owner's `PlayerPerception` candidate as a player id, a reference-name hash or "other",
+  and the receiving copy writes the partner's candidate to match. In game: Woody picking up Buzz
+  showed `CARRY_START` on both copies with the right target (also at a 110 degree pose error), and
+  the throw landed within 0.1 m. Jumps no longer snap the partner (PR 21). Townspeople turned out to
+  share reference names across copies but walk differently, the starting point for NPC sync.

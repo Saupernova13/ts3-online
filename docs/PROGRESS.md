@@ -165,9 +165,12 @@ town.
   `install.ps1 -Password`. See NETCODE.md "Security".
 
 - 2026-10-19, H6b (protocol 8): world events by reference name. Actor ids differ between copies but the
-  reference name (`actor+0x150`) is unique and equal for most placed actors (756 of 822 in Toy Box), and
-  replaying `ExploderDestroy` (a=0, b=0) on the client's crate by id broke it with its coins. The
+  reference name (`actor+0x150`) is unique and equal for most placed actors (756 of 822 in Toy Box).
+  `ExploderDestroy` turned out to be the notice after a break; the break is `0x140652ac0` on the
+  actor's `MExploder` component (queries 119-120), which a replay now calls. The
   targeted-post detour now queues whitelisted events (`world::SYNCED`) with the actor's reference name;
   the host keeps a per-level list that clients acknowledge (`World`, `WorldAck`), clients report their
-  own events (`WorldReport`), and each copy replays entries through `0x140557f60` + `call_post_actor`,
-  retrying for 10 s. Unit tests only; not yet run in game. See NETCODE.md "World events".
+  own events (`WorldReport`), and each copy replays entries by reference name (`0x140557f60`), 3 s
+  after its player appeared, retrying for 10 s. In game (two copies, T14): a crate and a barrel
+  broken on the host were listed, and a client that joined later broke both on arrival. See
+  NETCODE.md "World events".

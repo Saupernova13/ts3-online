@@ -143,6 +143,19 @@ running copy, standing in for a purchase or a pickup.
    within a frame and its HUD counter animating up.
 3. Put the host's value back afterwards: the host's save is real.
 
+## T14: world events (H6b, passed 2026-10-19)
+
+Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box
+start; Buzz breaks them with Y up close.
+
+1. Host breaks a crate. Expect the host's `world: host list +ExploderDestroy <reference name>` and
+   the client's `world: applied ExploderDestroy to <reference name>`, and the crate gone on both.
+2. Client breaks a barrel. The host's copy of the client's player usually breaks it there as well;
+   either way both copies end with it broken (`work/scratch/broken.py <pid> <reference names>`
+   reads `actor+0x3f8`, which is 0 once broken).
+3. Close the client and start it again (`work/scratch/rejoin.sh`). About 3 s after it appears in
+   Toy Box, expect `world: applied ...` for every earlier break and those crates gone on screen.
+
 ## Reporting
 
 Copy the log plus a note of what was on screen (or a screenshot) into an issue or the progress log.

@@ -564,7 +564,14 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `ExploderDestroy a=0 b=0 actor=0x33e` (the crate, reference name
   `EXP_CrateSmallREDUCEDEXP_CrateSmallREDUCED_40`), followed by the broadcasts `SpawnGoldPickup` and
   `SmashCrate` with b=0x33e and `TriggerPickup` on the new coin actors. On the client the same crate
-  had id 0x34b. Posting `ExploderDestroy` with a=0, b=0 to 0x34b on the client (devcmd `event_actor`,
-  which goes through `hooks::call_post_actor`, past the logging detour) broke the client's crate and
-  dropped its coins, checked by screenshot; the pointer at `actor+0x3f8` became 0 on both broken crates
-  while an intact crate kept it. The replay alone therefore reproduces the break, coins included.
+  had id 0x34b, and it broke there too, but by the client's copy of the host's player hitting it.
+- **[obs] `ExploderDestroy` is a notice, the break is `MExploder` (2026-10-19, `queries/119`-`120`, in
+  game).** `0x140652ac0(exploder)` does the break (debris, `Slave` and kinematic controller off, sets
+  `exploder+0xdc` bit 0) and posts `ExploderDestroy` to the owner (`exploder+8`) afterwards. It runs
+  when `exploder+0xdc & 3 == 2` (bit 1 requested, bit 0 done) and the vcall at `+0x38` agrees; its only
+  caller is the handler `0x140656710` of the `Explode@MExploder` message. The component is
+  `MExploder`, found with `0x140558fb0(actor, "MExploder")` (component lookup by name through
+  `actor+0x370`; a script getter `0x1405ea4b0` reads bit 0 as "exploded"). Posting `ExploderDestroy`
+  to a crate a late-joining client had intact changed nothing; setting bit 1 and calling
+  `0x140652ac0` broke it with its coins (screenshot), and `actor+0x3f8` became 0 as on a crate broken
+  by hand.

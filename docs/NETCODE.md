@@ -137,7 +137,9 @@ does not flicker back. Only spending is forwarded; a host that spends needs no m
 **World events (H6b).** Actor ids differ between copies, so a one-off event on an actor is carried
 by the actor's reference name (`actor+0x150`, unique and equal in both copies for most actors;
 FINDINGS 10). Only events in `world::SYNCED` (now `ExploderDestroy`, a crate breaking) posted with
-a=0 and b=0 are synced; more are added to that list once verified. The targeted-post detour
+a=0 and b=0 are synced; more are added to that list once verified. `ExploderDestroy` is only the notice
+of a break, so a replay breaks the actor's `MExploder` component itself (FINDINGS 10), and waits
+until the local player has been in the level for 3 s (a replay during the load is lost). The targeted-post detour
 (`0x14049e0b0`) resolves the actor, reads its reference name safely and queues `(event, name)` for
 the game thread. The host keeps the authoritative list for its play level: `(seq, event, name)`,
 seq from 1, no duplicates, cleared when its level changes. It sends each client

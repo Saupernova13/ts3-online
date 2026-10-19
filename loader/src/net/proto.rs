@@ -1,7 +1,15 @@
-//! Wire format: `b"TS3O"`, protocol version u16, message type u8, body. Little-endian, no padding.
+//! Wire format: `b"TS3O"`, protocol version u16, message type u8, body, 16-byte tag. Little-endian, no padding.
+//! The tag is the first 16 bytes of HMAC-SHA256 over everything before it; `Probe`, `ProbeReply` and
+//! `Refuse` use the empty key so a host can be found and can turn a wrong key away, the rest the session key.
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 6;
+pub const VERSION: u16 = 7;
+/// Length of the authentication tag that ends every datagram.
+pub const TAG_LEN: usize = 16;
+/// Zero bytes after a `Probe`'s build, so a probe is never shorter than the reply it provokes.
+pub const PROBE_PAD: usize = 40;
 /// Largest `SaveChunk` payload we accept.
 pub const MAX_CHUNK: usize = 1200;
 pub const MAX_NAME: usize = 32;
@@ -15,6 +23,7 @@ pub const MAX_SPENDS: usize = 64;
 pub const REFUSE_FULL: u8 = 1;
 pub const REFUSE_BUILD: u8 = 2;
 pub const REFUSE_PROTOCOL: u8 = 3;
+pub const REFUSE_KEY: u8 = 4;
 
 const T_HELLO: u8 = 1;
 const T_WELCOME: u8 = 2;
@@ -66,6 +75,19 @@ pub struct State {
     pub flags: u32,
 }
 
+/// Positions beyond this are not a real level.
+const MAX_COORD: f32 = 1.0e6;
+
+/// The state's numbers are finite and in range; anything else is dropped, not stored or relayed.
+pub fn sane(s: &State) -> bool {
+    s.pos.iter().all(|v| v.is_finite() && v.abs() <= MAX_COORD) && s.yaw.is_finite() && s.cam.is_finite()
+}
+
+/// Empty, or 1..=`MAX_LEVEL` bytes of `[A-Za-z0-9_]`.
+pub fn valid_level(name: &str) -> bool {
+    name.len() <= MAX_LEVEL && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
 /// 32-bit FNV-1a of the lowercase level name; 0 for an empty name.
 pub fn level_hash(name: &str) -> u32 {
     if name.is_empty() {
@@ -86,7 +108,7 @@ pub enum Msg {
     Bye { id: u8 },
     /// Discovery: "is there a host here?" (answered by any running copy, never relayed)
     Probe { build: u64 },
-    ProbeReply { build: u64, host: bool, players: u8, name: String },
+    ProbeReply { build: u64, host: bool, players: u8, locked: bool, name: String },
     /// Client to host: send the save; `have` is a bitmap of the chunks already received.
     SaveRequest { have: Vec<u8> },
     SaveInfo { total: u32, crc: u32 },
@@ -108,6 +130,8 @@ pub enum DecodeError {
     Malformed,
     /// Ours, but another protocol version.
     Version(u16),
+    /// Ours and the right version, but the tag does not verify: another `net_key`, or tampered.
+    BadKey,
 }
 
 /// `name` cut to at most `MAX_NAME` bytes on a char boundary.
@@ -140,7 +164,23 @@ fn put_level(out: &mut Vec<u8>, name: &str) {
     out.extend_from_slice(n.as_bytes());
 }
 
-pub fn encode(msg: &Msg) -> Vec<u8> {
+/// Whether datagrams of type `t` are tagged with the empty key.
+fn public(t: u8) -> bool {
+    matches!(t, T_REFUSE | T_PROBE | T_PROBE_REPLY)
+}
+
+fn mac(key: &[u8]) -> Hmac<Sha256> {
+    // HMAC takes a key of any length
+    Hmac::<Sha256>::new_from_slice(key).unwrap_or_else(|_| unreachable!())
+}
+
+/// Whether `bytes` is a `Hello` frame (for answering a wrong key).
+pub fn is_hello(bytes: &[u8]) -> bool {
+    bytes.get(6) == Some(&T_HELLO)
+}
+
+/// `msg` as a datagram tagged with `key` (the empty key for the public message types).
+pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
     let mut o = Vec::with_capacity(32);
     o.extend_from_slice(MAGIC);
     o.extend_from_slice(&VERSION.to_le_bytes());
@@ -185,11 +225,12 @@ pub fn encode(msg: &Msg) -> Vec<u8> {
         Msg::Probe { build } => {
             o.push(T_PROBE);
             o.extend_from_slice(&build.to_le_bytes());
+            o.extend_from_slice(&[0; PROBE_PAD]);
         }
-        Msg::ProbeReply { build, host, players, name } => {
+        Msg::ProbeReply { build, host, players, locked, name } => {
             o.push(T_PROBE_REPLY);
             o.extend_from_slice(&build.to_le_bytes());
-            o.extend_from_slice(&[*host as u8, *players]);
+            o.extend_from_slice(&[*host as u8, *players, *locked as u8]);
             put_name(&mut o, name);
         }
         Msg::SaveRequest { have } => {
@@ -239,6 +280,9 @@ pub fn encode(msg: &Msg) -> Vec<u8> {
             }
         }
     }
+    let mut m = mac(if public(o[6]) { &[] } else { key });
+    m.update(&o);
+    o.extend_from_slice(&m.finalize().into_bytes()[..TAG_LEN]);
     o
 }
 
@@ -277,7 +321,7 @@ impl<'a> Reader<'a> {
         if n > MAX_NAME {
             return None;
         }
-        Some(String::from_utf8_lossy(self.take(n)?).into_owned())
+        Some(String::from_utf8_lossy(self.take(n)?).chars().map(|c| if c.is_ascii_control() { '?' } else { c }).collect())
     }
     fn level(&mut self) -> Option<String> {
         let n = self.u8()? as usize;
@@ -288,7 +332,8 @@ impl<'a> Reader<'a> {
     }
 }
 
-pub fn decode(bytes: &[u8]) -> Result<Msg, DecodeError> {
+/// Parses and authenticates a datagram against `key` (ignored for the public message types).
+pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
     use DecodeError::Malformed;
     if bytes.get(..4) != Some(MAGIC.as_slice()) {
         return Err(Malformed);
@@ -298,6 +343,15 @@ pub fn decode(bytes: &[u8]) -> Result<Msg, DecodeError> {
     if version != VERSION {
         return Err(DecodeError::Version(version));
     }
+    let kind = *bytes.get(6).ok_or(Malformed)?;
+    if !(T_HELLO..=T_SPEND).contains(&kind) || bytes.len() < 7 + TAG_LEN {
+        return Err(Malformed);
+    }
+    let (signed, tag) = bytes.split_at(bytes.len() - TAG_LEN);
+    let mut m = mac(if public(kind) { &[] } else { key });
+    m.update(signed);
+    m.verify_truncated_left(tag).map_err(|_| DecodeError::BadKey)?;
+    let mut r = Reader(&signed[6..]);
     let body = |r: &mut Reader| -> Option<Msg> {
         Some(match r.u8()? {
             T_HELLO => Msg::Hello { build: r.u64()?, name: r.name()? },
@@ -325,8 +379,14 @@ pub fn decode(bytes: &[u8]) -> Result<Msg, DecodeError> {
                 flags: r.u32()?,
             }),
             T_BYE => Msg::Bye { id: r.u8()? },
-            T_PROBE => Msg::Probe { build: r.u64()? },
-            T_PROBE_REPLY => Msg::ProbeReply { build: r.u64()?, host: r.u8()? != 0, players: r.u8()?, name: r.name()? },
+            T_PROBE => {
+                let build = r.u64()?;
+                if r.take(PROBE_PAD)?.iter().any(|b| *b != 0) || !r.0.is_empty() {
+                    return None;
+                }
+                Msg::Probe { build }
+            }
+            T_PROBE_REPLY => Msg::ProbeReply { build: r.u64()?, host: r.u8()? != 0, players: r.u8()?, locked: r.u8()? != 0, name: r.name()? },
             T_SAVE_REQUEST => {
                 let n = r.u8()? as usize;
                 Msg::SaveRequest { have: r.take(n)?.to_vec() }
@@ -375,6 +435,24 @@ pub fn decode(bytes: &[u8]) -> Result<Msg, DecodeError> {
 mod tests {
     use super::*;
 
+    const KEY: &[u8] = b"hunter2";
+
+    fn enc(m: &Msg) -> Vec<u8> {
+        encode(m, &[])
+    }
+
+    fn dec(b: &[u8]) -> Result<Msg, DecodeError> {
+        decode(b, &[])
+    }
+
+    /// Recomputes the tag after a test edited the body.
+    fn retag(b: &mut Vec<u8>, key: &[u8]) {
+        b.truncate(b.len() - TAG_LEN);
+        let mut m = mac(if public(b[6]) { &[] } else { key });
+        m.update(b);
+        b.extend_from_slice(&m.finalize().into_bytes()[..TAG_LEN]);
+    }
+
     fn all() -> Vec<Msg> {
         vec![
             Msg::Hello { build: 0x6abf29b6_00bdc000, name: "bob".into() },
@@ -397,8 +475,8 @@ mod tests {
             }),
             Msg::Bye { id: 3 },
             Msg::Probe { build: 0x6abf29b6_00bdc000 },
-            Msg::ProbeReply { build: 5, host: true, players: 2, name: "hoster".into() },
-            Msg::ProbeReply { build: 5, host: false, players: 0, name: String::new() },
+            Msg::ProbeReply { build: 5, host: true, players: 2, locked: true, name: "hoster".into() },
+            Msg::ProbeReply { build: 5, host: false, players: 0, locked: false, name: String::new() },
             Msg::SaveRequest { have: Vec::new() },
             Msg::SaveRequest { have: vec![0xff, 0x0f, 0x01] },
             Msg::SaveInfo { total: 19926, crc: 0xdead_beef },
@@ -417,27 +495,28 @@ mod tests {
     #[test]
     fn round_trip() {
         for m in all() {
-            assert_eq!(decode(&encode(&m)), Ok(m.clone()), "{m:?}");
+            assert_eq!(decode(&encode(&m, KEY), KEY), Ok(m.clone()), "{m:?}");
+            assert_eq!(dec(&enc(&m)), Ok(m.clone()), "{m:?}");
         }
     }
 
     #[test]
     fn truncation_never_panics() {
         for m in all() {
-            let b = encode(&m);
+            let b = encode(&m, KEY);
             for n in 0..b.len() {
-                assert!(decode(&b[..n]).is_err(), "{m:?} cut to {n}");
+                assert!(decode(&b[..n], KEY).is_err(), "{m:?} cut to {n}");
             }
         }
     }
 
     #[test]
     fn garbage_is_rejected() {
-        assert_eq!(decode(b""), Err(DecodeError::Malformed));
-        assert_eq!(decode(b"XXXX\x01\x00\x02\x01"), Err(DecodeError::Malformed));
-        let mut b = encode(&Msg::Bye { id: 1 });
+        assert_eq!(dec(b""), Err(DecodeError::Malformed));
+        assert_eq!(dec(b"XXXX\x01\x00\x02\x01"), Err(DecodeError::Malformed));
+        let mut b = enc(&Msg::Bye { id: 1 });
         b[6] = 200; // unknown type
-        assert_eq!(decode(&b), Err(DecodeError::Malformed));
+        assert_eq!(dec(&b), Err(DecodeError::Malformed));
         let mut seed = 12345u32;
         for len in 0..64 {
             let junk: Vec<u8> = (0..len)
@@ -446,11 +525,11 @@ mod tests {
                     (seed >> 24) as u8
                 })
                 .collect();
-            let _ = decode(&junk);
+            let _ = dec(&junk);
             let mut framed = [MAGIC.as_slice(), &VERSION.to_le_bytes(), &junk].concat();
-            let _ = decode(&framed);
+            let _ = dec(&framed);
             framed.truncate(framed.len() / 2);
-            let _ = decode(&framed);
+            let _ = dec(&framed);
         }
     }
 
@@ -464,28 +543,30 @@ mod tests {
 
     #[test]
     fn probe_wire_layout_and_limits() {
-        let b = encode(&Msg::Probe { build: 0x0102_0304_0506_0708 });
+        let b = enc(&Msg::Probe { build: 0x0102_0304_0506_0708 });
         assert_eq!(&b[..4], MAGIC);
         assert_eq!(&b[4..6], &VERSION.to_le_bytes());
         assert_eq!(b[6], 9);
-        assert_eq!(&b[7..], &[8, 7, 6, 5, 4, 3, 2, 1]);
+        assert_eq!(&b[7..15], &[8, 7, 6, 5, 4, 3, 2, 1]);
+        assert_eq!(b.len(), 7 + 8 + PROBE_PAD + TAG_LEN);
         // an oversized chunk is cut on encode and refused on decode
-        let big = encode(&Msg::SaveChunk { total: 1, offset: 0, data: vec![1; 5000] });
-        match decode(&big) {
+        let big = enc(&Msg::SaveChunk { total: 1, offset: 0, data: vec![1; 5000] });
+        match dec(&big) {
             Ok(Msg::SaveChunk { data, .. }) => assert_eq!(data.len(), MAX_CHUNK),
             other => panic!("{other:?}"),
         }
-        let mut forged = encode(&Msg::SaveChunk { total: 1, offset: 0, data: vec![1; 4] });
-        let at = forged.len() - 4 - 2;
+        let mut forged = enc(&Msg::SaveChunk { total: 1, offset: 0, data: vec![1; 4] });
+        let at = forged.len() - TAG_LEN - 4 - 2;
         forged[at..at + 2].copy_from_slice(&5000u16.to_le_bytes());
-        assert_eq!(decode(&forged), Err(DecodeError::Malformed));
+        retag(&mut forged, &[]);
+        assert_eq!(dec(&forged), Err(DecodeError::Malformed));
     }
 
     #[test]
     fn version_is_reported() {
-        let mut b = encode(&Msg::Bye { id: 1 });
+        let mut b = enc(&Msg::Bye { id: 1 });
         b[4] = 9;
-        assert_eq!(decode(&b), Err(DecodeError::Version(9)));
+        assert_eq!(dec(&b), Err(DecodeError::Version(9)));
     }
 
     #[test]
@@ -495,7 +576,7 @@ mod tests {
         assert_eq!(clamp_name(&long).len(), 32);
         let long = format!("a{}", "\u{e9}".repeat(20)); // byte 32 falls inside a char
         assert_eq!(clamp_name(&long).len(), 31);
-        match decode(&encode(&Msg::Hello { build: 1, name: long })) {
+        match dec(&enc(&Msg::Hello { build: 1, name: long })) {
             Ok(Msg::Hello { name, .. }) => assert_eq!(name.len(), 31),
             other => panic!("{other:?}"),
         }
@@ -506,31 +587,114 @@ mod tests {
         assert_eq!(clamp_level(&"x".repeat(100)).len(), MAX_LEVEL);
         let long = format!("a{}", "\u{e9}".repeat(40)); // byte 64 falls inside a char
         assert_eq!(clamp_level(&long).len(), 63);
-        match decode(&encode(&Msg::Level { name: long })) {
+        match dec(&enc(&Msg::Level { name: long })) {
             Ok(Msg::Level { name }) => assert_eq!(name.len(), 63),
             other => panic!("{other:?}"),
         }
-        let mut forged = encode(&Msg::LevelRequest { name: "ab".into() });
-        let at = forged.len() - 3;
+        let mut forged = enc(&Msg::LevelRequest { name: "ab".into() });
+        let at = forged.len() - TAG_LEN - 3;
         forged[at] = 65;
-        assert_eq!(decode(&forged), Err(DecodeError::Malformed));
+        retag(&mut forged, &[]);
+        assert_eq!(dec(&forged), Err(DecodeError::Malformed));
     }
 
     #[test]
     fn wallet_lists_are_capped() {
-        match decode(&encode(&Msg::Wallet { values: vec![7; 40], acked: 1 })) {
+        match dec(&enc(&Msg::Wallet { values: vec![7; 40], acked: 1 })) {
             Ok(Msg::Wallet { values, .. }) => assert_eq!(values.len(), MAX_WALLETS),
             other => panic!("{other:?}"),
         }
-        match decode(&encode(&Msg::Spend { spends: vec![(1, 0, -1); 200] })) {
+        match dec(&enc(&Msg::Spend { spends: vec![(1, 0, -1); 200] })) {
             Ok(Msg::Spend { spends }) => assert_eq!(spends.len(), MAX_SPENDS),
             other => panic!("{other:?}"),
         }
-        let mut forged = encode(&Msg::Wallet { values: vec![1], acked: 1 });
+        let mut forged = enc(&Msg::Wallet { values: vec![1], acked: 1 });
         forged[11] = 200;
-        assert_eq!(decode(&forged), Err(DecodeError::Malformed));
-        let mut forged = encode(&Msg::Spend { spends: vec![(1, 0, -1)] });
+        retag(&mut forged, &[]);
+        assert_eq!(dec(&forged), Err(DecodeError::Malformed));
+        let mut forged = enc(&Msg::Spend { spends: vec![(1, 0, -1)] });
         forged[7] = 200;
-        assert_eq!(decode(&forged), Err(DecodeError::Malformed));
+        retag(&mut forged, &[]);
+        assert_eq!(dec(&forged), Err(DecodeError::Malformed));
+    }
+
+    #[test]
+    fn wrong_key_is_bad_key_and_tampering_is_caught() {
+        let m = Msg::State(State { id: 1, seq: 1, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0 });
+        let b = encode(&m, KEY);
+        assert_eq!(decode(&b, b"other"), Err(DecodeError::BadKey));
+        assert_eq!(decode(&b, &[]), Err(DecodeError::BadKey));
+        assert_eq!(decode(&encode(&m, &[]), KEY), Err(DecodeError::BadKey));
+        let mut t = b.clone();
+        t[10] ^= 1;
+        assert_eq!(decode(&t, KEY), Err(DecodeError::BadKey));
+        let mut t = b;
+        let last = t.len() - 1;
+        t[last] ^= 1;
+        assert_eq!(decode(&t, KEY), Err(DecodeError::BadKey));
+    }
+
+    #[test]
+    fn public_messages_ignore_the_session_key() {
+        for m in [Msg::Probe { build: 3 }, Msg::ProbeReply { build: 3, host: true, players: 1, locked: true, name: "h".into() }, Msg::Refuse { reason: REFUSE_KEY }] {
+            assert_eq!(encode(&m, KEY), encode(&m, &[]), "{m:?}");
+            assert_eq!(decode(&encode(&m, b"a"), b"b"), Ok(m.clone()), "{m:?}");
+        }
+        // everything else depends on it
+        let m = Msg::Bye { id: 1 };
+        assert_ne!(encode(&m, KEY), encode(&m, &[]));
+    }
+
+    #[test]
+    fn probe_is_at_least_as_long_as_its_reply() {
+        let reply = Msg::ProbeReply { build: 1, host: true, players: 4, locked: true, name: "x".repeat(MAX_NAME) };
+        assert!(enc(&Msg::Probe { build: 1 }).len() >= enc(&reply).len());
+        // the pad must be exactly that long and zero
+        let mut b = enc(&Msg::Probe { build: 1 });
+        b.insert(b.len() - TAG_LEN, 0);
+        retag(&mut b, &[]);
+        assert_eq!(dec(&b), Err(DecodeError::Malformed));
+        let mut b = enc(&Msg::Probe { build: 1 });
+        b[20] = 1;
+        retag(&mut b, &[]);
+        assert_eq!(dec(&b), Err(DecodeError::Malformed));
+        let mut b = enc(&Msg::Probe { build: 1 });
+        b.remove(b.len() - TAG_LEN - 1);
+        retag(&mut b, &[]);
+        assert_eq!(dec(&b), Err(DecodeError::Malformed));
+    }
+
+    #[test]
+    fn sane_states() {
+        let ok = State { id: 1, seq: 1, level: 0, class: 0, pos: [1.0, -2.0, 1.0e6], yaw: 3.0, cam: -3.0, pad: Pad::default(), flags: 0 };
+        assert!(sane(&ok));
+        assert!(!sane(&State { pos: [f32::NAN, 0.0, 0.0], ..ok }));
+        assert!(!sane(&State { pos: [0.0, f32::INFINITY, 0.0], ..ok }));
+        assert!(!sane(&State { pos: [0.0, 0.0, -1.0e6 - 64.0], ..ok }));
+        assert!(!sane(&State { yaw: f32::NEG_INFINITY, ..ok }));
+        assert!(!sane(&State { cam: f32::NAN, ..ok }));
+    }
+
+    #[test]
+    fn level_name_validation() {
+        assert!(valid_level(""));
+        assert!(valid_level("ST_ToyBox_2"));
+        assert!(valid_level(&"a".repeat(MAX_LEVEL)));
+        assert!(!valid_level(&"a".repeat(MAX_LEVEL + 1)));
+        for bad in ["a b", "a\nb", "../x", "caf\u{e9}", "a-b", "a.b", "\0"] {
+            assert!(!valid_level(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn control_characters_in_names_become_question_marks() {
+        match dec(&enc(&Msg::Hello { build: 1, name: "a\nb\r\x1b[0m\x7fc\u{e9}".into() })) {
+            Ok(Msg::Hello { name, .. }) => assert_eq!(name, "a?b??[0m?c\u{e9}"),
+            other => panic!("{other:?}"),
+        }
+        match dec(&enc(&Msg::Roster { players: vec![(0, "x\ty".into())] })) {
+            Ok(Msg::Roster { players }) => assert_eq!(players, vec![(0, "x?y".to_string())]),
+            other => panic!("{other:?}"),
+        }
     }
 }

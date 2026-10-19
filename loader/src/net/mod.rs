@@ -211,6 +211,8 @@ pub struct Options {
     pub port: u16,
     /// `net_peers` for `net=auto`
     pub peers: Vec<String>,
+    /// `net_key`: the shared password, empty for none
+    pub key: String,
 }
 
 /// Starts the session thread for the game's own build.
@@ -236,7 +238,7 @@ pub fn start_with(net: &Net, opts: Options, build: u64) {
                 Ok(s) => s,
                 Err(e) => return fail(&format!("cannot bind port {port}: {e}")),
             };
-            (sock, host_session(build, &opts.name, opts.copy))
+            (sock, host_session(build, &opts.name, opts.copy, &opts.key))
         }
         Net::Client(target) => {
             let Some(host) = target.to_socket_addrs().ok().and_then(|mut a| a.find(SocketAddr::is_ipv4)) else {
@@ -244,7 +246,7 @@ pub fn start_with(net: &Net, opts: Options, build: u64) {
             };
             log!("net: client to {host}");
             match bind(SocketAddr::from(([0, 0, 0, 0], 0))) {
-                Ok(s) => (s, Session::client(build, &opts.name, host)),
+                Ok(s) => (s, client_session(build, &opts.name, host, &opts.key)),
                 Err(e) => return fail(&format!("cannot bind: {e}")),
             }
         }
@@ -289,8 +291,15 @@ pub fn host_save_path(app_data: &str, local_app_data: &str, copy: u32) -> PathBu
     copy::savedata_dir(&copy::normal_root(app_data, local_app_data, copy)).join("Saved Game")
 }
 
-fn host_session(build: u64, name: &str, copy: u32) -> Session {
+fn client_session(build: u64, name: &str, host: SocketAddr, key: &str) -> Session {
+    let mut s = Session::client(build, name, host);
+    s.set_key(key.as_bytes());
+    s
+}
+
+fn host_session(build: u64, name: &str, copy: u32, key: &str) -> Session {
     let mut s = Session::host(build, name);
+    s.set_key(key.as_bytes());
     let path = host_save_path(&std::env::var("APPDATA").unwrap_or_default(), &std::env::var("LOCALAPPDATA").unwrap_or_default(), copy);
     s.set_save_source(move || std::fs::read(&path).ok());
     s
@@ -346,6 +355,7 @@ pub struct Auto {
     own: (Ipv4Addr, u16),
     build: u64,
     name: String,
+    key: String,
 }
 
 fn port_taken(e: &std::io::Error) -> bool {
@@ -361,8 +371,8 @@ pub fn auto_join(opts: &AutoOpts, o: &Options, build: u64) -> Option<(UdpSocket,
             log!("net: auto: port in use, joining the local host");
             let s = bind(SocketAddr::from(([0, 0, 0, 0], 0))).map_err(|e| log!("net: cannot bind: {e}")).ok()?;
             let local = SocketAddr::from(([127, 0, 0, 1], opts.bind_port));
-            let ctx = Auto { peers: Vec::new(), own: (Ipv4Addr::LOCALHOST, 0), build, name: name.clone() };
-            return Some((s, Session::client(build, name, local), ctx));
+            let ctx = Auto { peers: Vec::new(), own: (Ipv4Addr::LOCALHOST, 0), build, name: name.clone(), key: o.key.clone() };
+            return Some((s, client_session(build, name, local, &o.key), ctx));
         }
         Err(e) => {
             log!("net: cannot bind port {}: {e}", opts.bind_port);
@@ -378,17 +388,17 @@ pub fn auto_join(opts: &AutoOpts, o: &Options, build: u64) -> Option<(UdpSocket,
     log!("net: auto: peers {peers:?}");
     let own_ip = tail.as_ref().and_then(|t| t.own).or_else(|| peers.first().and_then(|p| discover::local_ip_towards(*p))).unwrap_or(Ipv4Addr::LOCALHOST);
     let own_port = sock.local_addr().map_or(opts.bind_port, |a| a.port());
-    let ctx = Auto { peers: peers.clone(), own: (own_ip, own_port), build, name: name.clone() };
+    let ctx = Auto { peers: peers.clone(), own: (own_ip, own_port), build, name: name.clone(), key: o.key.clone() };
     let own_addr = SocketAddr::from((own_ip, own_port));
     let found = if peers.is_empty() { None } else { discover::find_host(&sock, &peers, build, name, own_addr, opts.probe) };
     match found {
         Some(f) => {
             log!("net: auto: found host {:?} at {}", f.name, f.addr);
-            Some((sock, Session::client(build, name, f.addr), ctx))
+            Some((sock, client_session(build, name, f.addr, &o.key), ctx))
         }
         None => {
             log!("net: auto: no host answered; hosting on {own_port}");
-            Some((sock, host_session(build, name, o.copy), ctx))
+            Some((sock, host_session(build, name, o.copy, &o.key), ctx))
         }
     }
 }
@@ -450,7 +460,7 @@ fn run_loop(sock: &UdpSocket, sim: Option<SimQueue>, auto: Option<&Auto>) -> Opt
                         let other = (*f.ip(), f.port());
                         if *build == a.build && *from != SocketAddr::from(a.own) && discover::should_yield(a.own, other) {
                             log!("net: auto: merging into host {name:?} at {from}");
-                            let mut s = Session::client(a.build, &a.name, *from);
+                            let mut s = client_session(a.build, &a.name, *from, &a.key);
                             s.set_want_save(false);
                             install(s);
                             lost = Some((now, FIRST_CONNECT_US));
@@ -502,6 +512,7 @@ fn pump(sock: &UdpSocket, s: &mut Session, now_us: u64, mut sim: Option<&mut Sim
 fn log_event(e: &Event, now_ms: u64, rtt_logged: &mut HashMap<u8, u64>) {
     match e {
         Event::Connected { id } => log!("net: connected as player {id}"),
+        Event::Refused { reason } if *reason == proto::REFUSE_KEY => log!("net: refused: the host needs the same net_key (password)"),
         Event::Refused { reason } => log!("net: refused by the host (reason {reason})"),
         Event::HostLost => log!("net: host lost; retrying"),
         Event::PeerJoined { id, name } => log!("net: player {id} {name:?} joined"),
@@ -607,7 +618,7 @@ mod tests {
     }
 
     fn opts(copy: u32) -> Options {
-        Options { name: format!("p{copy}"), sim: None, copy, port: 0, peers: Vec::new() }
+        Options { name: format!("p{copy}"), sim: None, copy, port: 0, peers: Vec::new(), key: String::new() }
     }
 
     #[test]

@@ -157,3 +157,9 @@ town.
 - HUD prompts: `HudControllerLayout` adds a player's prompts only for players below the view count,
   so with one view the partner's prompts never show; the "X Pick up" next to the partner is the
   local player's own (FINDINGS 10). No change needed.
+
+- 2026-10-19, netcode hardening (protocol 7): optional `net_key` password; every datagram ends with a
+  16-byte HMAC-SHA256 tag (probes and refusals use the empty key; a wrong key gets `Refuse` reason 4),
+  probes padded against amplification, and peers' input validated (finite in-range states, level name
+  charset, control characters in names, spend cap, save serving limited to once per 200 ms).
+  `install.ps1 -Password`. See NETCODE.md "Security".

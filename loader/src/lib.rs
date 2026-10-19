@@ -144,7 +144,7 @@ mod entry {
             window::start(rect);
         }
         if let Some(mode) = &cfg.net {
-            net::start(mode, net::Options { name: cfg.name.clone(), sim: cfg.net_sim, copy: n, port: cfg.net_port, peers: cfg.net_peers.clone() });
+            net::start(mode, net::Options { name: cfg.name.clone(), sim: cfg.net_sim, copy: n, port: cfg.net_port, peers: cfg.net_peers.clone(), key: cfg.net_key.as_str().to_string() });
         }
     }
 

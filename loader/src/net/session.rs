@@ -15,6 +15,8 @@ const SAVE_REQ_US: u64 = 300_000;
 const LEVEL_US: u64 = 1_000_000;
 /// The host repeats its wallet values this often.
 const WALLET_US: u64 = 1_000_000;
+/// The host answers a client's `SaveRequest` at most this often.
+const SAVE_SERVE_US: u64 = 200_000;
 /// Chunks sent per `SaveRequest`.
 const SAVE_BURST: usize = 64;
 
@@ -74,11 +76,15 @@ struct Peer {
     /// host side: the save read for this client, once `save_read`
     save: Option<Vec<u8>>,
     save_read: bool,
+    /// host side: when this client's last `SaveRequest` was answered
+    last_save_serve: Option<u64>,
 }
 
 pub struct Session {
     build: u64,
     name: String,
+    /// the shared `net_key`; empty when there is none
+    key: Vec<u8>,
     /// `Some` on a client: the only address we talk to.
     host_addr: Option<SocketAddr>,
     link: Link,
@@ -131,6 +137,7 @@ impl Session {
             build,
             roster: if host { vec![(0, name.clone())] } else { Vec::new() },
             name,
+            key: Vec::new(),
             host_addr,
             link: if host { Link::Connected } else { Link::Connecting },
             local_id: host.then_some(0),
@@ -168,6 +175,11 @@ impl Session {
 
     pub fn client(build: u64, name: &str, host_addr: SocketAddr) -> Session {
         Session::new(build, name, Some(host_addr))
+    }
+
+    /// The shared password every datagram (but probes and refusals) is tagged with.
+    pub fn set_key(&mut self, key: &[u8]) {
+        self.key = key.to_vec();
     }
 
     /// Host: how to read the save when a client asks for it.
@@ -297,20 +309,21 @@ impl Session {
     }
 
     fn send(&mut self, to: SocketAddr, msg: &Msg) {
-        self.out.push((to, proto::encode(msg)));
+        self.out.push((to, proto::encode(msg, &self.key)));
     }
 
     pub fn handle(&mut self, from: SocketAddr, bytes: &[u8], now_us: u64) {
-        match proto::decode(bytes) {
+        match proto::decode(bytes, &self.key) {
             Ok(Msg::Probe { .. }) => {
                 let players = if self.is_host() { self.roster.len() as u8 } else { 0 };
-                let m = Msg::ProbeReply { build: self.build, host: self.is_host(), players, name: self.name.clone() };
+                let m = Msg::ProbeReply { build: self.build, host: self.is_host(), players, locked: !self.key.is_empty(), name: self.name.clone() };
                 self.send(from, &m);
             }
-            Ok(Msg::ProbeReply { build, host, players, name }) => self.events.push(Event::Discovered { from, build, host, players, name }),
+            Ok(Msg::ProbeReply { build, host, players, name, .. }) => self.events.push(Event::Discovered { from, build, host, players, name }),
             Ok(msg) if self.is_host() => self.host_msg(from, msg, now_us),
             Ok(msg) => self.client_msg(from, msg, now_us),
             Err(DecodeError::Version(_)) if self.is_host() => self.send(from, &Msg::Refuse { reason: proto::REFUSE_PROTOCOL }),
+            Err(DecodeError::BadKey) if self.is_host() && proto::is_hello(bytes) => self.send(from, &Msg::Refuse { reason: proto::REFUSE_KEY }),
             Err(_) => {}
         }
     }
@@ -389,7 +402,7 @@ impl Session {
         match msg {
             Msg::Ping { seq, t_us } => self.send(from, &Msg::Pong { seq, t_us }),
             Msg::Pong { t_us, .. } => self.note_rtt(id, t_us, now),
-            Msg::State(s) if s.id == id => {
+            Msg::State(s) if s.id == id && proto::sane(&s) => {
                 if self.store_state(s) {
                     let m = Msg::State(s);
                     let others: Vec<SocketAddr> = self.peers.iter().filter(|p| p.id != id).map(|p| p.addr).collect();
@@ -399,8 +412,8 @@ impl Session {
                 }
             }
             Msg::Bye { id: b } if b == id => self.drop_client(i),
-            Msg::SaveRequest { have } => self.serve_save(i, &have),
-            Msg::LevelRequest { name } => self.events.push(Event::LevelRequested { id, name }),
+            Msg::SaveRequest { have } => self.serve_save(i, &have, now),
+            Msg::LevelRequest { name } if !name.is_empty() && proto::valid_level(&name) => self.events.push(Event::LevelRequested { id, name }),
             Msg::Spend { spends } => {
                 let before = self.spent.acked(id);
                 let deltas = self.spent.accept(id, &spends);
@@ -432,7 +445,7 @@ impl Session {
         let Some(id) = (1..MAX_PLAYERS as u8).find(|i| self.peers.iter().all(|p| p.id != *i)) else {
             return self.send(from, &Msg::Refuse { reason: proto::REFUSE_FULL });
         };
-        self.peers.push(Peer { addr: from, id, last_seen: now, save: None, save_read: false });
+        self.peers.push(Peer { addr: from, id, last_seen: now, save: None, save_read: false, last_save_serve: None });
         self.roster.push((id, name.clone()));
         self.roster.sort_by_key(|(i, _)| *i);
         self.send(from, &Msg::Welcome { id });
@@ -444,7 +457,10 @@ impl Session {
     }
 
     /// Answers a `SaveRequest`: the info message, then the chunks the client lacks.
-    fn serve_save(&mut self, i: usize, have: &[u8]) {
+    fn serve_save(&mut self, i: usize, have: &[u8], now: u64) {
+        if !Self::due(&mut self.peers[i].last_save_serve, now, SAVE_SERVE_US) {
+            return;
+        }
         let first = !self.peers[i].save_read;
         if first {
             self.peers[i].save = self.save_source.as_ref().and_then(|f| f()).filter(|d| d.len() <= save::MAX_SAVE);
@@ -504,7 +520,7 @@ impl Session {
             Msg::Welcome { id } if self.link == Link::Connecting => {
                 self.link = Link::Connected;
                 self.local_id = Some(id);
-                self.peers.push(Peer { addr: from, id: 0, last_seen: now, save: None, save_read: false });
+                self.peers.push(Peer { addr: from, id: 0, last_seen: now, save: None, save_read: false, last_save_serve: None });
                 self.events.push(Event::Connected { id });
             }
             Msg::Refuse { reason } if self.link == Link::Connecting => {
@@ -515,11 +531,11 @@ impl Session {
             Msg::Roster { players } => self.set_roster(players),
             Msg::Ping { seq, t_us } => self.send(from, &Msg::Pong { seq, t_us }),
             Msg::Pong { t_us, .. } => self.note_rtt(0, t_us, now),
-            Msg::State(s) if Some(s.id) != self.local_id => {
+            Msg::State(s) if Some(s.id) != self.local_id && proto::sane(&s) => {
                 self.store_state(s);
             }
             Msg::Bye { id: 0 } => self.host_lost(),
-            Msg::Level { name } => self.host_level = Some(name),
+            Msg::Level { name } if proto::valid_level(&name) => self.host_level = Some(name),
             Msg::Wallet { values, acked } => self.host_wallet = Some((values, acked)),
             Msg::SaveInfo { total, crc } if self.want_save && !self.save_done => {
                 if total == 0 {
@@ -609,7 +625,15 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::proto::{decode, encode};
+    use crate::net::proto;
+
+    fn encode(m: &Msg) -> Vec<u8> {
+        proto::encode(m, &[])
+    }
+
+    fn decode(b: &[u8]) -> Result<Msg, DecodeError> {
+        proto::decode(b, &[])
+    }
 
     const BUILD: u64 = 0x1234_5678_0000_9abc;
     const MS: u64 = 1000;
@@ -962,14 +986,14 @@ mod tests {
     fn probes_are_answered_by_hosts_and_clients() {
         let mut host = Session::host(BUILD, "hoster");
         host.handle(addr(9), &encode(&Msg::Probe { build: 1 }), 0);
-        assert_eq!(msgs(&mut host), vec![(addr(9), Msg::ProbeReply { build: BUILD, host: true, players: 1, name: "hoster".into() })]);
+        assert_eq!(msgs(&mut host), vec![(addr(9), Msg::ProbeReply { build: BUILD, host: true, players: 1, locked: false, name: "hoster".into() })]);
         let mut c = Session::client(BUILD, "bob", addr(H));
         c.handle(addr(9), &encode(&Msg::Probe { build: BUILD }), 0);
-        assert_eq!(msgs(&mut c), vec![(addr(9), Msg::ProbeReply { build: BUILD, host: false, players: 0, name: "bob".into() })]);
+        assert_eq!(msgs(&mut c), vec![(addr(9), Msg::ProbeReply { build: BUILD, host: false, players: 0, locked: false, name: "bob".into() })]);
         // a reply surfaces as an event and is never relayed
         host.handle(addr(1), &encode(&Msg::Hello { build: BUILD, name: "p".into() }), 0);
         host.drain_outgoing();
-        host.handle(addr(9), &encode(&Msg::ProbeReply { build: BUILD, host: true, players: 1, name: "x".into() }), 0);
+        host.handle(addr(9), &encode(&Msg::ProbeReply { build: BUILD, host: true, players: 1, locked: false, name: "x".into() }), 0);
         assert!(host.drain_outgoing().is_empty());
         assert!(host.drain_events().contains(&Event::Discovered { from: addr(9), build: BUILD, host: true, players: 1, name: "x".into() }));
     }
@@ -1107,5 +1131,122 @@ mod tests {
         host.drain_events();
         host.handle(addr(1), &encode(&Msg::Spend { spends: vec![(1, 0, -5)] }), 4);
         assert!(host.drain_events().contains(&Event::Spend { id: 1, deltas: vec![(0, -5)], upto: 1 }));
+    }
+
+    fn keyed_pair(host_key: &[u8], client_key: &[u8]) -> (Session, Session) {
+        let mut host = Session::host(BUILD, "h");
+        host.set_key(host_key);
+        let mut c = Session::client(BUILD, "bob", addr(H));
+        c.set_key(client_key);
+        c.set_want_save(false);
+        (host, c)
+    }
+
+    #[test]
+    fn matching_keys_connect_and_exchange_state() {
+        let (mut host, mut c) = keyed_pair(b"secret", b"secret");
+        connect(&mut host, &mut c, addr(1), addr(H), 0);
+        assert_eq!(c.local_id(), Some(1));
+        c.set_local_state(5, 1, [1.0, 2.0, 3.0], 0.0, 0.0, Pad::default(), 0);
+        c.tick(100 * MS);
+        deliver(addr(1), &mut c, addr(H), &mut host, 100 * MS);
+        assert_eq!(host.remote_states().len(), 1);
+    }
+
+    #[test]
+    fn wrong_key_is_refused_with_the_key_reason() {
+        for client_key in [&b"nope"[..], &b""[..]] {
+            let (mut host, mut c) = keyed_pair(b"secret", client_key);
+            connect(&mut host, &mut c, addr(1), addr(H), 0);
+            assert_eq!(c.drain_events(), vec![Event::Refused { reason: proto::REFUSE_KEY }]);
+            assert_eq!(host.roster().len(), 1);
+        }
+        // a keyed client against an open host is not welcomed: the host cannot verify its tag
+        let (mut host, mut c) = keyed_pair(b"", b"secret");
+        connect(&mut host, &mut c, addr(1), addr(H), 0);
+        assert_eq!(host.roster().len(), 1);
+    }
+
+    #[test]
+    fn untagged_traffic_from_a_peer_is_ignored_once_keyed() {
+        let (mut host, mut c) = keyed_pair(b"secret", b"secret");
+        connect(&mut host, &mut c, addr(1), addr(H), 0);
+        host.drain_events();
+        host.drain_outgoing();
+        // a spoofed state and bye with the wrong key change nothing and draw no answer
+        let st = State { id: 1, seq: 9, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0 };
+        host.handle(addr(1), &encode(&Msg::State(st)), MS);
+        host.handle(addr(1), &encode(&Msg::Bye { id: 1 }), MS);
+        assert!(host.remote_states().is_empty());
+        assert_eq!(host.roster().len(), 2);
+        assert!(host.drain_outgoing().is_empty());
+        assert!(host.drain_events().is_empty());
+    }
+
+    #[test]
+    fn probe_reply_reports_a_locked_host_and_probes_need_no_key() {
+        let mut host = Session::host(BUILD, "hoster");
+        host.set_key(b"secret");
+        host.handle(addr(9), &encode(&Msg::Probe { build: 1 }), 0);
+        let out = host.drain_outgoing();
+        assert_eq!(out.len(), 1);
+        assert_eq!(decode(&out[0].1), Ok(Msg::ProbeReply { build: BUILD, host: true, players: 1, locked: true, name: "hoster".into() }));
+    }
+
+    fn state_at(pos: [f32; 3], yaw: f32) -> State {
+        State { id: 1, seq: 1, level: 0, class: 0, pos, yaw, cam: 0.0, pad: Pad::default(), flags: 0 }
+    }
+
+    #[test]
+    fn insane_states_are_dropped_by_host_and_client() {
+        let (mut host, mut a, mut b) = two_clients();
+        for bad in [state_at([f32::NAN, 0.0, 0.0], 0.0), state_at([2.0e6, 0.0, 0.0], 0.0), state_at([0.0; 3], f32::INFINITY)] {
+            host.handle(addr(1), &encode(&Msg::State(bad)), MS);
+            assert!(host.remote_states().is_empty());
+            assert!(host.drain_outgoing().is_empty(), "relayed {bad:?}");
+            b.handle(addr(H), &encode(&Msg::State(bad)), MS);
+            assert!(b.remote_states().is_empty());
+        }
+        let good = state_at([1.0, 2.0, 3.0], 0.5);
+        host.handle(addr(1), &encode(&Msg::State(good)), MS);
+        assert_eq!(host.remote_states().len(), 1);
+        let _ = &mut a;
+    }
+
+    #[test]
+    fn invalid_level_names_are_ignored() {
+        let (mut host, mut a, _) = two_clients();
+        a.handle(addr(H), &encode(&Msg::Level { name: "ST_ToyBox".into() }), 0);
+        a.handle(addr(H), &encode(&Msg::Level { name: "bad name\n".into() }), 0);
+        assert_eq!(a.host_level_name().as_deref(), Some("ST_ToyBox"));
+        for name in ["", "../x", "a b", "x\ny"] {
+            host.handle(addr(1), &encode(&Msg::LevelRequest { name: name.into() }), MS);
+            assert!(host.drain_events().is_empty(), "{name:?}");
+        }
+        host.handle(addr(1), &encode(&Msg::LevelRequest { name: "ST_Attic".into() }), MS);
+        assert_eq!(host.drain_events(), vec![Event::LevelRequested { id: 1, name: "ST_Attic".into() }]);
+    }
+
+    #[test]
+    fn save_requests_are_served_at_most_every_200_ms() {
+        let save = sample_save();
+        let copy = save.clone();
+        let mut host = Session::host(BUILD, "h");
+        host.set_save_source(move || Some(copy.clone()));
+        host.handle(addr(1), &encode(&Msg::Hello { build: BUILD, name: "bob".into() }), 0);
+        host.handle(addr(2), &encode(&Msg::Hello { build: BUILD, name: "amy".into() }), 0);
+        host.drain_outgoing();
+        let req = encode(&Msg::SaveRequest { have: Vec::new() });
+        let answered = |host: &mut Session| host.drain_outgoing().iter().filter(|(d, _)| *d == addr(1)).count();
+        host.handle(addr(1), &req, 10 * MS);
+        assert!(answered(&mut host) > 1);
+        host.handle(addr(1), &req, 100 * MS);
+        host.handle(addr(1), &req, 209 * MS);
+        assert_eq!(answered(&mut host), 0);
+        // another client has its own window
+        host.handle(addr(2), &req, 120 * MS);
+        assert!(host.drain_outgoing().iter().any(|(d, _)| *d == addr(2)));
+        host.handle(addr(1), &req, 210 * MS);
+        assert!(answered(&mut host) > 1);
     }
 }

@@ -65,6 +65,33 @@ from input, and the game already treats it as a player for co-op moves and inter
   100 ms and interpolated; nothing waits on the network, so a slow link makes proxies lag, never
   the local game.
 
+## Security
+
+- **Trust model.** The host is authoritative and a client plays the host's save file, so only play
+  with people you trust. Tailscale already encrypts and authenticates the traffic between tailnet
+  devices. `net_key` (a shared password in `ts3online.ini`) gates who can join and authenticates
+  every datagram, but it does not encrypt: payloads are readable by anyone who can see the link.
+  Without a `net_key`, anyone who can reach the host's UDP port on the tailnet or LAN can join.
+- **Tag.** Protocol version 7. Every datagram ends with a 16-byte tag, the first 16 bytes of
+  HMAC-SHA256 over all bytes before it, keyed with `net_key` (empty when none is set, so
+  passwordless sessions work). Checked in constant time before anything is parsed. `Probe`,
+  `ProbeReply` and `Refuse` always use the empty key, so a host can be found and can tell a wrong
+  key apart (`Refuse` reason 4; `ProbeReply.locked` says the host has a key). A bad tag is dropped,
+  except a `Hello` with a bad tag, which is answered with that refusal.
+- **Replays.** The tag does not stop a recorded datagram being sent again. Replays are bounded by
+  the sequence numbers: states older than the newest seen and spends already applied are ignored.
+- **Amplification.** A `Probe` is padded to be at least as long as the largest `ProbeReply`, so a
+  spoofed probe cannot make a copy send more than it received.
+- **Validation of peers' input.**
+  - A `State` with a non-finite position, yaw or camera, or a position component beyond 1e6, is
+    dropped (not stored, not relayed).
+  - Level names must be empty or 1-64 bytes of `[A-Za-z0-9_]`: a client ignores an invalid `Level`,
+    the host ignores an empty or invalid `LevelRequest`.
+  - Control characters in player names become `?`, so a name cannot inject lines into the log.
+  - The host rejects a spend below -1,000,000 (still acknowledged, never applied), on top of the
+    existing rejection of positive deltas and unknown wallets.
+  - The host answers a client's `SaveRequest` at most once per 200 ms.
+
 ## Phases
 
 Principle: online play is the game's own local co-op with the partner's controller on the other end

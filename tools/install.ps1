@@ -6,6 +6,7 @@
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File install.ps1 -Name Alice
   powershell -ExecutionPolicy Bypass -File install.ps1 -Firewall
+  powershell -ExecutionPolicy Bypass -File install.ps1 -Name Alice -Password "our secret"
   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
 
 .NOTES
@@ -19,6 +20,7 @@ param(
     [string]$GameDir = $env:TS3_DIR,
     [string]$Name = $env:USERNAME,
     [int]$Port = 27777,
+    [string]$Password,
     [switch]$Firewall,
     [switch]$Uninstall
 )
@@ -100,6 +102,7 @@ Write-Host 'Installed dinput8.dll.'
 
 if (Test-Path -LiteralPath $ini) {
     Write-Host "Kept the existing $ini."
+    if ($Password) { Write-Host 'The password was not written: add net_key=<text> to that file by hand.' }
 } else {
     $clean = ($Name -replace '[^\w\- ]', '').Trim()
     if (-not $clean) { $clean = 'player' }
@@ -110,8 +113,11 @@ if (Test-Path -LiteralPath $ini) {
         "name=$clean"
     )
     if ($Port -ne 27777) { $lines += "net_port=$Port" }
+    $key = if ($Password) { $Password.Trim() } else { '' }
+    if ($key) { $lines += "net_key=$key" }
     [IO.File]::WriteAllLines($ini, $lines)
     Write-Host "Wrote $ini (net=auto, name=$clean)."
+    if ($key) { Write-Host 'Password set: every player must use the same password (net_key in ts3online.ini).' }
 }
 
 if ($Firewall) {

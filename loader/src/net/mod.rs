@@ -34,9 +34,9 @@ pub fn active() -> bool {
 }
 
 /// Local player's state for the next outgoing update.
-pub fn set_local_state(level: u32, class: u8, pos: [f32; 3], yaw: f32, pad: proto::Pad, flags: u32) {
+pub fn set_local_state(level: u32, class: u8, pos: [f32; 3], yaw: f32, cam: f32, pad: proto::Pad, flags: u32) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
-        s.set_local_state(level, class, pos, yaw, pad, flags);
+        s.set_local_state(level, class, pos, yaw, cam, pad, flags);
     }
 }
 
@@ -180,7 +180,7 @@ mod tests {
             pump(&hs, &mut host, now, None);
             pump(&c1s, &mut c1, now, None);
             pump(&c2s, &mut c2, now, None);
-            c1.set_local_state(1, 0, [1.0, 2.0, 3.0], 0.0, proto::Pad::default(), 1);
+            c1.set_local_state(1, 0, [1.0, 2.0, 3.0], 0.0, 0.0, proto::Pad::default(), 1);
             if host.roster().len() == 3 && c1.roster().len() == 3 && c2.roster().len() == 3 && c2.remote_states().iter().any(|(i, _)| *i == 1) {
                 ok = true;
                 break;

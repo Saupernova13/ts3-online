@@ -37,6 +37,7 @@ struct Local {
     class: u8,
     pos: [f32; 3],
     yaw: f32,
+    cam: f32,
     pad: Pad,
     flags: u32,
 }
@@ -130,12 +131,12 @@ impl Session {
 
     /// Queues the local player's state; the next `tick` past the rate limit sends it. Buttons of
     /// an update that was never sent are kept, so a short tap survives the rate limit.
-    pub fn set_local_state(&mut self, level: u32, class: u8, pos: [f32; 3], yaw: f32, pad: Pad, flags: u32) {
+    pub fn set_local_state(&mut self, level: u32, class: u8, pos: [f32; 3], yaw: f32, cam: f32, pad: Pad, flags: u32) {
         let mut pad = pad;
         if let Some(old) = self.pending {
             pad.buttons |= old.pad.buttons;
         }
-        self.pending = Some(Local { level, class, pos, yaw, pad, flags });
+        self.pending = Some(Local { level, class, pos, yaw, cam, pad, flags });
     }
 
     pub fn drain_outgoing(&mut self) -> Vec<(SocketAddr, Vec<u8>)> {
@@ -199,7 +200,7 @@ impl Session {
             if Self::due(&mut self.last_state, now, STATE_US) {
                 self.pending = None;
                 self.state_seq = self.state_seq.wrapping_add(1);
-                let m = Msg::State(State { id, seq: self.state_seq, level: l.level, class: l.class, pos: l.pos, yaw: l.yaw, pad: l.pad, flags: l.flags });
+                let m = Msg::State(State { id, seq: self.state_seq, level: l.level, class: l.class, pos: l.pos, yaw: l.yaw, cam: l.cam, pad: l.pad, flags: l.flags });
                 for a in &addrs {
                     self.send(*a, &m);
                 }
@@ -578,10 +579,10 @@ mod tests {
     fn state_is_relayed_to_other_clients() {
         let (mut host, mut a, mut b) = two_clients();
         let pad = Pad { buttons: 0x10, lt: 1, rt: 2, lx: 3, ly: -4, rx: 5, ry: -6 };
-        a.set_local_state(77, 1, [1.0, 2.0, 3.0], 0.5, pad, 7);
+        a.set_local_state(77, 1, [1.0, 2.0, 3.0], 0.5, 0.25, pad, 7);
         a.tick(100 * MS);
         deliver(addr(1), &mut a, addr(H), &mut host, 100 * MS);
-        let want = State { id: 1, seq: 1, level: 77, class: 1, pos: [1.0, 2.0, 3.0], yaw: 0.5, pad, flags: 7 };
+        let want = State { id: 1, seq: 1, level: 77, class: 1, pos: [1.0, 2.0, 3.0], yaw: 0.5, cam: 0.25, pad, flags: 7 };
         assert_eq!(host.remote_states(), vec![(1, want)]);
         // relayed to b only, unchanged
         let relayed = msgs(&mut host);
@@ -602,7 +603,7 @@ mod tests {
     #[test]
     fn host_state_goes_to_all_clients() {
         let (mut host, mut a, mut b) = two_clients();
-        host.set_local_state(0, 255, [9.0, 0.0, 0.0], 1.0, Pad::default(), 0);
+        host.set_local_state(0, 255, [9.0, 0.0, 0.0], 1.0, 0.0, Pad::default(), 0);
         host.tick(100 * MS);
         let sent = msgs(&mut host);
         let states: Vec<_> = sent.iter().filter(|(_, m)| matches!(m, Msg::State(_))).collect();
@@ -618,18 +619,18 @@ mod tests {
     fn state_sends_are_rate_limited() {
         let (_, mut a, _) = two_clients();
         let states = |s: &mut Session| msgs(s).into_iter().filter(|(_, m)| matches!(m, Msg::State(_))).count();
-        a.set_local_state(0, 0, [0.0; 3], 0.0, Pad::default(), 0);
+        a.set_local_state(0, 0, [0.0; 3], 0.0, 0.0, Pad::default(), 0);
         a.tick(100 * MS);
         assert_eq!(states(&mut a), 1);
-        a.set_local_state(0, 0, [1.0; 3], 0.0, Pad::default(), 0);
+        a.set_local_state(0, 0, [1.0; 3], 0.0, 0.0, Pad::default(), 0);
         a.tick(110 * MS);
         assert_eq!(states(&mut a), 0);
         a.tick(116 * MS);
         assert_eq!(states(&mut a), 1);
         // an unsent update's buttons are merged into the next one
         let tap = Pad { buttons: 0x1, ..Pad::default() };
-        a.set_local_state(0, 0, [1.0; 3], 0.0, tap, 0);
-        a.set_local_state(0, 0, [1.0; 3], 0.0, Pad::default(), 0);
+        a.set_local_state(0, 0, [1.0; 3], 0.0, 0.0, tap, 0);
+        a.set_local_state(0, 0, [1.0; 3], 0.0, 0.0, Pad::default(), 0);
         a.tick(200 * MS);
         match msgs(&mut a).into_iter().find_map(|(_, m)| if let Msg::State(s) = m { Some(s) } else { None }) {
             Some(s) => assert_eq!(s.pad.buttons, 1),

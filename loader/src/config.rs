@@ -29,6 +29,8 @@ pub struct Config {
     pub pad: Option<u32>,
     /// `net = host:PORT` or `net = client:ADDR:PORT`
     pub net: Option<Net>,
+    /// `net_stick_sign = 1|-1`: sign of the camera rotation applied to partners' sticks
+    pub net_stick_sign: i32,
     /// `net_sim = delay_ms[,jitter_ms[,loss_pct]]`
     pub net_sim: Option<Sim>,
     /// `name = text`: shown to other players (max 32 bytes)
@@ -37,7 +39,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, name: "player".into() }
+        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_stick_sign: 1, name: "player".into() }
     }
 }
 
@@ -111,6 +113,11 @@ pub fn parse(text: &str, copy: u32) -> Config {
                     _ => {}
                 }
             }
+            "net_stick_sign" => {
+                if let Ok(n @ (-1 | 1)) = v.parse::<i32>() {
+                    c.net_stick_sign = n;
+                }
+            }
             "net_sim" => {
                 let n: Option<Vec<u32>> = v.split(',').map(|x| x.trim().parse().ok()).collect();
                 if let Some(n) = n.filter(|n| (1..=3).contains(&n.len()) && n.get(2).is_none_or(|l| *l <= 100)) {
@@ -142,13 +149,13 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, name: "player".into() });
+        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_stick_sign: 1, name: "player".into() });
     }
 
     #[test]
     fn overrides_and_comments() {
         let c = parse("# hi\n enabled = 0 \nwatch=false\nWATCH_INTERVAL_MS=250\nbogus=1\nnoequals\n", 1);
-        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, name: "player".into() });
+        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_stick_sign: 1, name: "player".into() });
     }
 
     #[test]
@@ -196,6 +203,15 @@ enable=online
 ", 1).enable, ["online"]);
         assert_eq!(parse("enable=quadrants
 ", 1).enable, ["quadrants"]);
+    }
+
+    #[test]
+    fn net_stick_sign_key() {
+        assert_eq!(parse("", 1).net_stick_sign, 1);
+        assert_eq!(parse("net_stick_sign=-1", 1).net_stick_sign, -1);
+        assert_eq!(parse("net_stick_sign = 1", 1).net_stick_sign, 1);
+        assert_eq!(parse("net_stick_sign=2", 1).net_stick_sign, 1);
+        assert_eq!(parse("net_stick_sign=x", 1).net_stick_sign, 1);
     }
 
     #[test]

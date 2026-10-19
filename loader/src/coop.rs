@@ -7,6 +7,7 @@ use crate::net::proto::{level_hash, Pad, State, CLASS_UNKNOWN};
 use crate::{net, pad};
 use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -46,10 +47,17 @@ struct Partner {
     next_try_us: u64,
     snaps: u32,
     last_log_us: u64,
+    last_drift_us: u64,
 }
 
 static PARTNERS: Mutex<Option<HashMap<u8, Partner>>> = Mutex::new(None);
 static START: OnceLock<Instant> = OnceLock::new();
+/// `net_stick_sign`: multiplies the camera delta applied to partners' sticks.
+static STICK_SIGN: AtomicI32 = AtomicI32::new(1);
+
+pub fn set_stick_sign(sign: i32) {
+    STICK_SIGN.store(sign, Ordering::Relaxed);
+}
 
 /// Yaw (radians) of a pure-yaw quaternion `(0, y, 0, w)`.
 pub fn yaw_from_quat(qy: f32, qw: f32) -> f32 {
@@ -73,6 +81,48 @@ pub fn choose_class(own: Option<usize>, used: &[usize], count: usize) -> usize {
 /// Lowest free local slot, given the slots in use.
 pub fn free_slot(taken: &[usize]) -> Option<usize> {
     SLOTS.iter().copied().find(|s| !taken.contains(s))
+}
+
+/// Rotates a stick (i16 axes, normalised to -1..1) by `d` radians, counter-clockwise.
+pub fn rotate_stick(x: i16, y: i16, d: f32) -> (i16, i16) {
+    let (fx, fy) = (x as f32 / 32767.0, y as f32 / 32767.0);
+    let (s, c) = d.sin_cos();
+    let to_i16 = |v: f32| (v * 32767.0).round().clamp(-32768.0, 32767.0) as i16;
+    (to_i16(fx * c - fy * s), to_i16(fx * s + fy * c))
+}
+
+/// `pad` with both thumbsticks rotated by `d` radians.
+pub fn rotate_pad(pad: Pad, d: f32) -> Pad {
+    if d == 0.0 || !d.is_finite() {
+        return pad;
+    }
+    let (lx, ly) = rotate_stick(pad.lx, pad.ly, d);
+    let (rx, ry) = rotate_stick(pad.rx, pad.ry, d);
+    Pad { lx, ly, rx, ry, ..pad }
+}
+
+/// Camera heading of the view for player slot `i`, from its view matrix (`view+0x20`, row major):
+/// `atan2(m[0][2], m[2][2])`. None when the view is missing or the values are not finite.
+unsafe fn view_heading(mgr: u64, i: u64) -> Option<f32> {
+    let views = rd_u64(mgr + 0xd8);
+    if views == 0 || rd_i32(views) <= i as i32 {
+        return None;
+    }
+    let view = rd_u64(rd_u64(views + 8) + i * 8);
+    if view == 0 {
+        return None;
+    }
+    let h = rd_f32(view + 0x28).atan2(rd_f32(view + 0x48));
+    h.is_finite().then_some(h)
+}
+
+/// Rotation that turns a stick held relative to the owner's camera (`owner_cam`) into the same
+/// world direction under this copy's camera for the slot (`local_cam`).
+pub fn stick_delta(local_cam: Option<f32>, owner_cam: f32, sign: i32) -> f32 {
+    match local_cam {
+        Some(l) if owner_cam.is_finite() => sign as f32 * (l - owner_cam),
+        _ => 0.0,
+    }
 }
 
 /// Index in `CLASSES` of an avatar's class property, if known.
@@ -108,7 +158,7 @@ pub unsafe fn update() {
 
     let held = pad::take_local_pad();
     if p0 == 0 {
-        net::set_local_state(0, CLASS_UNKNOWN, [0.0; 3], 0.0, Pad::default(), 0);
+        net::set_local_state(0, CLASS_UNKNOWN, [0.0; 3], 0.0, 0.0, Pad::default(), 0);
         // the level teardown already reset slots 1-3
         partners.clear();
         forget_pads();
@@ -120,7 +170,8 @@ pub unsafe fn update() {
     let yaw = yaw_from_quat(rd_f32(p0 + 0x94), rd_f32(p0 + 0x9c));
     let controls = rd_u8(p0 + CONTROLS_ON) != 0;
     let pad_out = if controls { held } else { Pad::default() };
-    net::set_local_state(level, own_class.map_or(CLASS_UNKNOWN, |c| c as u8), pos, yaw, pad_out, 0);
+    let cam = view_heading(mgr, 0).unwrap_or(0.0);
+    net::set_local_state(level, own_class.map_or(CLASS_UNKNOWN, |c| c as u8), pos, yaw, cam, pad_out, 0);
 
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;
     let remote = net::remote_states();
@@ -137,7 +188,7 @@ pub unsafe fn update() {
             Some(p) => p,
             None => {
                 let Some(slot) = free_slot(&taken) else { continue };
-                partners.entry(id).or_insert(Partner { slot, avatar: 0, actor_id: 0, class: 0, next_try_us: 0, snaps: 0, last_log_us: 0 })
+                partners.entry(id).or_insert(Partner { slot, avatar: 0, actor_id: 0, class: 0, next_try_us: 0, snaps: 0, last_log_us: 0, last_drift_us: 0 })
             }
         };
         if st.level != level || level == 0 {
@@ -148,7 +199,8 @@ pub unsafe fn update() {
             pad::set_remote_pad(p.slot, None);
             continue;
         }
-        pad::set_remote_pad(p.slot, Some(st.pad));
+        let delta = stick_delta(view_heading(mgr, p.slot as u64), st.cam, STICK_SIGN.load(Ordering::Relaxed));
+        pad::set_remote_pad(p.slot, Some(rotate_pad(st.pad, delta)));
         if p.avatar == 0 {
             if now >= p.next_try_us {
                 p.next_try_us = now + RETRY_US;
@@ -158,7 +210,7 @@ pub unsafe fn update() {
             log!("coop: player {id} lost slot {} (avatar {:#x}); will rebind", p.slot, p.avatar);
             p.avatar = 0;
         } else {
-            correct(p, id, &st, now);
+            correct(p, id, &st, now, delta);
         }
     }
 }
@@ -225,8 +277,12 @@ unsafe fn unbind(mgr: u64, id: u8, p: &Partner, why: &str) {
 }
 
 /// Places a bound partner back when it drifted from the owner's position.
-unsafe fn correct(p: &mut Partner, id: u8, st: &State, now: u64) {
+unsafe fn correct(p: &mut Partner, id: u8, st: &State, now: u64, delta: f32) {
     let cur = [rd_f32(p.avatar + 0x80), rd_f32(p.avatar + 0x84), rd_f32(p.avatar + 0x88)];
+    if now.saturating_sub(p.last_drift_us) >= LOG_US {
+        p.last_drift_us = now;
+        log!("coop: player {id} slot {} drift {:.1} m, cam delta {:.1} deg", p.slot, dist2(cur, st.pos).sqrt(), delta.to_degrees());
+    }
     if dist2(cur, st.pos) <= SNAP_DIST * SNAP_DIST {
         return;
     }
@@ -326,6 +382,41 @@ mod tests {
             assert!(c.class.ends_with(b"\0") && c.spec.ends_with(b"\0") && c.name.ends_with(b"\0"));
         }
         assert_eq!(class_name(1), "woody");
+    }
+
+    #[test]
+    fn stick_rotation() {
+        let near = |a: (i16, i16), b: (i16, i16)| (a.0 as i32 - b.0 as i32).abs() <= 1 && (a.1 as i32 - b.1 as i32).abs() <= 1;
+        assert!(near(rotate_stick(32767, 0, PI / 2.0), (0, 32767)));
+        assert!(near(rotate_stick(0, 32767, PI / 2.0), (-32767, 0)));
+        assert!(near(rotate_stick(32767, 0, PI), (-32767, 0)));
+        assert!(near(rotate_stick(12345, -6789, 0.0), (12345, -6789)));
+        assert!(near(rotate_stick(3000, 4000, -0.7), rotate_stick(3000, 4000, 2.0 * PI - 0.7)));
+        // a full-deflection corner stays in range
+        let (x, y) = rotate_stick(-32768, -32768, 0.5);
+        assert!(x != 0 && y != 0);
+        let (x, y) = rotate_stick(32767, 32767, PI / 4.0);
+        assert!(x.abs() <= 1 && y == 32767); // clamped, not wrapped
+    }
+
+    #[test]
+    fn pad_rotation_keeps_buttons_and_triggers() {
+        let p = Pad { buttons: 0x1234, lt: 9, rt: 8, lx: 32767, ly: 0, rx: 0, ry: -32767 };
+        let r = rotate_pad(p, PI / 2.0);
+        assert_eq!((r.buttons, r.lt, r.rt), (0x1234, 9, 8));
+        assert!(r.lx.abs() <= 1 && (r.ly - 32767).abs() <= 1);
+        assert!((r.rx - 32767).abs() <= 1 && r.ry.abs() <= 1);
+        assert_eq!(rotate_pad(p, 0.0), p);
+        assert_eq!(rotate_pad(p, f32::NAN), p);
+    }
+
+    #[test]
+    fn camera_delta_and_sign() {
+        assert_eq!(stick_delta(Some(1.0), 0.25, 1), 0.75);
+        assert_eq!(stick_delta(Some(1.0), 0.25, -1), -0.75);
+        assert_eq!(stick_delta(None, 0.25, 1), 0.0);
+        assert_eq!(stick_delta(Some(1.0), f32::NAN, 1), 0.0);
+        assert_eq!(stick_delta(Some(1.0), f32::INFINITY, 1), 0.0);
     }
 
     #[test]

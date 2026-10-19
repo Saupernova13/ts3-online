@@ -27,7 +27,7 @@ mod win;
 
 #[cfg(windows)]
 mod entry {
-    use crate::{config, copy, doc, game, hooks, log, net, pad, patch, saves, watch, win, window};
+    use crate::{config, coop, copy, doc, game, hooks, log, net, pad, patch, saves, watch, win, window};
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use windows_sys::core::{GUID, HRESULT};
@@ -118,6 +118,7 @@ mod entry {
         let base = win::main_module_base();
         if cfg.net.is_some() {
             pad::install_net(base, cfg.pad);
+            coop::set_stick_sign(cfg.net_stick_sign);
         } else if let Some(p) = cfg.pad {
             pad::install(base, p);
         }

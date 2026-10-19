@@ -1,7 +1,7 @@
 //! Wire format: `b"TS3O"`, protocol version u16, message type u8, body. Little-endian, no padding.
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 pub const MAX_NAME: usize = 32;
 
 pub const REFUSE_FULL: u8 = 1;
@@ -43,6 +43,8 @@ pub struct State {
     pub class: u8,
     pub pos: [f32; 3],
     pub yaw: f32,
+    /// the sender's camera heading (radians), to rotate its stick into the receiver's view
+    pub cam: f32,
     pub pad: Pad,
     pub flags: u32,
 }
@@ -120,7 +122,7 @@ pub fn encode(msg: &Msg) -> Vec<u8> {
             o.extend_from_slice(&s.seq.to_le_bytes());
             o.extend_from_slice(&s.level.to_le_bytes());
             o.push(s.class);
-            for v in s.pos.iter().chain(&[s.yaw]) {
+            for v in s.pos.iter().chain(&[s.yaw, s.cam]) {
                 o.extend_from_slice(&v.to_le_bytes());
             }
             let p = &s.pad;
@@ -204,6 +206,7 @@ pub fn decode(bytes: &[u8]) -> Result<Msg, DecodeError> {
                 class: r.u8()?,
                 pos: [r.f32()?, r.f32()?, r.f32()?],
                 yaw: r.f32()?,
+                cam: r.f32()?,
                 pad: Pad { buttons: r.u16()?, lt: r.u8()?, rt: r.u8()?, lx: r.i16()?, ly: r.i16()?, rx: r.i16()?, ry: r.i16()? },
                 flags: r.u32()?,
             }),
@@ -234,6 +237,7 @@ mod tests {
                 class: 1,
                 pos: [1.5, -2.0, 300.25],
                 yaw: 3.14,
+                cam: -1.25,
                 pad: Pad { buttons: 0x3001, lt: 5, rt: 255, lx: -32768, ly: 32767, rx: -1, ry: 1234 },
                 flags: 0xdead_beef,
             }),

@@ -2,6 +2,7 @@
 use crate::game::*;
 use crate::log;
 use std::ffi::{c_char, CStr};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Address of the Rust function behind a hook name, or None if unknown.
 pub fn resolve(name: &str) -> Option<u64> {
@@ -14,6 +15,9 @@ pub fn resolve(name: &str) -> Option<u64> {
         "reset_player_slots" => reset_player_slots as *const () as u64,
         "level_player_setup" => level_player_setup as *const () as u64,
         "frame_tick" => frame_tick as *const () as u64,
+        "post_broadcast" => post_broadcast as *const () as u64,
+        "post_actor" => post_actor as *const () as u64,
+        "post_broadcast2" => post_broadcast2 as *const () as u64,
         _ => return None,
     })
 }
@@ -62,13 +66,13 @@ pub unsafe extern "system" fn level_player_setup(mgr: u64, views: u64) {
 
 /// Replaces the three per-frame calls in the input dispatch (0x140280c18): the same calls, then
 /// the co-op partner update while a session exists (FINDINGS 9).
-static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static FRAMES: AtomicU64 = AtomicU64::new(0);
 
 pub unsafe extern "system" fn frame_tick() {
     frame_a();
     frame_b();
     frame_c();
-    let n = FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let n = FRAMES.fetch_add(1, Ordering::Relaxed);
     if n % 60 == 0 {
         crate::pad::reassert();
     }
@@ -76,6 +80,75 @@ pub unsafe extern "system" fn frame_tick() {
     if crate::net::active() {
         crate::coop::update();
     }
+    crate::evlog::tick();
+    crate::devcmd::tick();
+}
+
+// ---- detours with a call-through to the original (FINDINGS 10) ----
+
+static ORIG_POST_BROADCAST: AtomicU64 = AtomicU64::new(0);
+static ORIG_POST_ACTOR: AtomicU64 = AtomicU64::new(0);
+static ORIG_POST_BROADCAST2: AtomicU64 = AtomicU64::new(0);
+
+fn original_slot(name: &str) -> Option<&'static AtomicU64> {
+    Some(match name {
+        "post_broadcast" => &ORIG_POST_BROADCAST,
+        "post_actor" => &ORIG_POST_ACTOR,
+        "post_broadcast2" => &ORIG_POST_BROADCAST2,
+        _ => return None,
+    })
+}
+
+/// Records the trampoline of a detour hook; called by the loader before the detour is applied.
+pub fn set_original(name: &str, trampoline: u64) {
+    if let Some(s) = original_slot(name) {
+        s.store(trampoline, Ordering::Release);
+    }
+}
+
+/// Address of the trampoline that runs the original of a detour hook, if it was set up.
+pub fn original(name: &str) -> Option<u64> {
+    original_slot(name).map(|s| s.load(Ordering::Acquire)).filter(|a| *a != 0)
+}
+
+type Post4 = unsafe extern "system" fn(u64, u64, u64, u64) -> u8;
+type Post5 = unsafe extern "system" fn(u64, u64, u64, u64, u64) -> u8;
+
+/// Detour of the event post broadcast (0x14049e160): records the name, then runs the original.
+pub unsafe extern "system" fn post_broadcast(events: u64, name: u64, a: u64, b: u64) -> u8 {
+    crate::evlog::record(name, a, b, None);
+    match original("post_broadcast") {
+        Some(o) => std::mem::transmute::<u64, Post4>(o)(events, name, a, b),
+        None => 0,
+    }
+}
+
+/// Detour of the targeted event post (0x14049e0b0, the actor id is the fifth argument).
+pub unsafe extern "system" fn post_actor(events: u64, name: u64, a: u64, b: u64, actor: u64) -> u8 {
+    crate::evlog::record(name, a, b, Some(actor));
+    match original("post_actor") {
+        Some(o) => std::mem::transmute::<u64, Post5>(o)(events, name, a, b, actor),
+        None => 0,
+    }
+}
+
+/// Detour of the second event post broadcast (0x14049e250).
+pub unsafe extern "system" fn post_broadcast2(events: u64, name: u64, a: u64, b: u64) -> u8 {
+    crate::evlog::record(name, a, b, None);
+    match original("post_broadcast2") {
+        Some(o) => std::mem::transmute::<u64, Post4>(o)(events, name, a, b),
+        None => 0,
+    }
+}
+
+/// Posts an event through the original broadcast, past the logging detour.
+pub unsafe fn call_broadcast(events: u64, name: u64, a: u64, b: u64) -> Option<u8> {
+    original("post_broadcast").map(|o| std::mem::transmute::<u64, Post4>(o)(events, name, a, b))
+}
+
+/// Posts an event to an actor through the original, past the logging detour.
+pub unsafe fn call_post_actor(events: u64, name: u64, a: u64, b: u64, actor: u64) -> Option<u8> {
+    original("post_actor").map(|o| std::mem::transmute::<u64, Post5>(o)(events, name, a, b, actor))
 }
 
 unsafe fn actor_id(actor: u64) -> u64 {

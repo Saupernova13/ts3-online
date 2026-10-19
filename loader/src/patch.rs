@@ -36,6 +36,15 @@ pub fn thunk_bytes(target: u64) -> Vec<u8> {
     b
 }
 
+/// The trampoline of a detour: the stolen bytes, then `jmp [rip+0]` to `resume` (the first
+/// instruction after them).
+pub fn trampoline_bytes(stolen: &[u8], resume: u64) -> Vec<u8> {
+    let mut b = stolen.to_vec();
+    b.extend_from_slice(&[0xff, 0x25, 0, 0, 0, 0]);
+    b.extend_from_slice(&resume.to_le_bytes());
+    b
+}
+
 /// `mov rax,imm64` followed by `jmp rax` (entry) or `call rax` (call).
 fn mov_rax_then(target: u64, op: [u8; 2]) -> Vec<u8> {
     let mut b = vec![0x48, 0xb8];
@@ -72,6 +81,12 @@ pub fn patch_bytes(p: &Patch, module_base: u64, buffer: u64, resolve: Resolver) 
         Op::Hook { mode, name, prefix } => {
             let target = resolve(*mode, name).ok_or_else(|| format!("patch {}: unknown hook {name:?}", p.id))?;
             let mut b = match mode {
+                HookMode::Detour => {
+                    if p.orig.len() < 12 {
+                        return Err(format!("patch {}: detour needs >= 12 stolen bytes", p.id));
+                    }
+                    mov_rax_then(target, [0xff, 0xe0])
+                }
                 HookMode::Entry | HookMode::EntryCaller => {
                     if p.orig.len() != 12 {
                         return Err(format!("patch {}: entry hook needs 12 bytes", p.id));
@@ -255,6 +270,28 @@ pub mod tests {
         // exactly 12 bytes: no padding; 25 bytes pads 9 + 4
         assert_eq!(patch_bytes(&hook_patch(HookMode::Call, 12), 0, 0, &any_hook).unwrap().len(), 12);
         assert_eq!(patch_bytes(&hook_patch(HookMode::Call, 25), 0, 0, &any_hook).unwrap().len(), 25);
+    }
+
+    #[test]
+    fn detour_encodings() {
+        let imm = [0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11];
+        let d = patch_bytes(&hook_patch(HookMode::Detour, 15), 0, 0, &any_hook).unwrap();
+        assert_eq!(d.len(), 15);
+        assert_eq!(&d[..2], &[0x48, 0xb8]);
+        assert_eq!(&d[2..10], &imm);
+        assert_eq!(&d[10..12], &[0xff, 0xe0]);
+        assert_eq!(&d[12..], &[0x0f, 0x1f, 0x00]);
+        assert_eq!(patch_bytes(&hook_patch(HookMode::Detour, 12), 0, 0, &any_hook).unwrap().len(), 12);
+        assert!(patch_bytes(&hook_patch(HookMode::Detour, 11), 0, 0, &any_hook).is_err());
+    }
+
+    #[test]
+    fn trampoline_encoding() {
+        let t = trampoline_bytes(&[0x48, 0x89, 0x5c, 0x24, 0x10], 0x1122_3344_5566_7788);
+        assert_eq!(&t[..5], &[0x48, 0x89, 0x5c, 0x24, 0x10]);
+        assert_eq!(&t[5..11], &[0xff, 0x25, 0, 0, 0, 0]);
+        assert_eq!(&t[11..], &0x1122_3344_5566_7788u64.to_le_bytes());
+        assert_eq!(t.len(), 5 + 14);
     }
 
     #[test]

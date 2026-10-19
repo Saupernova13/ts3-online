@@ -3,6 +3,10 @@ pub mod config;
 pub mod copy;
 pub mod doc;
 #[cfg(windows)]
+pub mod devcmd;
+#[cfg(windows)]
+pub mod evlog;
+#[cfg(windows)]
 pub mod game;
 pub mod hex;
 #[cfg(windows)]
@@ -27,7 +31,7 @@ mod win;
 
 #[cfg(windows)]
 mod entry {
-    use crate::{config, coop, copy, doc, game, hooks, log, net, pad, patch, saves, watch, win, window};
+    use crate::{config, coop, copy, devcmd, doc, evlog, game, hooks, log, net, pad, patch, saves, watch, win, window};
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use windows_sys::core::{GUID, HRESULT};
@@ -113,6 +117,12 @@ mod entry {
                 let ok = unsafe { SetEnvironmentVariableW(win::wide(name.as_ref()).as_ptr(), win::wide("4049180".as_ref()).as_ptr()) };
                 log!("{name}=4049180: {}", if ok != 0 { "set" } else { "failed" });
             }
+        }
+        if cfg.log_events {
+            evlog::enable();
+        }
+        if cfg.dev_cmds {
+            devcmd::enable(n);
         }
         if cfg.net.is_some() {
             net::expect_role();
@@ -204,6 +214,31 @@ mod entry {
                 win::fill(at, &patch::thunk_bytes(hooks::resolve(n).unwrap_or(0)));
                 thunks.push((n, at));
                 log!("thunk for {n} at {at:#x}");
+            }
+        }
+        // trampolines for detour hooks: the stolen bytes, then a jump behind them
+        let detours: Vec<(&str, u64, &[u8])> = doc
+            .patches
+            .iter()
+            .filter_map(|p| match &p.op {
+                doc::Op::Hook { mode: doc::HookMode::Detour, name, .. } => Some((name.as_str(), base + p.rva, &p.orig[..])),
+                _ => None,
+            })
+            .collect();
+        if !detours.is_empty() {
+            const SLOT: usize = 64;
+            let Some(page) = win::alloc_exec(detours.len() * SLOT) else {
+                return log!("could not allocate the detour trampolines");
+            };
+            for (i, (name, site, stolen)) in detours.iter().enumerate() {
+                let bytes = patch::trampoline_bytes(stolen, site + stolen.len() as u64);
+                if bytes.len() > SLOT {
+                    return log!("detour {name}: too many stolen bytes");
+                }
+                let at = page + (i * SLOT) as u64;
+                win::fill(at, &bytes);
+                hooks::set_original(name, at);
+                log!("trampoline for {name} at {at:#x}");
             }
         }
         let resolve = |mode: doc::HookMode, name: &str| match mode {

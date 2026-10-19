@@ -52,6 +52,7 @@ struct RawPatch {
     mode: Option<String>,
     hook: Option<String>,
     prefix: Option<String>,
+    steal: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +94,11 @@ pub enum HookMode {
     EntryCaller,
     /// Replace an inline block with a call to the hook.
     Call,
+    /// Overwrite the first `steal` bytes of a function with a jump to the hook; the stolen bytes
+    /// run in a trampoline (`hooks::original`) so the hook can call the original. The stolen bytes
+    /// must be position independent (no RIP-relative operands or relative branches), which is
+    /// hand-reviewed.
+    Detour,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -156,6 +162,7 @@ fn convert_patch(p: RawPatch) -> Result<Patch, String> {
                 Some("entry") => HookMode::Entry,
                 Some("entry_caller") => HookMode::EntryCaller,
                 Some("call") => HookMode::Call,
+                Some("detour") => HookMode::Detour,
                 m => return Err(err(&format!("bad hook mode {m:?}"))),
             };
             let name = p.hook.clone().ok_or_else(|| err("missing hook name"))?;
@@ -166,8 +173,12 @@ fn convert_patch(p: RawPatch) -> Result<Patch, String> {
             if !prefix.is_empty() && mode != HookMode::Call {
                 return Err(err("prefix is only valid in call mode"));
             }
+            if mode == HookMode::Detour && p.steal != Some(orig.len()) {
+                return Err(err("detour needs steal equal to the orig length"));
+            }
             let ok = match mode {
                 HookMode::Call => orig.len() >= 12 + prefix.len(),
+                HookMode::Detour => orig.len() >= 12,
                 _ => orig.len() == 12,
             };
             if !ok {

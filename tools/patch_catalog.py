@@ -77,7 +77,8 @@ def change(p):
         return f"disp at +{p['disp_pos']} -> buffer +{p['target_off']}"
     if p["kind"] == "hook":
         pre = f" (prefix `{p['prefix']}`)" if p.get("prefix") else ""
-        return f"{p['mode']} -> `{p['hook']}`{pre}, {len(p['orig']) // 2} bytes"
+        steal = f", steals {p['steal']}" if p.get("steal") else ""
+        return f"{p['mode']} -> `{p['hook']}`{pre}, {len(p['orig']) // 2} bytes{steal}"
     return p["kind"]
 
 

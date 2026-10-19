@@ -61,13 +61,13 @@ pub unsafe extern "system" fn level_player_setup(mgr: u64, views: u64) {
 }
 
 /// Replaces the three per-frame calls in the input dispatch (0x140280c18): the same calls, then
-/// the network proxy update while a session exists (FINDINGS 9).
+/// the co-op partner update while a session exists (FINDINGS 9).
 pub unsafe extern "system" fn frame_tick() {
     frame_a();
     frame_b();
     frame_c();
     if crate::net::active() {
-        crate::proxy::update();
+        crate::coop::update();
     }
 }
 

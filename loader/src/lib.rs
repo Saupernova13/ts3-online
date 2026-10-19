@@ -15,7 +15,7 @@ pub mod net;
 pub mod pad;
 pub mod patch;
 #[cfg(windows)]
-pub mod proxy;
+pub mod coop;
 #[cfg(windows)]
 pub mod saves;
 pub mod watch;
@@ -116,7 +116,9 @@ mod entry {
         }
         patch_game(&dir, &cfg);
         let base = win::main_module_base();
-        if let Some(p) = cfg.pad {
+        if cfg.net.is_some() {
+            pad::install_net(base, cfg.pad);
+        } else if let Some(p) = cfg.pad {
             pad::install(base, p);
         }
         if n > 1 {
@@ -126,7 +128,7 @@ mod entry {
             window::start(rect);
         }
         if let Some(n) = &cfg.net {
-            net::start(n, &cfg.name);
+            net::start(n, &cfg.name, cfg.net_sim);
         }
     }
 

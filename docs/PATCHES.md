@@ -17,10 +17,11 @@ Relocation: `0x258` bytes at RVA `0x9582b0` -> a `0x400` buffer; fields from `+0
 | memory | 1 | Doubles the "System" heap (512 MB to 1 GB) as headroom for 4 players. | FINDINGS 5b | verified in game 2026-10-16 |
 | views | 11 | Level setup creates 4 per-player views instead of 2, and the inline view-array guards accept 4. | FINDINGS 5c | verified in game 2026-10-16 |
 | quadrants (optional) | 1 | Optional (`enable=quadrants` in `ts3online.ini`): every split request builds 4 quadrants, so each player keeps the same 16:9 quarter for streaming. | FINDINGS 2; PLAN rig design | not tested in game |
+| online (optional) | 1 | Optional (enabled by `net=` in `ts3online.ini`): every split request keeps one full-screen viewport for the local player, whatever the player count, so remote players join as partners without a split screen. | FINDINGS 9 | not tested in game |
 | instances (optional) | 3 | Optional (`enable=instances`): lets a second copy of the game run on the same PC for host/client play. | FINDINGS 9 | not tested in game |
 | hooks | 9 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5f | verified in game (teardown and the controls fix 2026-10-17) except level_player_setup (T8) |
 
-Total: 225 patches.
+Total: 226 patches.
 
 ## relocate
 
@@ -264,6 +265,12 @@ Total: 225 patches.
 | VA | change | note |
 |---|---|---|
 | `0x1405f4718` | `4863f9` -> `6a045f` | SetSplitScreenMode (0x1405f4700): movsxd rdi,ecx -> push 4; pop rdi, so every split request builds 4 quadrants and the event and mode global say 4 (for streaming each quadrant) |
+
+## online
+
+| VA | change | note |
+|---|---|---|
+| `0x1405f4718` | `4863f9` -> `31ff90` | SetSplitScreenMode (0x1405f4700): movsxd rdi,ecx -> xor edi,edi; nop, so a networked copy keeps one full-screen viewport (view 0, the local player) whatever the player count |
 
 ## instances
 

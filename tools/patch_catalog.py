@@ -46,6 +46,12 @@ GROUPS = {
         "FINDINGS 2; PLAN rig design",
         "not tested in game",
     ),
+    "online": (
+        "Optional (enabled by `net=` in `ts3online.ini`): every split request keeps one full-screen "
+        "viewport for the local player, whatever the player count, so remote players join as partners without a split screen.",
+        "FINDINGS 9",
+        "not tested in game",
+    ),
     "instances": (
         "Optional (`enable=instances`): lets a second copy of the game run on the same PC for host/client play.",
         "FINDINGS 9",

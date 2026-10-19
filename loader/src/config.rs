@@ -8,6 +8,14 @@ pub enum Net {
     Client(String),
 }
 
+/// `net_sim = delay_ms[,jitter_ms[,loss_pct]]`: simulated link quality for outgoing datagrams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sim {
+    pub delay_ms: u32,
+    pub jitter_ms: u32,
+    pub loss_pct: u32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub enabled: bool,
@@ -21,13 +29,15 @@ pub struct Config {
     pub pad: Option<u32>,
     /// `net = host:PORT` or `net = client:ADDR:PORT`
     pub net: Option<Net>,
+    /// `net_sim = delay_ms[,jitter_ms[,loss_pct]]`
+    pub net_sim: Option<Sim>,
     /// `name = text`: shown to other players (max 32 bytes)
     pub name: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, name: "player".into() }
+        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, name: "player".into() }
     }
 }
 
@@ -101,6 +111,12 @@ pub fn parse(text: &str, copy: u32) -> Config {
                     _ => {}
                 }
             }
+            "net_sim" => {
+                let n: Option<Vec<u32>> = v.split(',').map(|x| x.trim().parse().ok()).collect();
+                if let Some(n) = n.filter(|n| (1..=3).contains(&n.len()) && n.get(2).is_none_or(|l| *l <= 100)) {
+                    c.net_sim = Some(Sim { delay_ms: n[0], jitter_ms: n.get(1).copied().unwrap_or(0), loss_pct: n.get(2).copied().unwrap_or(0) });
+                }
+            }
             "name" => {
                 let n = clamp_name(v).trim();
                 if !n.is_empty() {
@@ -108,6 +124,13 @@ pub fn parse(text: &str, copy: u32) -> Config {
                 }
             }
             _ => {}
+        }
+    }
+    if c.net.is_some() {
+        // a networked copy keeps one full-screen viewport; `online` and `quadrants` patch the same site
+        c.enable.retain(|g| g != "quadrants");
+        if !c.enable.iter().any(|g| g == "online") {
+            c.enable.push("online".into());
         }
     }
     c
@@ -119,13 +142,13 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, name: "player".into() });
+        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, name: "player".into() });
     }
 
     #[test]
     fn overrides_and_comments() {
         let c = parse("# hi\n enabled = 0 \nwatch=false\nWATCH_INTERVAL_MS=250\nbogus=1\nnoequals\n", 1);
-        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, name: "player".into() });
+        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, name: "player".into() });
     }
 
     #[test]
@@ -160,6 +183,30 @@ mod tests {
         }
         assert_eq!(parse("net=host:1
 net=bogus", 1).net, Some(Net::Host(1)));
+    }
+
+    #[test]
+    fn net_enables_online_instead_of_quadrants() {
+        let c = parse("enable=quadrants,instances
+net=host:5
+", 1);
+        assert_eq!(c.enable, ["instances", "online"]);
+        assert_eq!(parse("net=host:5
+enable=online
+", 1).enable, ["online"]);
+        assert_eq!(parse("enable=quadrants
+", 1).enable, ["quadrants"]);
+    }
+
+    #[test]
+    fn net_sim_key() {
+        let sim = |d, j, l| Some(Sim { delay_ms: d, jitter_ms: j, loss_pct: l });
+        assert_eq!(parse("net_sim=80", 1).net_sim, sim(80, 0, 0));
+        assert_eq!(parse("net_sim = 80, 20", 1).net_sim, sim(80, 20, 0));
+        assert_eq!(parse("net_sim=80,20,5", 1).net_sim, sim(80, 20, 5));
+        for bad in ["", "x", "1,2,3,4", "1,2,101", "-5", "1,,2"] {
+            assert_eq!(parse(&format!("net_sim={bad}"), 1).net_sim, None, "{bad}");
+        }
     }
 
     #[test]

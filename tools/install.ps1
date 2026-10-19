@@ -45,8 +45,9 @@ function Find-GameDir {
         }
     }
     foreach ($lib in $libs) {
-        $dir = Join-Path $lib "steamapps\common\$Game"
-        if (Test-Path -LiteralPath (Join-Path $dir $Exe) -PathType Leaf) { return $dir }
+        # [IO.Path]::Combine, not Join-Path: a library on an unplugged drive must not throw
+        $dir = [IO.Path]::Combine($lib, "steamapps\common\$Game")
+        if (Test-Path -LiteralPath ([IO.Path]::Combine($dir, $Exe)) -PathType Leaf) { return $dir }
     }
     throw "Cannot find $Game in the Steam libraries. Pass -GameDir `"<game folder>`"."
 }

@@ -62,6 +62,15 @@ continue loading while the window is open.
 A host takes up to 4 players (tested with 2). With `net=auto` there is no window: the first copy
 to start hosts and the others find it on their own.
 
+## Two copies on one PC (testing)
+
+With two controllers you can try online play alone: double-click **`LocalCoop.cmd`**. It starts the
+game twice side by side, each window half the screen. Copy 1 hosts with your save and controller 1;
+copy 2 joins it, downloads that save and uses controller 2. On each, choose Start Game and Load Game
+and enter Toy Box (copy 1 first), with different characters. While they run, `ts3online.ini` in
+the game folder holds a two-copy setup; keep the script's window open and it puts your own file
+back once both games are closed.
+
 ## Settings
 
 `ts3online.ini` next to the game exe:

@@ -13,6 +13,9 @@ pub mod hex;
 pub mod hooks;
 #[cfg(windows)]
 pub mod iat;
+#[cfg(windows)]
+pub mod menu;
+pub mod menu_model;
 pub mod log;
 pub mod net;
 #[cfg(windows)]
@@ -32,7 +35,7 @@ mod win;
 
 #[cfg(windows)]
 mod entry {
-    use crate::{config, coop, copy, devcmd, doc, evlog, game, hooks, log, net, pad, patch, saves, watch, win, window};
+    use crate::{config, coop, copy, devcmd, doc, evlog, game, hooks, log, menu, net, pad, patch, saves, watch, win, window};
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use windows_sys::core::{GUID, HRESULT};
@@ -98,6 +101,7 @@ mod entry {
         let beside = dir.join("ts3online.ini");
         let fallback = local.map(|l| l.join("ts3online").join("ts3online.ini"));
         let found = [Some(beside), fallback].into_iter().flatten().find_map(|p| std::fs::read_to_string(&p).ok().map(|t| (p, t)));
+        let ini_path = found.as_ref().map(|(p, _)| p.clone());
         let cfg = match found {
             Some((p, t)) => {
                 log!("config file: {}", p.display());
@@ -144,7 +148,12 @@ mod entry {
             window::start(rect);
         }
         if let Some(mode) = &cfg.net {
-            net::start(mode, net::Options { name: cfg.name.clone(), sim: cfg.net_sim, copy: n, port: cfg.net_port, peers: cfg.net_peers.clone(), key: cfg.net_key.as_str().to_string() });
+            let opts = net::Options { name: cfg.name.clone(), sim: cfg.net_sim, copy: n, port: cfg.net_port, peers: cfg.net_peers.clone(), key: cfg.net_key.as_str().to_string() };
+            if *mode == config::Net::Menu {
+                menu::start(menu::Init { ini: ini_path, opts, last: cfg.menu_last.clone() });
+            } else {
+                net::start(mode, opts);
+            }
         }
     }
 

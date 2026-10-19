@@ -114,9 +114,18 @@ pub fn original(name: &str) -> Option<u64> {
 type Post4 = unsafe extern "system" fn(u64, u64, u64, u64) -> u8;
 type Post5 = unsafe extern "system" fn(u64, u64, u64, u64, u64) -> u8;
 
+/// The event name at `name` is "SwitchLevel"; compares in place and stops at the first differing byte.
+unsafe fn is_switch_level(name: u64) -> bool {
+    const NAME: &[u8] = b"SwitchLevel\0";
+    name >= 0x1_0000 && NAME.iter().enumerate().all(|(i, c)| rd_u8(name + i as u64) == *c)
+}
+
 /// Detour of the event post broadcast (0x14049e160): records the name, then runs the original.
 pub unsafe extern "system" fn post_broadcast(events: u64, name: u64, a: u64, b: u64) -> u8 {
     crate::evlog::record(name, a, b, None);
+    if a != 0 && is_switch_level(name) {
+        crate::coop::on_local_switch(&CStr::from_ptr(a as *const c_char).to_string_lossy());
+    }
     match original("post_broadcast") {
         Some(o) => std::mem::transmute::<u64, Post4>(o)(events, name, a, b),
         None => 0,

@@ -72,7 +72,7 @@ Board note: the pencil cursor keeps its last position; from Toy Box's spot `A` a
 
 ## T7: two copies on one PC (H0, passed 2026-10-17 except input focus)
 
-Config in `%LOCALAPPDATA%	s3online	s3online.ini`: `enable=instances`, then `[copy1]` with `pad=1` and
+Config in `%LOCALAPPDATA%\ts3online\ts3online.ini`: `enable=instances`, then `[copy1]` with `pad=1` and
 `window=0,0,960,540`, `[copy2]` with `pad=2` and `window=960,0,960,540`. Start 2 virtual pads, launch
 copy 1 from Steam, then `tools/launch_copy.ps1 -CopySave`. Expect `copy 1 of 4` / `copy 2 of 4` in
 `ts3online.log` / `ts3online.copy2.log`, both pad hooks, and the saves redirect in copy 2's log. Use
@@ -110,9 +110,26 @@ read positions from both processes and steer a player to a spot.
 
 Both copies with `net=auto` (no addresses). Copy 1 probes the online tailnet peers for 2.5 s, finds
 no host and hosts; copy 2 finds the port taken and joins the local host. Expect in copy 2's log
-`net: save: received N bytes (crc ok)` before `saves: SHGetFolderPathA(APPDATA) -> ...	s3online\session`,
+`net: save: received N bytes (crc ok)` before `saves: SHGetFolderPathA(APPDATA) -> ...\ts3online\session`,
 and in copy 1's `net: save: sent N bytes to player 1`. Then T10's partner checks pass unchanged. The
 first time a copy hosts, Windows Firewall asks about the game: on a tailnet the host must allow it.
+
+## T12: follow each other between levels (H5b, passed 2026-10-19)
+
+Start as for T11. Then:
+
+1. Host: `post SwitchLevel wt_stuntpark` in `cmd.copy1.txt` (needs `dev_cmds=1`). Expect in the
+   client's log `coop: following the host to level wt_stuntpark` about 1.5 s after the host's
+   `coop: level "wt_stuntpark"`, then both rebind their partner.
+2. Client: `post SwitchLevel wt_stuntpark` (`post` goes through the game's own post entry, so the
+   loader sees it like a door). Expect in the host's log `coop: a client changed level, following to ...`.
+3. Close the client, wait, start it again (`work/scratch/rejoin.sh`): the host parks the partner
+   (`parked`), and wakes it when the player is back (`is back`). Close the host: the client parks
+   its partner, takes over hosting and keeps running.
+4. Both copies keep running for a minute in the new level with drift under 0.5 m.
+
+A client on the game board does not follow (menus are not levels); it enters Toy Box through its own
+menus and follows from there.
 
 ## Reporting
 

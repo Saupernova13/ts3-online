@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 static COPY: AtomicU32 = AtomicU32::new(1);
+/// Level names clients asked the host to follow, until the game thread takes them.
+static LEVEL_REQUESTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 const LOOP_SLEEP: Duration = Duration::from_millis(5);
 const RTT_LOG_MS: u64 = 5000;
@@ -133,6 +135,35 @@ pub fn set_local_state(level: u32, class: u8, pos: [f32; 3], yaw: f32, cam: f32,
 /// Latest state of every remote player.
 pub fn remote_states() -> Vec<(u8, State)> {
     SESSION.lock().ok().and_then(|g| g.as_ref().map(|s| s.remote_states())).unwrap_or_default()
+}
+
+/// Host: the level name of the local game, "" outside a level.
+pub fn set_local_level_name(name: &str) {
+    if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
+        s.set_local_level_name(name);
+    }
+}
+
+/// Client: the level the host last reported.
+pub fn host_level_name() -> Option<String> {
+    SESSION.lock().ok().and_then(|g| g.as_ref().and_then(|s| s.host_level_name()))
+}
+
+/// This copy is a client of a host.
+pub fn is_client() -> bool {
+    SESSION.lock().ok().is_some_and(|g| g.as_ref().is_some_and(|s| !s.is_host()))
+}
+
+/// Client: tells the host our game switched to `name`.
+pub fn request_level(name: &str) {
+    if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
+        s.request_level(name);
+    }
+}
+
+/// Host: the level names clients asked us to follow since the last call.
+pub fn take_level_requests() -> Vec<String> {
+    LEVEL_REQUESTS.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default()
 }
 
 /// Everything `start` needs besides the mode.
@@ -370,6 +401,11 @@ fn run_loop(sock: &UdpSocket, sim: Option<SimQueue>, auto: Option<&Auto>) -> Opt
                 }
                 Event::SaveBad => log!("net: save: crc mismatch; asking again"),
                 Event::SaveSent { id, bytes } => log!("net: save: sent {bytes} bytes to player {id}"),
+                Event::LevelRequested { name, .. } => {
+                    if let Ok(mut q) = LEVEL_REQUESTS.lock() {
+                        q.push(name.clone());
+                    }
+                }
                 Event::Discovered { from, build, host: true, players: 1, name } if alone => {
                     if let (Some(a), SocketAddr::V4(f)) = (auto, from) {
                         let other = (*f.ip(), f.port());
@@ -443,6 +479,7 @@ fn log_event(e: &Event, now_ms: u64, rtt_logged: &mut HashMap<u8, u64>) {
                 log!("net: rtt player {id} {ms} ms");
             }
         }
+        Event::LevelRequested { id, name } => log!("net: player {id} switched to level {name:?}"),
         Event::Discovered { .. } | Event::SaveSent { .. } | Event::SaveReceived(_) | Event::SaveMissing | Event::SaveBad => {}
     }
 }

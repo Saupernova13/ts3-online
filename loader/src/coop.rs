@@ -2,14 +2,14 @@
 //! XInput pad fed from the network, so the game's own co-op code runs unchanged (FINDINGS 9).
 use crate::game::*;
 use crate::hooks::bind_joining_avatar;
-use crate::log;
+use crate::{hooks, log};
 use crate::net::proto::{level_hash, Pad, State, CLASS_UNKNOWN};
 use crate::{net, pad};
 use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const RETRY_US: u64 = 2_000_000;
 const LOG_US: u64 = 1_000_000;
@@ -43,6 +43,10 @@ const PREPARE_DIST: f32 = 2.0;
 const SLOTS: [usize; 3] = [1, 2, 3];
 /// Avatar byte that says whether controls are enabled.
 const CONTROLS_ON: u64 = 0x428;
+/// A client follows the host's level once the two have differed this long.
+const FOLLOW_AFTER: Duration = Duration::from_millis(1500);
+/// No level follow this soon after a level switch of this copy.
+const FOLLOW_COOLDOWN: Duration = Duration::from_secs(15);
 
 struct Class {
     /// NUL-terminated class name, as stored in the avatar's properties.
@@ -81,6 +85,8 @@ struct Partner {
     last_press_log_us: u64,
     last_face_us: u64,
     carry: CarryWatch,
+    /// owner gone or elsewhere: the avatar stays, idle, until the owner returns or the level ends
+    parked: bool,
 }
 
 /// Notices when a partner carry state disagrees with its owner for a while.
@@ -115,6 +121,7 @@ impl Partner {
     fn new(slot: usize) -> Partner {
         Partner {
             slot,
+            parked: false,
             avatar: 0,
             actor_id: 0,
             class: 0,
@@ -169,6 +176,12 @@ static STICK_SIGN: AtomicI32 = AtomicI32::new(1);
 static STEER: AtomicBool = AtomicBool::new(true);
 static STEER_X: AtomicI32 = AtomicI32::new(1);
 static STEER_Y: AtomicI32 = AtomicI32::new(1);
+/// Since when the client's level differs from the host's (both in a level).
+static MISMATCH_SINCE: Mutex<Option<Instant>> = Mutex::new(None);
+/// When this copy last switched level, by its own game or by following.
+static LAST_SWITCH: Mutex<Option<Instant>> = Mutex::new(None);
+/// Hash of the level seen last frame, to log level changes.
+static LAST_LEVEL: AtomicU32 = AtomicU32::new(0);
 
 /// `net_steer`, `net_steer_x`, `net_steer_y`.
 pub fn set_steer(on: bool, x: i32, y: i32) {
@@ -367,13 +380,82 @@ unsafe fn class_of(avatar: u64) -> Option<usize> {
     CLASSES.iter().position(|c| stricmp(cls as *const c_char, c.class.as_ptr() as *const c_char) == 0)
 }
 
-/// Hash of the current level's name, 0 outside a level.
-unsafe fn local_level() -> u32 {
+/// Name of the current level, empty outside a level.
+unsafe fn local_level_name() -> String {
     let name = level_name();
     if name == 0 {
-        return 0;
+        return String::new();
     }
-    level_hash(&CStr::from_ptr(name as *const c_char).to_string_lossy())
+    CStr::from_ptr(name as *const c_char).to_string_lossy().into_owned()
+}
+
+/// A level players play in; the front end and the story game board (`gui_*`) are menus.
+pub fn is_play_level(name: &str) -> bool {
+    !name.is_empty() && !name.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("gui_")) && !name.eq_ignore_ascii_case("frontend")
+}
+
+/// The level name a client should switch to: both sides are in a level, the levels differ for
+/// `FOLLOW_AFTER`, the host's name matches the hash its state carries, and this copy has not
+/// switched within `FOLLOW_COOLDOWN`.
+pub fn decide_follow(local_hash: u32, host_hash: u32, host_name: Option<&str>, mismatch_for: Duration, since_switch: Duration) -> Option<String> {
+    if local_hash == 0 || host_hash == 0 || local_hash == host_hash {
+        return None;
+    }
+    let name = host_name.filter(|n| level_hash(n) == host_hash)?;
+    (mismatch_for >= FOLLOW_AFTER && since_switch >= FOLLOW_COOLDOWN).then(|| name.to_string())
+}
+
+fn note_switch() {
+    if let Ok(mut t) = LAST_SWITCH.lock() {
+        *t = Some(Instant::now());
+    }
+}
+
+/// A switch the game itself posted (runs on every `SwitchLevel` post, before the game handles it).
+pub fn on_local_switch(name: &str) {
+    note_switch();
+    if net::is_client() && is_play_level(name) {
+        net::request_level(name);
+    }
+}
+
+unsafe fn post_switch_level(name: &str) {
+    hooks::call_broadcast(global(EVENTS), b"SwitchLevel\0".as_ptr() as u64, leak_cstr(name), 0);
+}
+
+/// Client: how long the local and host levels have differed (zero when they match or either is unset).
+fn mismatch_duration(local: u32, host: u32, now: Instant) -> Duration {
+    let Ok(mut since) = MISMATCH_SINCE.lock() else { return Duration::ZERO };
+    if local == 0 || host == 0 || local == host {
+        *since = None;
+        return Duration::ZERO;
+    }
+    now.saturating_duration_since(*since.get_or_insert(now))
+}
+
+/// Level sync: a client follows the host's level, the host follows a client's switch.
+unsafe fn follow_levels(local: u32) {
+    let now = Instant::now();
+    if net::is_client() {
+        let host = net::remote_states().into_iter().find(|(id, _)| *id == 0).map_or(0, |(_, s)| s.level);
+        let mismatch = mismatch_duration(local, host, now);
+        let since_switch = LAST_SWITCH.lock().ok().and_then(|t| *t).map_or(Duration::MAX, |t| now.saturating_duration_since(t));
+        let host_name = net::host_level_name();
+        if let Some(name) = decide_follow(local, host, host_name.as_deref(), mismatch, since_switch) {
+            log!("coop: following the host to level {name}");
+            note_switch();
+            mismatch_duration(0, 0, now);
+            post_switch_level(&name);
+        }
+        return;
+    }
+    for name in net::take_level_requests() {
+        if local != 0 && is_play_level(&name) && local != level_hash(&name) {
+            log!("coop: a client changed level, following to {name}");
+            note_switch();
+            post_switch_level(&name);
+        }
+    }
 }
 
 fn forget_pads() {
@@ -384,8 +466,25 @@ fn forget_pads() {
 
 /// Per-frame work on the game thread: publish the local player, bind, feed and correct partners.
 pub unsafe fn update() {
+    let raw = local_level_name();
+    let level = level_hash(&raw);
+    let switched = LAST_LEVEL.swap(level, Ordering::Relaxed) != level;
+    if switched {
+        log!("coop: level {raw:?}");
+    }
+    let name = if is_play_level(&raw) { raw } else { String::new() };
+    let level = level_hash(&name);
+    net::set_local_level_name(&name);
+    follow_levels(level);
     let Ok(mut guard) = PARTNERS.lock() else { return };
     let partners = guard.get_or_insert_with(HashMap::new);
+    if switched && !partners.is_empty() {
+        // the name changes when the switch is posted; the coming teardown frees the partner
+        // avatars; removing them here first was followed by a crash (FINDINGS 10)
+        log!("coop: level switch: {} partner(s) left to the level teardown", partners.len());
+        partners.clear();
+        forget_pads();
+    }
     let mgr = global(MGR_PTR);
     let p0 = if mgr != 0 { slot_avatar(mgr, 0) } else { 0 };
 
@@ -397,7 +496,6 @@ pub unsafe fn update() {
         forget_pads();
         return;
     }
-    let level = local_level();
     let own_class = class_of(p0);
     let pos = [rd_f32(p0 + 0x80), rd_f32(p0 + 0x84), rd_f32(p0 + 0x88)];
     let yaw = yaw_from_quat(rd_f32(p0 + 0x94), rd_f32(p0 + 0x9c));
@@ -409,10 +507,14 @@ pub unsafe fn update() {
 
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;
     let remote = net::remote_states();
-    let gone: Vec<u8> = partners.keys().copied().filter(|id| !remote.iter().any(|(r, _)| r == id)).collect();
-    for id in gone {
-        if let Some(p) = partners.remove(&id) {
-            unbind(mgr, id, &p, "left");
+    for (id, p) in partners.iter_mut() {
+        if !remote.iter().any(|(r, _)| r == id) {
+            park(*id, p, "left");
+        }
+    }
+    for (id, _) in &remote {
+        if !partners.contains_key(id) {
+            adopt_parked(partners, *id, &remote);
         }
     }
     for (id, st) in remote {
@@ -426,12 +528,12 @@ pub unsafe fn update() {
             }
         };
         if st.level != level || level == 0 {
-            if p.avatar != 0 {
-                unbind(mgr, id, p, "is in another level");
-                p.avatar = 0;
-            }
-            pad::set_remote_pad(p.slot, None);
+            park(id, p, "is in another level");
             continue;
+        }
+        if p.parked {
+            p.parked = false;
+            log!("coop: player {id} is back: slot {} avatar {:#x}", p.slot, p.avatar);
         }
         let fresh = p.track(st.seq, st.pos, now);
         if p.avatar != 0 && slot_avatar(mgr, p.slot as u64) != p.avatar {
@@ -536,20 +638,26 @@ fn class_name(c: usize) -> String {
     CLASSES.get(c).map_or(String::new(), |c| String::from_utf8_lossy(&c.class[..c.class.len() - 1]).into_owned())
 }
 
-/// Leaves the slot the way the game does for a leaving player, then removes the avatar.
-unsafe fn unbind(mgr: u64, id: u8, p: &Partner, why: &str) {
+/// A newcomer takes over the avatar of a player who left, instead of a fresh slot next to it.
+fn adopt_parked(partners: &mut HashMap<u8, Partner>, id: u8, remote: &[(u8, State)]) {
+    let old = partners.iter().find(|(i, p)| p.parked && p.avatar != 0 && !remote.iter().any(|(r, _)| r == *i)).map(|(i, _)| *i);
+    let Some(old) = old.and_then(|o| partners.remove(&o).map(|p| (o, p))) else { return };
+    let (old_id, p) = old;
+    let mut q = Partner::new(p.slot);
+    (q.avatar, q.actor_id, q.class, q.parked) = (p.avatar, p.actor_id, p.class, true);
+    log!("coop: player {id} takes over slot {} (avatar {:#x}) from player {old_id}", q.slot, q.avatar);
+    partners.insert(id, q);
+}
+
+/// Leaves a partner idle in its slot. Removing an avatar mid-level drops the player count, and in
+/// wt_stuntpark that crashed the game a few seconds later (FINDINGS 10); the level teardown frees it.
+fn park(id: u8, p: &mut Partner, why: &str) {
     pad::set_remote_pad(p.slot, None);
-    if p.avatar == 0 {
-        return;
-    }
-    if slot_avatar(mgr, p.slot as u64) == p.avatar {
-        assign_avatar(mgr, p.slot as u32, 0);
-        if registry_get(p.actor_id) == p.avatar {
-            remove_avatar(p.avatar);
+    if !p.parked {
+        p.parked = true;
+        if p.avatar != 0 {
+            log!("coop: player {id} {why}: slot {} parked (avatar {:#x})", p.slot, p.avatar);
         }
-        log!("coop: player {id} {why}: slot {} released, avatar {:#x} removed", p.slot, p.avatar);
-    } else {
-        log!("coop: player {id} {why}: slot {} no longer holds avatar {:#x}", p.slot, p.avatar);
     }
 }
 
@@ -854,6 +962,38 @@ mod tests {
         assert!(!w.check(2, 2, 1_600_000)); // agreement resets
         assert!(!w.check(0, 1, 1_700_000));
         assert!(w.check(0, 1, 2_200_000));
+    }
+
+    #[test]
+    fn menus_are_not_play_levels() {
+        assert!(is_play_level("westerntown"));
+        assert!(is_play_level("st_train"));
+        assert!(!is_play_level("gui_storymode_boardgame"));
+        assert!(!is_play_level("GUI_ToyBarn"));
+        assert!(!is_play_level("frontend"));
+        assert!(!is_play_level(""));
+        assert!(is_play_level("gu"));
+    }
+
+    #[test]
+    fn follow_needs_a_lasting_mismatch_between_two_levels() {
+        let (toybox, daycare) = (level_hash("ST_ToyBox"), level_hash("ST_Daycare"));
+        let (long, never) = (Duration::from_secs(2), Duration::MAX);
+        let go = |l, h, n: Option<&str>, m, s| decide_follow(l, h, n, m, s);
+        assert_eq!(go(toybox, daycare, Some("ST_Daycare"), long, never).as_deref(), Some("ST_Daycare"));
+        // too soon, or cooling down after a switch
+        assert_eq!(go(toybox, daycare, Some("ST_Daycare"), Duration::from_millis(1499), never), None);
+        assert_eq!(go(toybox, daycare, Some("ST_Daycare"), FOLLOW_AFTER, never).as_deref(), Some("ST_Daycare"));
+        assert_eq!(go(toybox, daycare, Some("ST_Daycare"), long, Duration::from_millis(14_999)), None);
+        assert!(go(toybox, daycare, Some("ST_Daycare"), long, FOLLOW_COOLDOWN).is_some());
+        // front end or loading on either side, or the same level
+        assert_eq!(go(0, daycare, Some("ST_Daycare"), long, never), None);
+        assert_eq!(go(toybox, 0, Some(""), long, never), None);
+        assert_eq!(go(toybox, toybox, Some("ST_ToyBox"), long, never), None);
+        // the reported name must be the one the state hash belongs to
+        assert_eq!(go(toybox, daycare, None, long, never), None);
+        assert_eq!(go(toybox, daycare, Some("ST_Attic"), long, never), None);
+        assert_eq!(go(toybox, daycare, Some("st_daycare"), long, never).as_deref(), Some("st_daycare"));
     }
 
     #[test]

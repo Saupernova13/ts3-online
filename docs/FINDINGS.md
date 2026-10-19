@@ -454,7 +454,7 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   the placing handler resolves its target this way, so a stored id survives a level change safely.
 - **[obs] Verified in game (2026-10-17):** with `enable=instances`, copy 1 started from Steam and copy 2
   started through Explorer run side by side, each with its own number, log, pad mapping and window
-  rect; copy 2's saves go to `%LOCALAPPDATA%	s3online\copy2`. Pad isolation holds: a copy ignores
+  rect; copy 2's saves go to `%LOCALAPPDATA%\ts3online\copy2`. Pad isolation holds: a copy ignores
   the other copy's pad.
 - **[obs] Only the focused copy reads its pad.** An unfocused copy keeps running (attract demo at
   about 15 fps) but ignores its own pad. `GetFocus` is only used for the cursor, and the XInput
@@ -505,5 +505,29 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `LoadLevel` (3 arguments) with the event system (`0x1405cc7d0`). Leaving the avatar select for Toy
   Box posts `SwitchLevel` with the string `"WesternTown"` (`0x14012e800`, also sets `0x140992e77`);
   other posters: `0x140129600`, `0x1406a67a0` (choreography), `0x1401278d0`.
+- **[obs] `SwitchLevel` can be posted with a level name.** Posting it from the dev command file with
+  the level name as argument reloads that copy's level in about 5 s, and the online partner re-binds
+  afterwards (level teardown resets the slots; `level_player_setup` and `bind_joining_avatar` run
+  again). Entering Toy Box from the game board posts `SetupLaunch` (level props `filename`), not
+  `SwitchLevel`.
 - **[obs] Save size.** The whole save is one ~20 KB file (`savedata\Saved Game`) plus
   `newsettings.bin`, small enough to send at connect.
+- **[obs] Level names (2026-10-19, `coop: level` log).** `level_name()` (`0x1405bb6a0`) reads
+  `gui_storymode_boardgame` on the story game board, `westerntown` in Toy Box and `wt_stuntpark` in the
+  stunt park; a fresh board launch can pass through `st_train`. The name changes the moment
+  `SwitchLevel` is posted, before the old level is torn down. Follow treats `gui_*` and `frontend`
+  as menus.
+- **[obs] Removing an avatar mid-level can crash later (2026-10-19, in game).** In `wt_stuntpark`, with
+  2 players, removing the partner (`assign_avatar(slot, 0)` + `remove_avatar`) dropped the player
+  count to 1 and the copy crashed about 4 s later (c0000005 at `0x1401bdc5e`). The faulting function
+  `0x1401bdb60` (called each frame from `0x14021ed70`) checks two player entries for shared vehicle
+  seats ("Occupied") and, with one view (`[0x140b2ef50]+4 == 1`), dereferences
+  `0x1405bc790([0x140b2ef20], 0)`, which returns null when neither per-player flag at `+0x48`/`+0x50`
+  is set for player 0 (`queries/104`, `105`). One copy alone in `wt_stuntpark` runs fine, and leaving the
+  partner avatar to the level teardown, or parking it idle when its owner leaves, avoids the crash.
+  [unk] Why the flag for player 0 is cleared by the removal.
+- **[obs] Stats table (`queries/100`-`102`).** `[0x140b2fdb8]` holds the game stats: entries of 0x60
+  bytes at `+8`, count at `+0x10`; name inline at `+4`, type at `+0x3c` (0 add, 1 max, 2 min, 3 mean,
+  4 average, 5 capped add with the cap at `+0x44`), value at `+0x4c` (int or float), times changed at
+  `+0x48`. `0x140632130(stats, idx, int)` and `0x1406322a0(stats, idx, float)` apply a value by type,
+  `0x140617bc0(stats, idx)` reads one. Toy Box gold shows as `Stat_GOLD_COLLECTED` (index 47).

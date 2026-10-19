@@ -10,6 +10,8 @@ const HELLO_US: u64 = 500_000;
 const PING_US: u64 = 1_000_000;
 const STATE_US: u64 = 16_000;
 const SAVE_REQ_US: u64 = 300_000;
+/// The host repeats its level name this often.
+const LEVEL_US: u64 = 1_000_000;
 /// Chunks sent per `SaveRequest`.
 const SAVE_BURST: usize = 64;
 
@@ -35,6 +37,8 @@ pub enum Event {
     SaveMissing,
     /// Client: a complete download failed its CRC; it restarts.
     SaveBad,
+    /// Host: a client's game switched to this level and asks us to follow.
+    LevelRequested { id: u8, name: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +96,11 @@ pub struct Session {
     save_done: bool,
     rx: Option<Reassembler>,
     last_save_req: Option<u64>,
+    /// host: the level the local game is in
+    local_level: String,
+    last_level: Option<u64>,
+    /// client: the level the host last reported
+    host_level: Option<String>,
 }
 
 /// `new` is ahead of `old` in wrapping sequence order.
@@ -126,6 +135,9 @@ impl Session {
             save_done: false,
             rx: None,
             last_save_req: None,
+            local_level: String::new(),
+            last_level: None,
+            host_level: None,
         }
     }
 
@@ -176,6 +188,38 @@ impl Session {
             pad.buttons |= old.pad.buttons;
         }
         self.pending = Some(Local { level, class, pos, yaw, cam, pad, flags });
+    }
+
+    /// Host: the level name of the local game ("" outside a level); a change goes out at once.
+    pub fn set_local_level_name(&mut self, name: &str) {
+        let name = proto::clamp_level(name);
+        if self.local_level == name {
+            return;
+        }
+        self.local_level = name.to_string();
+        if self.is_host() {
+            self.send_level_to_all();
+        }
+    }
+
+    /// Client: the level name the host last reported.
+    pub fn host_level_name(&self) -> Option<String> {
+        self.host_level.clone()
+    }
+
+    /// Client: asks the host to follow our game to `name`.
+    pub fn request_level(&mut self, name: &str) {
+        if let (Some(host), Link::Connected) = (self.host_addr, self.link) {
+            self.send(host, &Msg::LevelRequest { name: name.to_string() });
+        }
+    }
+
+    fn send_level_to_all(&mut self) {
+        let m = Msg::Level { name: self.local_level.clone() };
+        let addrs: Vec<SocketAddr> = self.peers.iter().map(|p| p.addr).collect();
+        for a in addrs {
+            self.send(a, &m);
+        }
     }
 
     pub fn drain_outgoing(&mut self) -> Vec<(SocketAddr, Vec<u8>)> {
@@ -299,6 +343,7 @@ impl Session {
             }
             Msg::Bye { id: b } if b == id => self.drop_client(i),
             Msg::SaveRequest { have } => self.serve_save(i, &have),
+            Msg::LevelRequest { name } => self.events.push(Event::LevelRequested { id, name }),
             _ => {}
         }
     }
@@ -319,6 +364,8 @@ impl Session {
         self.roster.push((id, name.clone()));
         self.roster.sort_by_key(|(i, _)| *i);
         self.send(from, &Msg::Welcome { id });
+        let level = Msg::Level { name: self.local_level.clone() };
+        self.send(from, &level);
         self.events.push(Event::PeerJoined { id, name });
         self.broadcast_roster();
     }
@@ -356,6 +403,9 @@ impl Session {
         while let Some(i) = self.peers.iter().position(|p| now.saturating_sub(p.last_seen) >= TIMEOUT_US) {
             self.drop_client(i);
         }
+        if Self::due(&mut self.last_level, now, LEVEL_US) {
+            self.send_level_to_all();
+        }
         self.tick_traffic(now);
     }
 
@@ -387,6 +437,7 @@ impl Session {
                 self.store_state(s);
             }
             Msg::Bye { id: 0 } => self.host_lost(),
+            Msg::Level { name } => self.host_level = Some(name),
             Msg::SaveInfo { total, crc } if self.want_save && !self.save_done => {
                 if total == 0 {
                     self.save_done = true;
@@ -439,6 +490,7 @@ impl Session {
         self.roster.clear();
         self.states.clear();
         self.rtt.clear();
+        self.host_level = None;
         self.last_hello = None;
         self.last_ping = None;
         self.rx = None;
@@ -847,5 +899,63 @@ mod tests {
         let rosters: Vec<_> = msgs(&mut host).into_iter().filter(|(_, m)| matches!(m, Msg::Roster { .. })).collect();
         assert_eq!(rosters.len(), 1);
         assert_eq!(rosters[0].0, addr(2));
+    }
+
+    fn levels(s: &mut Session) -> Vec<(SocketAddr, String)> {
+        msgs(s).into_iter().filter_map(|(a, m)| if let Msg::Level { name } = m { Some((a, name)) } else { None }).collect()
+    }
+
+    #[test]
+    fn host_level_reaches_clients_on_change_and_every_second() {
+        let (mut host, mut a, b) = two_clients();
+        host.set_local_level_name("ST_ToyBox");
+        let sent = levels(&mut host);
+        assert_eq!(sent, vec![(addr(1), "ST_ToyBox".to_string()), (addr(2), "ST_ToyBox".to_string())]);
+        a.handle(addr(H), &encode(&Msg::Level { name: "ST_ToyBox".into() }), 0);
+        assert_eq!(a.host_level_name().as_deref(), Some("ST_ToyBox"));
+        assert_eq!(b.host_level_name().as_deref(), Some("")); // from its welcome, before the change
+        // unchanged: nothing new; the periodic resend repeats it
+        host.set_local_level_name("ST_ToyBox");
+        assert!(levels(&mut host).is_empty());
+        host.tick(10 * MS);
+        host.drain_outgoing();
+        host.tick(500 * MS);
+        assert!(levels(&mut host).is_empty());
+        host.tick(1010 * MS);
+        assert_eq!(levels(&mut host).len(), 2);
+        // an unset level is sent as empty
+        host.set_local_level_name("");
+        assert_eq!(levels(&mut host)[0].1, "");
+    }
+
+    #[test]
+    fn newly_welcomed_client_gets_the_host_level() {
+        let mut host = Session::host(BUILD, "h");
+        host.set_local_level_name("ST_Daycare");
+        let mut c = Session::client(BUILD, "bob", addr(H));
+        connect(&mut host, &mut c, addr(1), addr(H), 0);
+        assert_eq!(c.host_level_name().as_deref(), Some("ST_Daycare"));
+    }
+
+    #[test]
+    fn client_level_request_reaches_the_host() {
+        let (mut host, mut a, _) = two_clients();
+        a.request_level("ST_Attic");
+        deliver(addr(1), &mut a, addr(H), &mut host, 5 * MS);
+        assert_eq!(host.drain_events(), vec![Event::LevelRequested { id: 1, name: "ST_Attic".into() }]);
+        // a stranger's request is ignored, and an unconnected client sends nothing
+        host.handle(addr(77), &encode(&Msg::LevelRequest { name: "x".into() }), 6 * MS);
+        assert!(host.drain_events().is_empty());
+        let mut lone = Session::client(BUILD, "c", addr(H));
+        lone.request_level("x");
+        assert!(lone.drain_outgoing().is_empty());
+    }
+
+    #[test]
+    fn host_loss_forgets_the_host_level() {
+        let (_, mut a, _) = two_clients();
+        a.handle(addr(H), &encode(&Msg::Level { name: "ST_ToyBox".into() }), 0);
+        a.tick(5000 * MS);
+        assert_eq!(a.host_level_name(), None);
     }
 }

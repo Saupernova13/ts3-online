@@ -1,7 +1,9 @@
 # ts3-online
 
-**4-player co-op for *Disney/Pixar Toy Story 3* on PC, working toward real online play with each
-player on their own PC and screen.**
+**Online co-op for *Disney/Pixar Toy Story 3* on PC: each player on their own PC and screen, as
+co-op partners in one game. Also 4-player local split screen.**
+
+Players: see **[docs/PLAYING.md](docs/PLAYING.md)** to install and play online over a tailnet.
 
 The PC release (*Toy Story 3 Complete Edition*, Steam app 4049180) has 2-player local split
 screen and no network play. This project raises the player limit to 4 with a runtime patch loader,
@@ -20,7 +22,10 @@ your own install.
 | Force 4 quarters for streaming (`enable=quadrants`) | built, not yet tested in game |
 | Borderless window placement (`window=`) | built, not yet tested in game |
 | HUD for players 3/4 (health, ammo, compass) | missing |
-| Native online play (host and clients, one player per copy, no streaming) | designed ([NETCODE.md](docs/NETCODE.md)) |
+| Online co-op: each player on their own PC, partners run, jump, carry and throw each other | working (tested with 2 copies) |
+| Online: find the host on a tailnet with no addresses, play the host's save | working |
+| Online: follow each other between levels | working |
+| Online: shared enemies, gold and missions | not yet (each PC runs its own world) |
 | Streaming each quarter to a remote player (fallback) | designed, not built ([PLAN, phase 6](docs/PLAN.md)) |
 
 Tested in Toy Box with four virtual Xbox 360 pads. Story levels have not been played with 4
@@ -36,10 +41,10 @@ players yet; their scripts assume at most two avatars, so expect rough edges the
    controls and level-teardown code that hardcodes player 1 with Rust functions that take the
    player index. The renderer and input already handle 4 views and 4 pads. Every change is listed
    in [docs/PATCHES.md](docs/PATCHES.md).
-3. **Online (planned).** Every player runs their own copy with one local player, full screen.
-   One copy hosts and the others connect to it. Remote players appear in your world as proxy
-   avatars in player slots 2-4, driven by their owner's input and position over UDP, and the host
-   owns the shared world. See [docs/NETCODE.md](docs/NETCODE.md). Streaming each player's quarter
+3. **Online.** Every player runs their own copy with one local player, full screen.
+   One copy hosts and the others connect to it over UDP. Remote players are real co-op partners in
+   player slots 2-4: their owner's pad drives a virtual pad in your copy, steered to the owner's
+   position, so the game's own co-op code runs them. See [docs/NETCODE.md](docs/NETCODE.md). Streaming each player's quarter
    of one host's screen ([docs/PLAN.md](docs/PLAN.md), phase 6) is the fallback.
 
 ## Requirements

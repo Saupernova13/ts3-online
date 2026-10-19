@@ -64,14 +64,21 @@ pub enum Decision {
 struct Shared {
     role: Role,
     save: SaveState,
+    /// the connect menu is open: nobody times out waiting for the role
+    menu_open: bool,
 }
 
-static SHARED: Mutex<Shared> = Mutex::new(Shared { role: Role::Off, save: SaveState::Waiting });
+static SHARED: Mutex<Shared> = Mutex::new(Shared { role: Role::Off, save: SaveState::Waiting, menu_open: false });
 static CHANGED: Condvar = Condvar::new();
 
 /// Marks the role as undecided; call before anything may wait for it.
 pub fn expect_role() {
     set_shared(|s| s.role = Role::Pending);
+}
+
+/// The connect menu is open (or closed); `wait_decision` does not count time while it is open.
+pub fn set_menu_open(open: bool) {
+    set_shared(|s| s.menu_open = open);
 }
 
 fn set_role(role: Role) {
@@ -90,9 +97,9 @@ fn set_shared(f: impl FnOnce(&mut Shared)) {
 }
 
 /// Waits (up to `timeout`) for the role and, for a client, the host save; says which folder to use.
-/// Never blocks when networking is off.
+/// Never blocks when networking is off. The timeout only starts once the connect menu is closed.
 pub fn wait_decision(timeout: Duration) -> Decision {
-    let deadline = Instant::now() + timeout;
+    let mut deadline: Option<Instant> = None;
     let Ok(mut g) = SHARED.lock() else { return Decision::Normal };
     loop {
         match (g.role, g.save) {
@@ -100,7 +107,16 @@ pub fn wait_decision(timeout: Duration) -> Decision {
             (Role::Client, SaveState::Ready) => return Decision::Session,
             _ => {}
         }
-        let Some(left) = deadline.checked_duration_since(Instant::now()) else { return Decision::Normal };
+        if g.menu_open {
+            deadline = None;
+            g = match CHANGED.wait(g) {
+                Ok(g) => g,
+                Err(_) => return Decision::Normal,
+            };
+            continue;
+        }
+        let end = *deadline.get_or_insert_with(|| Instant::now() + timeout);
+        let Some(left) = end.checked_duration_since(Instant::now()) else { return Decision::Normal };
         g = match CHANGED.wait_timeout(g, left) {
             Ok((g, _)) => g,
             Err(_) => return Decision::Normal,
@@ -267,7 +283,7 @@ pub fn start_with(net: &Net, opts: Options, build: u64) {
                 Err(e) => return fail(&format!("cannot bind: {e}")),
             }
         }
-        Net::Auto => {
+        Net::Auto | Net::Menu => {
             let auto = AutoOpts { bind_port: opts.port, probe_port: opts.port, peers: opts.peers.clone(), probe: Duration::from_millis(2500), tailscale: true };
             if let Err(e) = std::thread::Builder::new().name("ts3online-net".into()).spawn(move || auto_main(auto, opts, build, sim)) {
                 set_role(Role::Off);
@@ -712,6 +728,7 @@ mod tests {
         set_shared(|s| {
             s.role = Role::Off;
             s.save = SaveState::Waiting;
+            s.menu_open = false;
         });
         assert_eq!(wait_decision(Duration::from_secs(5)), Decision::Normal); // off: no wait
         set_role(Role::Pending);
@@ -729,6 +746,26 @@ mod tests {
         set_role(Role::Host);
         set_save(SaveState::Ready);
         assert_eq!(wait_decision(Duration::from_secs(5)), Decision::Normal); // a host keeps its folder
+        // an open menu stops the clock: a role still pending after the timeout would have given up
+        set_role(Role::Pending);
+        set_save(SaveState::Waiting);
+        set_menu_open(true);
+        let h = std::thread::spawn(|| wait_decision(Duration::from_millis(100)));
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(!h.is_finished(), "waited out its timeout while the menu was open");
+        set_role(Role::Client);
+        set_save(SaveState::Ready);
+        set_menu_open(false);
+        assert_eq!(h.join().unwrap_or(Decision::Normal), Decision::Session);
+        // closing the menu without a decision starts the timeout from then on
+        set_role(Role::Pending);
+        set_menu_open(true);
+        let h = std::thread::spawn(|| wait_decision(Duration::from_millis(150)));
+        std::thread::sleep(Duration::from_millis(300));
+        let t0 = Instant::now();
+        set_menu_open(false);
+        assert_eq!(h.join().unwrap_or(Decision::Session), Decision::Normal);
+        assert!(t0.elapsed() >= Duration::from_millis(140));
         set_role(Role::Off);
         set_save(SaveState::Waiting);
     }

@@ -107,16 +107,16 @@ if (Test-Path -LiteralPath $ini) {
     $clean = ($Name -replace '[^\w\- ]', '').Trim()
     if (-not $clean) { $clean = 'player' }
     $lines = @(
-        '# ts3-online: every player runs their own copy; the first copy to start hosts.',
-        '# net=auto finds the other copies on your Tailscale tailnet (or list them in net_peers).',
-        'net=auto',
+        '# ts3-online: every player runs their own copy. net=menu shows a window at start that lists the',
+        '# games on your Tailscale tailnet or LAN: pick one and Join, or Host. (net=auto skips the window.)',
+        'net=menu',
         "name=$clean"
     )
     if ($Port -ne 27777) { $lines += "net_port=$Port" }
     $key = if ($Password) { $Password.Trim() } else { '' }
     if ($key) { $lines += "net_key=$key" }
     [IO.File]::WriteAllLines($ini, $lines)
-    Write-Host "Wrote $ini (net=auto, name=$clean)."
+    Write-Host "Wrote $ini (net=menu, name=$clean)."
     if ($key) { Write-Host 'Password set: every player must use the same password (net_key in ts3online.ini).' }
 }
 

@@ -9,22 +9,35 @@ including picking each other up and throwing each other.
 - The Steam version of *Toy Story 3 Complete Edition* on every PC (the current Steam build; the
   loader leaves any other build untouched).
 - An Xbox-style controller on every PC. Keyboard input is not sent to the other players yet.
-- Every PC on the same [Tailscale](https://tailscale.com) tailnet (free for personal use), or on
-  the same LAN.
+- A way for the PCs to reach each other: the same LAN, or [Tailscale](https://tailscale.com)
+  (free for personal use) for PCs in different places.
+
+## Set up Tailscale (PCs in different places, once)
+
+1. Every player installs Tailscale from <https://tailscale.com/download> and signs in.
+2. Put the PCs on one tailnet: either everyone signs in to the same Tailscale account, or the
+   host shares their PC with the other players (Tailscale admin console, **Machines**, the PC's
+   menu, **Share**) and they accept the invite.
+3. Check: `tailscale status` on each PC lists the other PC as online.
 
 ## Install (each PC)
 
-1. Back up your saves: `%APPDATA%\Disney\Toy Story 3 Complete Edition`.
-2. Unzip `ts3-online.zip` anywhere and run, in that folder:
+1. Download `ts3-online.zip` from the
+   [latest release](https://github.com/Saupernova13/ts3-online/releases/latest) and unzip it
+   anywhere.
+2. Double-click **`Setup.cmd`**. It:
+   - backs up your saves to `Documents\ts3-online save backup\<date>`;
+   - finds the game through Steam and copies `dinput8.dll` into its folder, next to a starter
+     `ts3online.ini`;
+   - says whether Tailscale is installed and connected;
+   - asks whether to let other players through the Windows Firewall (Windows asks for
+     administrator rights for that step only; say no and Windows asks again the first time you
+     host instead).
+3. To remove it, double-click **`Uninstall.cmd`**. It only deletes the DLL when it is ours.
 
-   ```
-   powershell -ExecutionPolicy Bypass -File install.ps1 -Name YourName
-   ```
-
-   This copies `dinput8.dll` into the game folder and writes `ts3online.ini` there with
-   `net=menu`. Add `-Firewall` from an administrator PowerShell to allow the game through the
-   Windows Firewall up front; otherwise allow it when Windows asks the first time.
-3. Uninstall with `install.ps1 -Uninstall`. It only removes the DLL if it is ours.
+If Setup cannot find the game (a non-Steam library layout), run
+`powershell -ExecutionPolicy Bypass -File install.ps1 -Setup -GameDir "<game folder>"`.
+`install.ps1` also takes `-Name`, `-Password`, `-Port`, `-Firewall` and `-Uninstall` on their own.
 
 ## Play
 

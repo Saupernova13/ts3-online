@@ -1,10 +1,12 @@
 //! Wire format: `b"TS3O"`, protocol version u16, message type u8, body. Little-endian, no padding.
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 4;
+pub const VERSION: u16 = 5;
 /// Largest `SaveChunk` payload we accept.
 pub const MAX_CHUNK: usize = 1200;
 pub const MAX_NAME: usize = 32;
+/// Longest level name on the wire.
+pub const MAX_LEVEL: usize = 64;
 
 pub const REFUSE_FULL: u8 = 1;
 pub const REFUSE_BUILD: u8 = 2;
@@ -23,6 +25,8 @@ const T_PROBE_REPLY: u8 = 10;
 const T_SAVE_REQUEST: u8 = 11;
 const T_SAVE_INFO: u8 = 12;
 const T_SAVE_CHUNK: u8 = 13;
+const T_LEVEL: u8 = 14;
+const T_LEVEL_REQUEST: u8 = 15;
 
 /// Controller state in the XINPUT_GAMEPAD layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -81,6 +85,10 @@ pub enum Msg {
     SaveRequest { have: Vec<u8> },
     SaveInfo { total: u32, crc: u32 },
     SaveChunk { total: u32, offset: u32, data: Vec<u8> },
+    /// Host to clients: the host's current level name, empty outside a level.
+    Level { name: String },
+    /// Client to host: "my game switched to this level, please follow".
+    LevelRequest { name: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +110,21 @@ pub fn clamp_name(name: &str) -> &str {
 
 fn put_name(out: &mut Vec<u8>, name: &str) {
     let n = clamp_name(name);
+    out.push(n.len() as u8);
+    out.extend_from_slice(n.as_bytes());
+}
+
+/// `name` cut to at most `MAX_LEVEL` bytes on a char boundary.
+pub fn clamp_level(name: &str) -> &str {
+    let mut end = name.len().min(MAX_LEVEL);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    &name[..end]
+}
+
+fn put_level(out: &mut Vec<u8>, name: &str) {
+    let n = clamp_level(name);
     out.push(n.len() as u8);
     out.extend_from_slice(n.as_bytes());
 }
@@ -177,6 +200,14 @@ pub fn encode(msg: &Msg) -> Vec<u8> {
             o.extend_from_slice(&(data.len() as u16).to_le_bytes());
             o.extend_from_slice(data);
         }
+        Msg::Level { name } => {
+            o.push(T_LEVEL);
+            put_level(&mut o, name);
+        }
+        Msg::LevelRequest { name } => {
+            o.push(T_LEVEL_REQUEST);
+            put_level(&mut o, name);
+        }
     }
     o
 }
@@ -211,6 +242,13 @@ impl<'a> Reader<'a> {
     fn name(&mut self) -> Option<String> {
         let n = self.u8()? as usize;
         if n > MAX_NAME {
+            return None;
+        }
+        Some(String::from_utf8_lossy(self.take(n)?).into_owned())
+    }
+    fn level(&mut self) -> Option<String> {
+        let n = self.u8()? as usize;
+        if n > MAX_LEVEL {
             return None;
         }
         Some(String::from_utf8_lossy(self.take(n)?).into_owned())
@@ -269,6 +307,8 @@ pub fn decode(bytes: &[u8]) -> Result<Msg, DecodeError> {
                 }
                 Msg::SaveChunk { total, offset, data: r.take(n)?.to_vec() }
             }
+            T_LEVEL => Msg::Level { name: r.level()? },
+            T_LEVEL_REQUEST => Msg::LevelRequest { name: r.level()? },
             _ => return None,
         })
     };
@@ -308,6 +348,9 @@ mod tests {
             Msg::SaveInfo { total: 19926, crc: 0xdead_beef },
             Msg::SaveChunk { total: 19926, offset: 2000, data: (0..=255u8).cycle().take(1000).collect() },
             Msg::SaveChunk { total: 5, offset: 0, data: Vec::new() },
+            Msg::Level { name: "ST_ToyBox".into() },
+            Msg::Level { name: String::new() },
+            Msg::LevelRequest { name: "ST_Daycare".into() },
         ]
     }
 
@@ -396,5 +439,20 @@ mod tests {
             Ok(Msg::Hello { name, .. }) => assert_eq!(name.len(), 31),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn level_names_are_clamped_on_char_boundaries() {
+        assert_eq!(clamp_level(&"x".repeat(100)).len(), MAX_LEVEL);
+        let long = format!("a{}", "\u{e9}".repeat(40)); // byte 64 falls inside a char
+        assert_eq!(clamp_level(&long).len(), 63);
+        match decode(&encode(&Msg::Level { name: long })) {
+            Ok(Msg::Level { name }) => assert_eq!(name.len(), 63),
+            other => panic!("{other:?}"),
+        }
+        let mut forged = encode(&Msg::LevelRequest { name: "ab".into() });
+        let at = forged.len() - 3;
+        forged[at] = 65;
+        assert_eq!(decode(&forged), Err(DecodeError::Malformed));
     }
 }

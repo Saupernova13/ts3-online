@@ -78,9 +78,19 @@ never puppets with interactions turned off.
 | H2 | Each copy publishes slot 0's transform; the others show an avatar placed every frame | done (T9) |
 | H3 | Co-op partners: the owner's pad state is sent every frame and fed to a virtual XInput pad 1-3; the remote avatar is bound to a player slot through the join path, so it moves, animates and interacts through the game's own code; the owner's position corrects drift; the `online` patch keeps one full-screen view of slot 0 | partners run, jump, pick each other up and throw on both screens |
 | H4 | Connect: `net=auto` finds a host among the online tailnet peers (`tailscale status`) or becomes the host; two hosts that meet merge; explicit `net=client:<tailnet name>:27777` still works | two PCs on one tailnet connect with the same ini and no addresses |
-| H5 | One world: the host sends its save at connect and the client plays it from a session folder without saving back, as local P2 plays P1's save; the client follows the host into its level (`SwitchLevel`, `0x14012e800`) | both copies load the same Toy Box with the same unlocks |
+| H5 | One world: the host sends its save at connect and the client plays it from a session folder without saving back, as local P2 plays P1's save; the client follows the host into its level (`SwitchLevel`, `0x14012e800`) | done (T11, T12) |
 | H6 | Shared world state, system by system: gold and pickups, enemies and NPCs owned by the host, missions, shops, rides and vehicles | both players see the same enemies, pickups and mission state |
 | H7 | Release: install/uninstall script, sample ini, README for players, 2-PC tailnet test | a friend installs it and plays |
+
+**Level follow (H5b).** The host sends `Level { name }` (its current level, empty outside one) to
+every client when it changes, once a second, and on welcome. A client whose level hash differs from the
+host's State level for 1.5 s, with both in a level and the host's name matching that hash, posts
+`SwitchLevel` with the host's name; it does so at most once per 15 s since its last switch. When a
+copy's own game posts `SwitchLevel`, a client sends `LevelRequest { name }` to the host, which follows
+if it is in another level. Our own posts bypass the detour, so following never echoes. Menus
+(`gui_*`, `frontend`) are not levels. A partner whose owner leaves or is in another level stays in
+its slot, idle ("parked"), until the owner returns or the level ends: removing an avatar mid-level
+can crash the game (FINDINGS 10). A newcomer takes over a parked avatar of a player who left.
 
 `net_sim=delay,jitter,loss` adds artificial latency and loss for testing on one PC.
 

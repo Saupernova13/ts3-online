@@ -1,6 +1,6 @@
 //! Access to the game's own memory and functions. All addresses are VAs of the analysed exe
 //! (image base 0x140000000) and are rebased with the runtime module base.
-use std::ffi::c_char;
+use std::ffi::{c_char, CString};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const IMAGE_BASE: u64 = 0x1_4000_0000;
@@ -26,6 +26,12 @@ pub const UI_PTR: u64 = 0x1_40b2_ef10;
 
 pub const SLOT_AVATAR_BASE: u64 = 0x1a0;
 pub const SLOT_STRIDE: u64 = 0x58;
+
+/// A NUL-terminated copy that is never freed, so the game may keep the pointer.
+pub fn leak_cstr(s: &str) -> u64 {
+    let c = CString::new(s.replace('\0', "")).unwrap_or_default();
+    Box::leak(c.into_boxed_c_str()).as_ptr() as u64
+}
 
 pub unsafe fn rd_u64(addr: u64) -> u64 {
     std::ptr::read_unaligned(addr as *const u64)

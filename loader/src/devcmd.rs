@@ -2,7 +2,6 @@
 //! and empties the file. For research: post game events by name and mark the log.
 use crate::game::*;
 use crate::{hooks, log};
-use std::ffi::CString;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -15,6 +14,8 @@ const EVERY: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cmd {
     Event { name: String, arg: Option<String> },
+    /// like `event`, but through the game's post entry, so the loader's own detour sees it
+    Post { name: String, arg: Option<String> },
     EventActor { name: String, actor: u64, arg: Option<String> },
     Log(String),
 }
@@ -27,7 +28,10 @@ pub fn cmd_path(local_app_data: &str, copy: u32) -> std::path::PathBuf {
     std::path::PathBuf::from(local_app_data).join("ts3online").join(format!("cmd.copy{copy}.txt"))
 }
 
-/// One command line: `event NAME [STR]`, `event_actor NAME ACTORID_HEX [STR]`, `log TEXT`.
+/// The game's broadcast post entry; with the hooks group applied it jumps into `hooks::post_broadcast`.
+const POST_BROADCAST: u64 = 0x1_4049_e160;
+
+/// One command line: `event NAME [STR]`, `post NAME [STR]`, `event_actor NAME ACTORID_HEX [STR]`, `log TEXT`.
 pub fn parse(line: &str) -> Result<Cmd, String> {
     let line = line.trim();
     let (verb, rest) = line.split_once(char::is_whitespace).map_or((line, ""), |(v, r)| (v, r.trim()));
@@ -38,6 +42,13 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
                 return Err("event needs a name".into());
             }
             Ok(Cmd::Event { name: name.into(), arg: arg.map(String::from) })
+        }
+        "post" => {
+            let (name, arg) = split_arg(rest);
+            if name.is_empty() {
+                return Err("post needs a name".into());
+            }
+            Ok(Cmd::Post { name: name.into(), arg: arg.map(String::from) })
         }
         "event_actor" => {
             let (name, rest) = split_arg(rest);
@@ -62,12 +73,6 @@ fn split_arg(s: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// A NUL-terminated copy that is never freed, so the game may keep the pointer.
-fn leak_cstr(s: &str) -> u64 {
-    let c = CString::new(s.replace('\0', "")).unwrap_or_default();
-    Box::leak(c.into_boxed_c_str()).as_ptr() as u64
-}
-
 unsafe fn run(cmd: &Cmd) {
     let events = global(EVENTS);
     match cmd {
@@ -84,6 +89,12 @@ unsafe fn run(cmd: &Cmd) {
                 Some(r) => log!("dev: event_actor {name} {actor:#x} {arg:?} -> {r:#x}"),
                 None => log!("dev: event_actor {name}: the post detour is not installed"),
             }
+        }
+        Cmd::Post { name, arg } => {
+            type Post4 = unsafe extern "system" fn(u64, u64, u64, u64) -> u8;
+            let post: Post4 = std::mem::transmute::<u64, Post4>(va(POST_BROADCAST));
+            let r = post(events, leak_cstr(name), arg.as_deref().map_or(0, leak_cstr), 0);
+            log!("dev: post {name} {arg:?} -> {r:#x}");
         }
         Cmd::Log(t) => log!("dev: log {t}"),
     }
@@ -127,6 +138,7 @@ mod tests {
         assert_eq!(parse("  event   Jump   some text here "), Ok(Cmd::Event { name: "Jump".into(), arg: Some("some text here".into()) }));
         assert_eq!(parse("event_actor Hit 1f2a"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x1f2a, arg: None }));
         assert_eq!(parse("event_actor Hit 0x10 STR"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x10, arg: Some("STR".into()) }));
+        assert_eq!(parse("post SwitchLevel westerntown"), Ok(Cmd::Post { name: "SwitchLevel".into(), arg: Some("westerntown".into()) }));
         assert_eq!(parse("log hello world"), Ok(Cmd::Log("hello world".into())));
         assert_eq!(parse("log"), Ok(Cmd::Log(String::new())));
     }

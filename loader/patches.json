@@ -2321,6 +2321,24 @@
    "note": "SetSplitScreenMode (0x1405f4700): movsxd rdi,ecx -> xor edi,edi; nop, so a networked copy keeps one full-screen viewport (view 0, the local player) whatever the player count"
   },
   {
+   "id": "online_14027b6b4",
+   "group": "online",
+   "rva": "0x27b6b4",
+   "orig": "e92b090000",
+   "new": "e9e9020000",
+   "kind": "bytes",
+   "note": "input driver update (0x14027b500): keyboard unreadable (window unfocused) -> skip to the controller loop instead of returning, so pads (and partners' virtual pads) keep updating without focus"
+  },
+  {
+   "id": "online_14027b910",
+   "group": "online",
+   "rva": "0x27b910",
+   "orig": "e9cf060000",
+   "new": "e98d000000",
+   "kind": "bytes",
+   "note": "input driver update (0x14027b500): mouse unreadable (window unfocused) -> skip to the controller loop instead of returning"
+  },
+  {
    "id": "instances_14027e154",
    "group": "instances",
    "rva": "0x27e154",

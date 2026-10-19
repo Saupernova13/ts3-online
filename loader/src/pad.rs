@@ -4,7 +4,7 @@ use crate::iat::{self, Entry};
 use crate::log;
 use crate::net::proto::Pad;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use windows_sys::Win32::System::Threading::GetCurrentProcessId;
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
@@ -211,9 +211,28 @@ pub fn install_net(base: u64, pad: Option<u32>) {
     log!("pad: virtual pads at indices 1-3; XInputSetState hooked: {s}");
 }
 
+static BASE: AtomicU64 = AtomicU64::new(0);
+
+/// Re-installs the import hooks the Steam overlay replaces a few seconds after start (FINDINGS 10).
+/// Cheap; call it every second or so from the game thread.
+pub fn reassert() {
+    let base = BASE.load(Ordering::Relaxed);
+    if base == 0 {
+        return;
+    }
+    unsafe {
+        iat::reassert(base, DLL, Entry::Ordinal(ORD_GET_STATE), get_state as *const () as usize, &ORIG_GET_STATE);
+        iat::reassert(base, DLL, Entry::Ordinal(ORD_GET_CAPABILITIES), get_capabilities as *const () as usize, &ORIG_GET_CAPS);
+        if VIRTUAL.load(Ordering::Relaxed) {
+            iat::reassert(base, DLL, Entry::Ordinal(ORD_SET_STATE), set_state as *const () as usize, &ORIG_SET_STATE);
+        }
+    }
+}
+
 /// Hooks both imports of the main module.
 pub fn install(base: u64, pad: u32) {
     PAD.store(pad, Ordering::Relaxed);
+    BASE.store(base, Ordering::Relaxed);
     let (g, c) = unsafe {
         (
             iat::hook(base, DLL, Entry::Ordinal(ORD_GET_STATE), get_state as *const () as usize, &ORIG_GET_STATE),

@@ -107,6 +107,30 @@ pub unsafe fn hook(base: u64, dll: &str, entry: Entry, new: usize, orig: &Atomic
     true
 }
 
+/// Puts `new` back into the slot when something else (the Steam overlay does this some seconds after
+/// start) has replaced it; the replacement becomes `orig`, so the chain continues through it.
+/// Returns true when the slot had to be restored.
+///
+/// # Safety
+/// As for [`hook`].
+pub unsafe fn reassert(base: u64, dll: &str, entry: Entry, new: usize, orig: &AtomicUsize) -> bool {
+    let Ok((slot, true)) = find_slot(base, dll, entry) else { return false };
+    let now = slot.read_unaligned() as usize;
+    if now == new {
+        return false;
+    }
+    let mut old = 0u32;
+    if VirtualProtect(slot as *const c_void, 8, PAGE_READWRITE, &mut old) == 0 {
+        return false;
+    }
+    orig.store(now, Ordering::Release);
+    slot.write_unaligned(new as u64);
+    let mut ignored = 0u32;
+    VirtualProtect(slot as *const c_void, 8, old, &mut ignored);
+    log!("iat: {dll} {entry:?} was replaced by {now:#x}; hooked again, chaining to it");
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

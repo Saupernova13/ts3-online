@@ -111,6 +111,7 @@ from input, and the game already treats it as a player for co-op moves and inter
   - The host rejects a spend below -1,000,000 (still acknowledged, never applied), on top of the
     existing rejection of positive deltas and unknown wallets.
   - The host answers a client's `SaveRequest` at most once per 200 ms.
+  - `Npcs`: at most 48 entries, finite numbers, coordinates within 1e6, only for the client's current level.
   - World events: the event must be on the whitelist (`world::SYNCED`) and the reference name 1-96
     bytes of `[A-Za-z0-9_:/.-]`; both are checked on encode and decode, a report is accepted only for
     the host's current level, and a list holds at most 512 entries.
@@ -182,6 +183,25 @@ up with one log line. Events the local game produced count as applied. Each copy
 state when its level changes. Wire layouts (little-endian, after the common header): `World` = level
 u32, count u8, then count x (seq u32, event len u8 + bytes, name len u8 + bytes); `WorldAck` =
 level u32, seq u32; `WorldReport` = level u32, event len u8 + bytes, name len u8 + bytes.
+
+**NPCs (H6c).** First step of direction item 2: the host owns the movement of named actors. Townspeople
+and other movers have the same reference names on every copy (FINDINGS 10), so the host sends
+`Npcs { level, entries }` to every client, unreliable (latest wins, no ack), entries being (hash of
+the reference name u32, position 3 x f32, yaw f32), at most 48 per datagram (20 bytes each, under
+1000 bytes); a host with more movers sends several datagrams. Decode refuses a count above 48,
+non-finite floats and coordinates beyond 1e6. The host samples all uniquely named actors at 15 Hz
+(`npc::Tracker`; names that repeat on the host and the four player avatars are skipped). An actor
+becomes a mover once it is more than 5 cm from where it was first seen in the level. A mover is sent
+when it moved more than 2 cm or turned more than 2 degrees since it was last sent, and in any case
+once a second even when still, so a late joiner and a lost datagram converge. The ones that moved
+most go first; at most 480 per sample, the rest wait for the next. The tracker resets on a level
+change and forgets actors that disappear. A client keeps the latest transform per hash for its own
+level (messages for another level are dropped) and every frame writes it to the actor the hash
+resolves to (`target::named`, rebuilt at most once a second): a step of 0.3 toward the host's
+position and yaw, or the host's position itself beyond 3 m. Skipped: the player avatars (local and
+partners') and actors being carried (`ActorCarried+0x18` not 0). The client's own AI still runs
+underneath and is overridden each frame; stopping it is a later step. Wire layout (after the common
+header): `Npcs` = level u32, count u8, then count x (hash u32, x f32, y f32, z f32, yaw f32).
 
 `net_sim=delay,jitter,loss` adds artificial latency and loss for testing on one PC.
 

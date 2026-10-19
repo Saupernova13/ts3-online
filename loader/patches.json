@@ -2458,6 +2458,39 @@
    "mode": "call",
    "hook": "frame_tick",
    "note": "input dispatch (0x140280b90): three per-frame calls -> same calls, then the net proxy update"
+  },
+  {
+   "id": "hook_post_broadcast_14049e160",
+   "group": "hooks",
+   "rva": "0x49e160",
+   "orig": "48895c241048896c2418564883ec20",
+   "kind": "hook",
+   "mode": "detour",
+   "hook": "post_broadcast",
+   "note": "event post broadcast (events, name, a, b): detour that records the event name when logging is on, then calls the original through a trampoline",
+   "steal": 15
+  },
+  {
+   "id": "hook_post_actor_14049e0b0",
+   "group": "hooks",
+   "rva": "0x49e0b0",
+   "orig": "48895c240848896c24104889742418",
+   "kind": "hook",
+   "mode": "detour",
+   "hook": "post_actor",
+   "note": "event post to an actor (events, name, a, b, actor id on the stack): detour that records the name when logging is on, then calls the original through a trampoline",
+   "steal": 15
+  },
+  {
+   "id": "hook_post_broadcast2_14049e250",
+   "group": "hooks",
+   "rva": "0x49e250",
+   "orig": "48895c24084889742410574883ec20",
+   "kind": "hook",
+   "mode": "detour",
+   "hook": "post_broadcast2",
+   "note": "event post broadcast, second variant (events, name, a, b): detour that records the name when logging is on, then calls the original through a trampoline",
+   "steal": 15
   }
  ]
 }

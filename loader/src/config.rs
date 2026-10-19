@@ -45,6 +45,10 @@ pub struct Config {
     pub net_port: u16,
     /// `net_peers = a,b,c`: explicit peers for `net=auto` (replaces Tailscale discovery)
     pub net_peers: Vec<String>,
+    /// `log_events = 1`: log the names of posted game events
+    pub log_events: bool,
+    /// `dev_cmds = 1`: run commands from `cmd.copyN.txt` (research)
+    pub dev_cmds: bool,
     /// `net_sim = delay_ms[,jitter_ms[,loss_pct]]`
     pub net_sim: Option<Sim>,
     /// `name = text`: shown to other players (max 32 bytes)
@@ -53,7 +57,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() }
+        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() }
     }
 }
 
@@ -129,6 +133,8 @@ pub fn parse(text: &str, copy: u32) -> Config {
                     _ => {}
                 }
             }
+            "log_events" => c.log_events = parse_bool(v).unwrap_or(c.log_events),
+            "dev_cmds" => c.dev_cmds = parse_bool(v).unwrap_or(c.dev_cmds),
             "net_port" => {
                 if let Ok(p @ 1..) = v.parse::<u16>() {
                     c.net_port = p;
@@ -187,13 +193,13 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() });
+        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() });
     }
 
     #[test]
     fn overrides_and_comments() {
         let c = parse("# hi\n enabled = 0 \nwatch=false\nWATCH_INTERVAL_MS=250\nbogus=1\nnoequals\n", 1);
-        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() });
+        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() });
     }
 
     #[test]
@@ -287,6 +293,18 @@ enable=online
         assert_eq!(parse("net_port=0", 1).net_port, 27777);
         assert_eq!(parse("net_port=x", 1).net_port, 27777);
         assert_eq!(parse("net=auto", 1).enable, ["online"]);
+    }
+
+    #[test]
+    fn research_switches_default_off() {
+        let c = parse("", 1);
+        assert!(!c.log_events && !c.dev_cmds);
+        let c = parse("log_events=1\ndev_cmds = yes", 1);
+        assert!(c.log_events && c.dev_cmds);
+        let c = parse("[copy2]\nlog_events=1\n", 1);
+        assert!(!c.log_events);
+        assert!(parse("log_events=1\n[copy2]\nlog_events=0\n", 2).log_events == false);
+        assert!(!parse("log_events=maybe", 1).log_events);
     }
 
     #[test]

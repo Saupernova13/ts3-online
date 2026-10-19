@@ -19,9 +19,9 @@ Relocation: `0x258` bytes at RVA `0x9582b0` -> a `0x400` buffer; fields from `+0
 | quadrants (optional) | 1 | Optional (`enable=quadrants` in `ts3online.ini`): every split request builds 4 quadrants, so each player keeps the same 16:9 quarter for streaming. | FINDINGS 2; PLAN rig design | not tested in game |
 | online (optional) | 3 | Optional (enabled by `net=` in `ts3online.ini`): every split request keeps one full-screen viewport for the local player, whatever the player count, so remote players join as partners without a split screen. | FINDINGS 9 | not tested in game |
 | instances (optional) | 3 | Optional (`enable=instances`): lets a second copy of the game run on the same PC for host/client play. | FINDINGS 9 | not tested in game |
-| hooks | 9 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5f | verified in game (teardown and the controls fix 2026-10-17) except level_player_setup (T8) |
+| hooks | 12 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5f | verified in game (teardown and the controls fix 2026-10-17) except level_player_setup (T8) |
 
-Total: 228 patches.
+Total: 231 patches.
 
 ## relocate
 
@@ -290,6 +290,9 @@ Total: 228 patches.
 | `0x1400eb6f0` | entry -> `join_request`, 12 bytes | join handler(pad): Rust reimplementation using the first free player index for assign, screen owner and release |
 | `0x1400fe910` | entry -> `join_cancel`, 12 bytes | ScreenJoinIn cancel: release the joining index (not 1), then the shared tail 0x1400e7450 |
 | `0x140280c18` | call -> `frame_tick`, 18 bytes | input dispatch (0x140280b90): three per-frame calls -> same calls, then the net proxy update |
+| `0x14049e0b0` | detour -> `post_actor`, 15 bytes, steals 15 | event post to an actor (events, name, a, b, actor id on the stack): detour that records the name when logging is on, then calls the original through a trampoline |
+| `0x14049e160` | detour -> `post_broadcast`, 15 bytes, steals 15 | event post broadcast (events, name, a, b): detour that records the event name when logging is on, then calls the original through a trampoline |
+| `0x14049e250` | detour -> `post_broadcast2`, 15 bytes, steals 15 | event post broadcast, second variant (events, name, a, b): detour that records the name when logging is on, then calls the original through a trampoline |
 | `0x1405aee38` | call -> `level_player_setup` (prefix `4c89f1488b9598030000`), 23 bytes | level setup (0x1405ae570): player 2's view setup + view-array finish -> view setup for players 2..4; mgr in R14, view array at [RBP+0x398] |
 | `0x1405b0fd6` | call -> `reset_player_slots` (prefix `4889d9`), 293 bytes | level teardown (0x1405b0ea0): slot-1 reset block -> reset slots 1..3; mgr in RBX, R14 = 0 stays live |
 | `0x1405bae40` | entry_caller -> `find_avatar_by_class`, 12 bytes | avatar-by-class lookup: unchanged except calls from the pick handler skip player-owned avatars |

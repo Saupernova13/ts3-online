@@ -4,7 +4,7 @@ use std::ffi::c_void;
 use windows_sys::Win32::Foundation::{BOOL, FALSE, HWND, LPARAM, RECT, TRUE};
 use windows_sys::Win32::System::Threading::{CreateThread, GetCurrentProcessId, Sleep};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
+    EnumWindows, GetClassNameW, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
     SetWindowLongPtrW, SetWindowPos, GWL_STYLE, GW_OWNER, HWND_TOP, SWP_FRAMECHANGED, SWP_SHOWWINDOW, WS_CLIPCHILDREN,
     WS_CLIPSIBLINGS, WS_POPUP, WS_VISIBLE,
 };
@@ -36,7 +36,7 @@ unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let best = &mut *(lparam as *mut Best);
     let mut pid = 0u32;
     GetWindowThreadProcessId(hwnd, &mut pid);
-    if pid != best.pid || IsWindowVisible(hwnd) == FALSE || !GetWindow(hwnd, GW_OWNER).is_null() {
+    if pid != best.pid || IsWindowVisible(hwnd) == FALSE || !GetWindow(hwnd, GW_OWNER).is_null() || is_menu(hwnd) {
         return TRUE;
     }
     let mut r: RECT = std::mem::zeroed();
@@ -47,6 +47,13 @@ unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
         best.area = area;
     }
     TRUE
+}
+
+/// The connect menu is ours, not the game window.
+unsafe fn is_menu(hwnd: HWND) -> bool {
+    let mut buf = [0u16; 64];
+    let n = GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32).max(0) as usize;
+    String::from_utf16_lossy(&buf[..n]) == crate::menu::CLASS
 }
 
 fn find() -> HWND {

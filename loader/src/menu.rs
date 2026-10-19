@@ -31,7 +31,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 const TITLE: &str = "Toy Story 3 Online";
-const CLASS: &str = "Ts3OnlineConnectMenu";
+pub const CLASS: &str = "Ts3OnlineConnectMenu";
 const TIMER_ID: usize = 1;
 const TIMER_MS: u32 = 250;
 const PROBE_EVERY_MS: u64 = 1000;

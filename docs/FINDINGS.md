@@ -531,3 +531,7 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   4 average, 5 capped add with the cap at `+0x44`), value at `+0x4c` (int or float), times changed at
   `+0x48`. `0x140632130(stats, idx, int)` and `0x1406322a0(stats, idx, float)` apply a value by type,
   `0x140617bc0(stats, idx)` reads one. Toy Box gold shows as `Stat_GOLD_COLLECTED` (index 47).
+- **[obs] Wallets (H6a, `queries/106`).** `Stat_GOLD_COLLECTED` is the gold wallet the Toy Box HUD shows
+  (writing its value makes the counter animate to it; `GoldCoins` pickups add 100 via `0x140632130`).
+  `Stat_IMAGINATION_POINTS_COLLECTED` is the second counter. `0x140617c40(stats, name)` finds a stat
+  index (-1 when absent).

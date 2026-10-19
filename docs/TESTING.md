@@ -131,6 +131,18 @@ Start as for T11. Then:
 A client on the game board does not follow (menus are not levels); it enters Toy Box through its own
 menus and follows from there.
 
+## T13: shared wallets (H6a, passed 2026-10-19)
+
+Start as for T11. `work/scratch/setstat.py <pid> Stat_GOLD_COLLECTED <value>` writes a counter in a
+running copy, standing in for a purchase or a pickup.
+
+1. Client: lower its gold by 500 (a purchase). Expect in the host's log
+   `wallet: player 1 spent -500 Stat_GOLD_COLLECTED` and both copies at the lower value, with no
+   `wallet:` write on the client back to the old value (no refund flicker).
+2. Host: raise its gold by 100 (a pickup). Expect the client's log `wallet: Stat_GOLD_COLLECTED a -> b`
+   within a frame and its HUD counter animating up.
+3. Put the host's value back afterwards: the host's save is real.
+
 ## Reporting
 
 Copy the log plus a note of what was on screen (or a screenshot) into an issue or the progress log.

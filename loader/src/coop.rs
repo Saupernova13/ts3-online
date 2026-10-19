@@ -476,6 +476,7 @@ pub unsafe fn update() {
     let level = level_hash(&name);
     net::set_local_level_name(&name);
     follow_levels(level);
+    crate::wallet::update(level);
     let Ok(mut guard) = PARTNERS.lock() else { return };
     let partners = guard.get_or_insert_with(HashMap::new);
     if switched && !partners.is_empty() {

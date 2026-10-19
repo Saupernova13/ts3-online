@@ -1,12 +1,16 @@
 //! Wire format: `b"TS3O"`, protocol version u16, message type u8, body. Little-endian, no padding.
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 5;
+pub const VERSION: u16 = 6;
 /// Largest `SaveChunk` payload we accept.
 pub const MAX_CHUNK: usize = 1200;
 pub const MAX_NAME: usize = 32;
 /// Longest level name on the wire.
 pub const MAX_LEVEL: usize = 64;
+/// Most wallet values in a `Wallet` message.
+pub const MAX_WALLETS: usize = 16;
+/// Most spends in a `Spend` message.
+pub const MAX_SPENDS: usize = 64;
 
 pub const REFUSE_FULL: u8 = 1;
 pub const REFUSE_BUILD: u8 = 2;
@@ -27,6 +31,8 @@ const T_SAVE_INFO: u8 = 12;
 const T_SAVE_CHUNK: u8 = 13;
 const T_LEVEL: u8 = 14;
 const T_LEVEL_REQUEST: u8 = 15;
+const T_WALLET: u8 = 16;
+const T_SPEND: u8 = 17;
 
 /// Controller state in the XINPUT_GAMEPAD layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -89,6 +95,11 @@ pub enum Msg {
     Level { name: String },
     /// Client to host: "my game switched to this level, please follow".
     LevelRequest { name: String },
+    /// Host to one client: the host's wallet values (in `wallet::WALLETS` order) and the highest
+    /// spend seq the host has applied from that client.
+    Wallet { values: Vec<i32>, acked: u32 },
+    /// Client to host: every unacknowledged spend as (seq, wallet index, delta), resent until acked.
+    Spend { spends: Vec<(u32, u8, i32)> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,6 +219,25 @@ pub fn encode(msg: &Msg) -> Vec<u8> {
             o.push(T_LEVEL_REQUEST);
             put_level(&mut o, name);
         }
+        Msg::Wallet { values, acked } => {
+            o.push(T_WALLET);
+            o.extend_from_slice(&acked.to_le_bytes());
+            let values = &values[..values.len().min(MAX_WALLETS)];
+            o.push(values.len() as u8);
+            for v in values {
+                o.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        Msg::Spend { spends } => {
+            o.push(T_SPEND);
+            let spends = &spends[..spends.len().min(MAX_SPENDS)];
+            o.push(spends.len() as u8);
+            for (seq, idx, delta) in spends {
+                o.extend_from_slice(&seq.to_le_bytes());
+                o.push(*idx);
+                o.extend_from_slice(&delta.to_le_bytes());
+            }
+        }
     }
     o
 }
@@ -226,6 +256,9 @@ impl<'a> Reader<'a> {
     }
     fn u32(&mut self) -> Option<u32> {
         Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
+    }
+    fn i32(&mut self) -> Option<i32> {
+        Some(self.u32()? as i32)
     }
     fn u64(&mut self) -> Option<u64> {
         Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?))
@@ -309,6 +342,29 @@ pub fn decode(bytes: &[u8]) -> Result<Msg, DecodeError> {
             }
             T_LEVEL => Msg::Level { name: r.level()? },
             T_LEVEL_REQUEST => Msg::LevelRequest { name: r.level()? },
+            T_WALLET => {
+                let acked = r.u32()?;
+                let n = r.u8()? as usize;
+                if n > MAX_WALLETS {
+                    return None;
+                }
+                let mut values = Vec::with_capacity(n);
+                for _ in 0..n {
+                    values.push(r.i32()?);
+                }
+                Msg::Wallet { values, acked }
+            }
+            T_SPEND => {
+                let n = r.u8()? as usize;
+                if n > MAX_SPENDS {
+                    return None;
+                }
+                let mut spends = Vec::with_capacity(n);
+                for _ in 0..n {
+                    spends.push((r.u32()?, r.u8()?, r.i32()?));
+                }
+                Msg::Spend { spends }
+            }
             _ => return None,
         })
     };
@@ -351,6 +407,10 @@ mod tests {
             Msg::Level { name: "ST_ToyBox".into() },
             Msg::Level { name: String::new() },
             Msg::LevelRequest { name: "ST_Daycare".into() },
+            Msg::Wallet { values: vec![1200, -5, i32::MAX], acked: 42 },
+            Msg::Wallet { values: Vec::new(), acked: 0 },
+            Msg::Spend { spends: vec![(1, 0, -300), (2, 1, -1), (u32::MAX, 15, i32::MIN)] },
+            Msg::Spend { spends: Vec::new() },
         ]
     }
 
@@ -453,6 +513,24 @@ mod tests {
         let mut forged = encode(&Msg::LevelRequest { name: "ab".into() });
         let at = forged.len() - 3;
         forged[at] = 65;
+        assert_eq!(decode(&forged), Err(DecodeError::Malformed));
+    }
+
+    #[test]
+    fn wallet_lists_are_capped() {
+        match decode(&encode(&Msg::Wallet { values: vec![7; 40], acked: 1 })) {
+            Ok(Msg::Wallet { values, .. }) => assert_eq!(values.len(), MAX_WALLETS),
+            other => panic!("{other:?}"),
+        }
+        match decode(&encode(&Msg::Spend { spends: vec![(1, 0, -1); 200] })) {
+            Ok(Msg::Spend { spends }) => assert_eq!(spends.len(), MAX_SPENDS),
+            other => panic!("{other:?}"),
+        }
+        let mut forged = encode(&Msg::Wallet { values: vec![1], acked: 1 });
+        forged[11] = 200;
+        assert_eq!(decode(&forged), Err(DecodeError::Malformed));
+        let mut forged = encode(&Msg::Spend { spends: vec![(1, 0, -1)] });
+        forged[7] = 200;
         assert_eq!(decode(&forged), Err(DecodeError::Malformed));
     }
 }

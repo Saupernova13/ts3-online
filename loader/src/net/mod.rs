@@ -21,6 +21,9 @@ static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 static COPY: AtomicU32 = AtomicU32::new(1);
 /// Level names clients asked the host to follow, until the game thread takes them.
 static LEVEL_REQUESTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Client spends the host accepted, as (client, wallet index, delta), until the game thread takes them.
+/// Host: client spends for the game thread, as (client, [(wallet index, delta)], seq to acknowledge).
+static SPENDS: Mutex<Vec<(u8, Vec<(u8, i32)>, u32)>> = Mutex::new(Vec::new());
 
 const LOOP_SLEEP: Duration = Duration::from_millis(5);
 const RTT_LOG_MS: u64 = 5000;
@@ -164,6 +167,37 @@ pub fn request_level(name: &str) {
 /// Host: the level names clients asked us to follow since the last call.
 pub fn take_level_requests() -> Vec<String> {
     LEVEL_REQUESTS.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default()
+}
+
+/// Host: the local wallet values, sent to every client.
+pub fn set_local_wallet(values: &[i32]) {
+    if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
+        s.set_local_wallet(values);
+    }
+}
+
+/// Host: client spends to apply to the local wallet since the last call; confirm each with `confirm_spends`.
+pub fn take_spends() -> Vec<(u8, Vec<(u8, i32)>, u32)> {
+    SPENDS.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default()
+}
+
+/// Host: the game applied the spends of `client` up to seq `upto`.
+pub fn confirm_spends(client: u8, upto: u32) {
+    if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
+        s.confirm_spends(client, upto);
+    }
+}
+
+/// Client: the latest (values, acked seq) from the host's wallet, once.
+pub fn take_host_wallet() -> Option<(Vec<i32>, u32)> {
+    SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()).and_then(|s| s.take_host_wallet())
+}
+
+/// Client: sends the unacknowledged spends to the host.
+pub fn send_spends(spends: &[(u32, u8, i32)]) {
+    if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
+        s.send_spends(spends);
+    }
 }
 
 /// Everything `start` needs besides the mode.
@@ -406,6 +440,11 @@ fn run_loop(sock: &UdpSocket, sim: Option<SimQueue>, auto: Option<&Auto>) -> Opt
                         q.push(name.clone());
                     }
                 }
+                Event::Spend { id, deltas, upto } => {
+                    if let Ok(mut q) = SPENDS.lock() {
+                        q.push((*id, deltas.clone(), *upto));
+                    }
+                }
                 Event::Discovered { from, build, host: true, players: 1, name } if alone => {
                     if let (Some(a), SocketAddr::V4(f)) = (auto, from) {
                         let other = (*f.ip(), f.port());
@@ -480,7 +519,7 @@ fn log_event(e: &Event, now_ms: u64, rtt_logged: &mut HashMap<u8, u64>) {
             }
         }
         Event::LevelRequested { id, name } => log!("net: player {id} switched to level {name:?}"),
-        Event::Discovered { .. } | Event::SaveSent { .. } | Event::SaveReceived(_) | Event::SaveMissing | Event::SaveBad => {}
+        Event::Spend { .. } | Event::Discovered { .. } | Event::SaveSent { .. } | Event::SaveReceived(_) | Event::SaveMissing | Event::SaveBad => {}
     }
 }
 

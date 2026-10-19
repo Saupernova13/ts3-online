@@ -23,6 +23,8 @@ pub const FLAGS: u64 = 0x1_40b2_ac90;
 pub const RIDES: u64 = 0x1_4099_b8b0;
 pub const STREAMING: u64 = 0x1_40b2_ef20;
 pub const UI_PTR: u64 = 0x1_40b2_ef10;
+/// Game stats table pointer: entries of 0x60 bytes at `+8`, count at `+0x10`.
+pub const STATS_PTR: u64 = 0x1_40b2_fdb8;
 
 pub const SLOT_AVATAR_BASE: u64 = 0x1a0;
 pub const SLOT_STRIDE: u64 = 0x58;
@@ -119,6 +121,17 @@ game_fn!(view_find_camera, 0x1_403f_c110, fn(view: u64, name: u64) -> u64);
 game_fn!(view_pop_camera, 0x1_403f_f140, fn(view: u64, camera: u64) -> u64);
 game_fn!(view_remove_camera, 0x1_403f_ffc0, fn(view: u64, camera: u64) -> ());
 game_fn!(list_clear, 0x1_403f_b1e0, fn(list: u64) -> ());
+game_fn!(stat_find, 0x1_4061_7c40, fn(stats: u64, name: *const c_char) -> i32);
+game_fn!(stat_add, 0x1_4063_2130, fn(stats: u64, idx: i32, delta: i32) -> ());
+game_fn!(stat_get, 0x1_4061_7bc0, fn(stats: u64, idx: i32) -> i32);
+
+/// Address of stat entry `idx` (its value is the i32 at `+0x4c`).
+pub unsafe fn stat_entry(stats: u64, idx: i32) -> u64 {
+    rd_u64(stats + 8) + idx as u64 * 0x60
+}
+
+/// Offset of the value inside a stat entry.
+pub const STAT_VALUE: u64 = 0x4c;
 
 game_fn!(frame_a, 0x1_4022_7920, fn() -> ());
 game_fn!(frame_b, 0x1_4022_92a0, fn() -> ());

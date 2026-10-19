@@ -79,7 +79,7 @@ never puppets with interactions turned off.
 | H3 | Co-op partners: the owner's pad state is sent every frame and fed to a virtual XInput pad 1-3; the remote avatar is bound to a player slot through the join path, so it moves, animates and interacts through the game's own code; the owner's position corrects drift; the `online` patch keeps one full-screen view of slot 0 | partners run, jump, pick each other up and throw on both screens |
 | H4 | Connect: `net=auto` finds a host among the online tailnet peers (`tailscale status`) or becomes the host; two hosts that meet merge; explicit `net=client:<tailnet name>:27777` still works | two PCs on one tailnet connect with the same ini and no addresses |
 | H5 | One world: the host sends its save at connect and the client plays it from a session folder without saving back, as local P2 plays P1's save; the client follows the host into its level (`SwitchLevel`, `0x14012e800`) | done (T11, T12) |
-| H6 | Shared world state, system by system: gold and pickups, enemies and NPCs owned by the host, missions, shops, rides and vehicles | both players see the same enemies, pickups and mission state |
+| H6 | Shared world state, system by system: gold and pickups, enemies and NPCs owned by the host, missions, shops, rides and vehicles; wallets (gold, imagination points) are built (H6a) | both players see the same enemies, pickups and mission state |
 | H7 | Release: install/uninstall script, sample ini, README for players, 2-PC tailnet test | a friend installs it and plays |
 
 **Level follow (H5b).** The host sends `Level { name }` (its current level, empty outside one) to
@@ -91,6 +91,18 @@ if it is in another level. Our own posts bypass the detour, so following never e
 (`gui_*`, `frontend`) are not levels. A partner whose owner leaves or is in another level stays in
 its slot, idle ("parked"), until the owner returns or the level ends: removing an avatar mid-level
 can crash the game (FINDINGS 10). A newcomer takes over a parked avatar of a player who left.
+
+**Wallets (H6a).** The host owns the two HUD counters, `Stat_GOLD_COLLECTED` and
+`Stat_IMAGINATION_POINTS_COLLECTED` (`wallet::WALLETS`). It sends `Wallet { values, acked }` to each
+client when a value changes and once a second; the client writes the values into its stats table (the
+HUD counter animates to them). Pickups are not sent: the partner avatar follows its owner, so both
+worlds see the same pickups and the host's value wins. Spending (shops) happens only in the world
+of the local player, so a client that sees a counter drop records a spend (seq, wallet index, delta)
+and sends every unacknowledged one in `Spend { spends }` (about 10 Hz) until the host's `acked`
+(the highest seq it applied from that client) covers it. The host applies each seq once through the
+game's own stat add (`0x140632130`), so resends are harmless and a lost datagram only delays. While
+a spend is unacknowledged the client shows the host value plus its pending spends, so the counter
+does not flicker back. Only spending is forwarded; a host that spends needs no message.
 
 `net_sim=delay,jitter,loss` adds artificial latency and loss for testing on one PC.
 

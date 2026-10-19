@@ -1,7 +1,8 @@
 //! Sans-IO session state machine: bytes and the clock go in, datagrams and events come out.
 use super::proto::{self, clamp_name, DecodeError, Msg, Pad, State};
 use super::save::{self, Reassembler};
-use std::collections::BTreeMap;
+use crate::wallet::HostWallet;
+use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 
 pub const MAX_PLAYERS: usize = 4;
@@ -12,6 +13,8 @@ const STATE_US: u64 = 16_000;
 const SAVE_REQ_US: u64 = 300_000;
 /// The host repeats its level name this often.
 const LEVEL_US: u64 = 1_000_000;
+/// The host repeats its wallet values this often.
+const WALLET_US: u64 = 1_000_000;
 /// Chunks sent per `SaveRequest`.
 const SAVE_BURST: usize = 64;
 
@@ -39,6 +42,9 @@ pub enum Event {
     SaveBad,
     /// Host: a client's game switched to this level and asks us to follow.
     LevelRequested { id: u8, name: String },
+    /// Host: spends of a client not seen before, as (wallet index, delta) in order.
+    /// `upto` is the seq to acknowledge once the game thread applied them (`confirm_spends`).
+    Spend { id: u8, deltas: Vec<(u8, i32)>, upto: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +107,15 @@ pub struct Session {
     last_level: Option<u64>,
     /// client: the level the host last reported
     host_level: Option<String>,
+    /// host: the local wallet values, which spends of each client were applied
+    wallet: Vec<i32>,
+    spent: HostWallet,
+    /// host: per client, the highest spend seq the game applied; this is what `Wallet.acked` carries
+    published: HashMap<u8, u32>,
+    wallet_dirty: bool,
+    last_wallet: Option<u64>,
+    /// client: the latest `Wallet` from the host, until taken
+    host_wallet: Option<(Vec<i32>, u32)>,
 }
 
 /// `new` is ahead of `old` in wrapping sequence order.
@@ -138,6 +153,12 @@ impl Session {
             local_level: String::new(),
             last_level: None,
             host_level: None,
+            wallet: Vec::new(),
+            spent: HostWallet::default(),
+            published: HashMap::new(),
+            wallet_dirty: false,
+            last_wallet: None,
+            host_wallet: None,
         }
     }
 
@@ -212,6 +233,42 @@ impl Session {
         if let (Some(host), Link::Connected) = (self.host_addr, self.link) {
             self.send(host, &Msg::LevelRequest { name: name.to_string() });
         }
+    }
+
+    /// Host: the local wallet values; a change goes out at once.
+    pub fn set_local_wallet(&mut self, values: &[i32]) {
+        if self.wallet != values {
+            self.wallet = values.to_vec();
+            self.wallet_dirty = true;
+        }
+    }
+
+    /// Host: the game applied the spends of `id` up to `upto`; the next wallet send acknowledges them.
+    pub fn confirm_spends(&mut self, id: u8, upto: u32) {
+        let e = self.published.entry(id).or_insert(0);
+        if upto > *e {
+            *e = upto;
+            self.wallet_dirty = true;
+        }
+    }
+
+    /// Client: the latest wallet values and acked spend seq from the host.
+    pub fn take_host_wallet(&mut self) -> Option<(Vec<i32>, u32)> {
+        self.host_wallet.take()
+    }
+
+    /// Client: sends the unacknowledged spends to the host.
+    pub fn send_spends(&mut self, spends: &[(u32, u8, i32)]) {
+        if let (Some(host), Link::Connected, false) = (self.host_addr, self.link, spends.is_empty()) {
+            self.send(host, &Msg::Spend { spends: spends.to_vec() });
+        }
+    }
+
+    fn send_wallet_to(&mut self, i: usize) {
+        let (addr, id) = (self.peers[i].addr, self.peers[i].id);
+        let acked = self.published.get(&id).copied().unwrap_or(0);
+        let m = Msg::Wallet { values: self.wallet.clone(), acked };
+        self.send(addr, &m);
     }
 
     fn send_level_to_all(&mut self) {
@@ -344,6 +401,21 @@ impl Session {
             Msg::Bye { id: b } if b == id => self.drop_client(i),
             Msg::SaveRequest { have } => self.serve_save(i, &have),
             Msg::LevelRequest { name } => self.events.push(Event::LevelRequested { id, name }),
+            Msg::Spend { spends } => {
+                let before = self.spent.acked(id);
+                let deltas = self.spent.accept(id, &spends);
+                let upto = self.spent.acked(id);
+                if deltas.is_empty() {
+                    // nothing for the game to apply: acknowledge at once
+                    if upto != before {
+                        self.confirm_spends(id, upto);
+                    }
+                } else {
+                    // acknowledged with the value that includes them, so a client never sees the ack
+                    // on a wallet that does not have the spend yet
+                    self.events.push(Event::Spend { id, deltas, upto });
+                }
+            }
             _ => {}
         }
     }
@@ -367,6 +439,7 @@ impl Session {
         let level = Msg::Level { name: self.local_level.clone() };
         self.send(from, &level);
         self.events.push(Event::PeerJoined { id, name });
+        self.wallet_dirty = true;
         self.broadcast_roster();
     }
 
@@ -395,6 +468,8 @@ impl Session {
         self.roster.retain(|(i, _)| *i != id);
         self.states.remove(&id);
         self.rtt.remove(&id);
+        self.spent.forget(id);
+        self.published.remove(&id);
         self.events.push(Event::PeerLeft { id });
         self.broadcast_roster();
     }
@@ -406,6 +481,13 @@ impl Session {
         if Self::due(&mut self.last_level, now, LEVEL_US) {
             self.send_level_to_all();
         }
+        if (Self::due(&mut self.last_wallet, now, WALLET_US) || self.wallet_dirty) && !self.wallet.is_empty() {
+            self.last_wallet = Some(now);
+            for i in 0..self.peers.len() {
+                self.send_wallet_to(i);
+            }
+        }
+        self.wallet_dirty = false;
         self.tick_traffic(now);
     }
 
@@ -438,6 +520,7 @@ impl Session {
             }
             Msg::Bye { id: 0 } => self.host_lost(),
             Msg::Level { name } => self.host_level = Some(name),
+            Msg::Wallet { values, acked } => self.host_wallet = Some((values, acked)),
             Msg::SaveInfo { total, crc } if self.want_save && !self.save_done => {
                 if total == 0 {
                     self.save_done = true;
@@ -491,6 +574,7 @@ impl Session {
         self.states.clear();
         self.rtt.clear();
         self.host_level = None;
+        self.host_wallet = None;
         self.last_hello = None;
         self.last_ping = None;
         self.rx = None;
@@ -957,5 +1041,71 @@ mod tests {
         a.handle(addr(H), &encode(&Msg::Level { name: "ST_ToyBox".into() }), 0);
         a.tick(5000 * MS);
         assert_eq!(a.host_level_name(), None);
+    }
+
+    #[test]
+    fn wallet_flows_and_spends_are_acked() {
+        let mut host = Session::host(BUILD, "h");
+        let mut c = Session::client(BUILD, "bob", addr(H));
+        c.set_want_save(false);
+        connect(&mut host, &mut c, addr(1), addr(H), 0);
+        host.drain_events();
+        host.set_local_wallet(&[500, 7]);
+        host.tick(MS);
+        deliver(addr(H), &mut host, addr(1), &mut c, MS);
+        assert_eq!(c.take_host_wallet(), Some((vec![500, 7], 0)));
+        assert_eq!(c.take_host_wallet(), None);
+
+        // the client spends; the host applies it once however often it is resent
+        let spends = [(1, 0, -200)];
+        for t in [2, 3] {
+            c.send_spends(&spends);
+            deliver(addr(1), &mut c, addr(H), &mut host, t * MS);
+        }
+        let ev = host.drain_events();
+        assert_eq!(ev.iter().filter(|e| matches!(e, Event::Spend { .. })).count(), 1);
+        assert!(ev.contains(&Event::Spend { id: 1, deltas: vec![(0, -200)], upto: 1 }));
+        // no ack before the game applied the spend, even on the once-a-second send
+        host.tick(1500 * MS);
+        deliver(addr(H), &mut host, addr(1), &mut c, 1500 * MS);
+        assert_eq!(c.take_host_wallet(), Some((vec![500, 7], 0)));
+        // then the ack goes out at once with the new value
+        host.confirm_spends(1, 1);
+        host.set_local_wallet(&[300, 7]);
+        host.tick(1501 * MS);
+        deliver(addr(H), &mut host, addr(1), &mut c, 1501 * MS);
+        assert_eq!(c.take_host_wallet(), Some((vec![300, 7], 1)));
+    }
+
+    #[test]
+    fn wallet_repeats_each_second_and_nothing_to_send_when_empty() {
+        let mut host = Session::host(BUILD, "h");
+        let mut c = Session::client(BUILD, "bob", addr(H));
+        connect(&mut host, &mut c, addr(1), addr(H), 0);
+        host.tick(0);
+        assert!(msgs(&mut host).iter().all(|(_, m)| !matches!(m, Msg::Wallet { .. })));
+        host.set_local_wallet(&[1, 2]);
+        host.tick(MS);
+        assert!(msgs(&mut host).iter().any(|(_, m)| matches!(m, Msg::Wallet { .. })));
+        host.tick(500 * MS);
+        assert!(msgs(&mut host).iter().all(|(_, m)| !matches!(m, Msg::Wallet { .. })));
+        host.tick(1001 * MS);
+        assert!(msgs(&mut host).iter().any(|(_, m)| matches!(m, Msg::Wallet { .. })));
+    }
+
+    #[test]
+    fn spends_from_strangers_are_ignored_and_a_dropped_client_is_forgotten() {
+        let mut host = Session::host(BUILD, "h");
+        host.handle(addr(9), &encode(&Msg::Spend { spends: vec![(1, 0, -5)] }), 0);
+        assert!(host.drain_events().is_empty());
+        host.handle(addr(1), &encode(&Msg::Hello { build: BUILD, name: "bob".into() }), 0);
+        host.handle(addr(1), &encode(&Msg::Spend { spends: vec![(1, 0, -5)] }), 1);
+        host.handle(addr(1), &encode(&Msg::Bye { id: 1 }), 2);
+        host.drain_events();
+        // the same id rejoining starts its seq over
+        host.handle(addr(1), &encode(&Msg::Hello { build: BUILD, name: "bob".into() }), 3);
+        host.drain_events();
+        host.handle(addr(1), &encode(&Msg::Spend { spends: vec![(1, 0, -5)] }), 4);
+        assert!(host.drain_events().contains(&Event::Spend { id: 1, deltas: vec![(0, -5)], upto: 1 }));
     }
 }

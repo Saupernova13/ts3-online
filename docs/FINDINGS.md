@@ -505,8 +505,8 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `panel[player]` only when `player < min(view count, 2)` (`[0x140b2ef50]+4`; the bound at
   `0x1402187e6` is raised to 4, but the view-count test still holds players 2-3 out), and to both
   panels when `player >= 4` (prompts for every player). With the `online` patch's single view, the
-  partner's own prompts are dropped, so the "X Pick up" next to the partner is the local player's own
-  prompt to pick the partner up. (This corrects an earlier note that said partner prompts showed on
+  partner's own prompts are dropped. [inf] The "X Pick up" next to the partner is then the local
+  player's own prompt to pick the partner up. (This corrects an earlier note that said partner prompts showed on
   the local screen.)
 - **[obs] Level changes are events.** The app registers `SwitchLevel`, `ProcessSwitchLevel` and
   `LoadLevel` (3 arguments) with the event system (`0x1405cc7d0`). Leaving the avatar select for Toy

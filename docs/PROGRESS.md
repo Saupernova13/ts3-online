@@ -145,4 +145,11 @@ and H2 (see each other move).
   optional firewall rule, uninstall), `docs/PLAYING.md`, and a CI workflow that tests, builds and
   attaches `ts3-online.zip` to `v*` tags. Keyboard input is not replicated yet (issue #9).
 
-**Next:** world sync (H6): gold and the stats table first, then pickups, enemies and missions.
+- H6a (T13 passed, OBS recording `2026-10-19 15-56-52`): shared wallets. `Stat_GOLD_COLLECTED` is the
+  gold counter (writing it animates the HUD) and `Stat_IMAGINATION_POINTS_COLLECTED` the second one. The
+  host's values win; a client's drops are sent as sequenced spends until acknowledged, and the host only
+  acknowledges a spend with a value that includes it (a first build sent the ack early and the client's
+  counter flicked back for a frame).
+
+**Next:** world sync beyond wallets (H6): enemies, missions, shops and the purchases that change the
+town; the partner's HUD prompts on the local screen.

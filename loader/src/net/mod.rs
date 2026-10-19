@@ -6,6 +6,7 @@ pub mod session;
 pub mod sim;
 
 use crate::config::{Net, Sim};
+use crate::perf::{self, Traffic};
 use crate::{copy, log};
 use proto::State;
 use session::{Event, Session};
@@ -449,11 +450,23 @@ fn auto_main(auto: AutoOpts, opts: Options, build: u64, sim: Option<SimQueue>) {
 }
 
 /// One loop pass of the session thread: receive, tick, send; returns the events and whether we are a host alone.
-fn step(sock: &UdpSocket, sim: &mut Option<SimQueue>, now: u64) -> Option<(Vec<Event>, bool)> {
-    let mut g = SESSION.lock().ok()?;
-    let s = g.as_mut()?;
-    let events = pump(sock, s, now, sim.as_mut());
-    Some((events, s.is_host() && s.roster().len() == 1))
+/// Socket calls happen outside the session lock, so the game thread never waits on them.
+fn step(sock: &UdpSocket, sim: &mut Option<SimQueue>, now: u64, t: &mut Traffic) -> Option<(Vec<Event>, bool)> {
+    let inbound = receive(sock, t);
+    let locked = Instant::now();
+    let (out, events, alone) = {
+        let mut g = SESSION.lock().ok()?;
+        let s = g.as_mut()?;
+        for (from, bytes) in &inbound {
+            s.handle(*from, bytes, now);
+        }
+        s.tick(now);
+        (s.drain_outgoing(), s.drain_events(), s.is_host() && s.roster().len() == 1)
+    };
+    t.locked.add(locked.elapsed().as_micros() as u64);
+    send(sock, out, sim.as_mut(), now, t);
+    t.passes += 1;
+    Some((events, alone))
 }
 
 /// The session loop. With `auto` it returns (handing the sim queue back) when a client should look for a host again.
@@ -462,11 +475,17 @@ fn run_loop(sock: &UdpSocket, sim: Option<SimQueue>, auto: Option<&Auto>) -> Opt
     let start = Instant::now();
     let mut rtt_logged: HashMap<u8, u64> = HashMap::new();
     let mut last_reprobe = 0u64;
+    let mut traffic = Traffic::default();
+    let mut traffic_since = 0u64;
     // a client without a host: when it started waiting and how long it may
     let mut lost: Option<(u64, u64)> = SESSION.lock().ok().and_then(|g| g.as_ref().map(|s| !s.is_host())).unwrap_or(false).then_some((0, FIRST_CONNECT_US));
     loop {
         let now = start.elapsed().as_micros() as u64;
-        let Some((events, alone)) = step(sock, &mut sim, now) else { return sim };
+        let Some((events, alone)) = step(sock, &mut sim, now, &mut traffic) else { return sim };
+        if now.saturating_sub(traffic_since) >= perf::WINDOW.as_micros() as u64 {
+            log!("{}", traffic.report(now.saturating_sub(traffic_since) as f64 / 1e6));
+            traffic_since = now;
+        }
         for e in events {
             match &e {
                 Event::Connected { .. } => lost = None,
@@ -519,26 +538,51 @@ fn run_loop(sock: &UdpSocket, sim: Option<SimQueue>, auto: Option<&Auto>) -> Opt
     }
 }
 
-/// One loop pass: receive everything waiting, advance the clock, send what the session queued.
-fn pump(sock: &UdpSocket, s: &mut Session, now_us: u64, mut sim: Option<&mut SimQueue>) -> Vec<Event> {
+/// Every datagram waiting on the socket.
+fn receive(sock: &UdpSocket, t: &mut Traffic) -> Vec<(SocketAddr, Vec<u8>)> {
     let mut buf = [0u8; 1500];
+    let mut v = Vec::new();
     while let Ok((n, from)) = sock.recv_from(&mut buf) {
-        s.handle(from, &buf[..n], now_us);
+        t.pkts_in += 1;
+        t.bytes_in += n as u64;
+        v.push((from, buf[..n].to_vec()));
     }
-    s.tick(now_us);
-    for (to, bytes) in s.drain_outgoing() {
-        match sim.as_deref_mut() {
-            Some(q) => q.push(now_us, to, bytes),
-            None => {
-                let _ = sock.send_to(&bytes, to);
+    v
+}
+
+/// Sends `out` (through the simulated link when there is one) and whatever the link releases now.
+fn send(sock: &UdpSocket, out: Vec<(SocketAddr, Vec<u8>)>, sim: Option<&mut SimQueue>, now_us: u64, t: &mut Traffic) {
+    let mut put = |to: SocketAddr, bytes: &[u8]| {
+        t.pkts_out += 1;
+        t.bytes_out += bytes.len() as u64;
+        let _ = sock.send_to(bytes, to);
+    };
+    match sim {
+        Some(q) => {
+            for (to, bytes) in out {
+                q.push(now_us, to, bytes);
+            }
+            for (to, bytes) in q.due(now_us) {
+                put(to, &bytes);
+            }
+        }
+        None => {
+            for (to, bytes) in out {
+                put(to, &bytes);
             }
         }
     }
-    if let Some(q) = sim {
-        for (to, bytes) in q.due(now_us) {
-            let _ = sock.send_to(&bytes, to);
-        }
+}
+
+/// One loop pass on a session the caller owns (tests): receive, advance the clock, send.
+#[cfg(test)]
+fn pump(sock: &UdpSocket, s: &mut Session, now_us: u64, sim: Option<&mut SimQueue>) -> Vec<Event> {
+    let mut t = Traffic::default();
+    for (from, bytes) in receive(sock, &mut t) {
+        s.handle(from, &bytes, now_us);
     }
+    s.tick(now_us);
+    send(sock, s.drain_outgoing(), sim, now_us, &mut t);
     s.drain_events()
 }
 

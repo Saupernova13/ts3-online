@@ -124,6 +124,11 @@ game_fn!(list_clear, 0x1_403f_b1e0, fn(list: u64) -> ());
 game_fn!(stat_find, 0x1_4061_7c40, fn(stats: u64, name: *const c_char) -> i32);
 game_fn!(stat_add, 0x1_4063_2130, fn(stats: u64, idx: i32, delta: i32) -> ());
 game_fn!(stat_get, 0x1_4061_7bc0, fn(stats: u64, idx: i32) -> i32);
+game_fn!(find_actor_by_name, 0x1_4055_7e10, fn(mgr: u64, name: *const c_char) -> u64);
+game_fn!(find_actor_by_ref, 0x1_4055_7f60, fn(mgr: u64, name: *const c_char) -> u64);
+
+/// The actor manager pointer (the actor-name lookups take it).
+pub const ACTOR_MGR: u64 = 0x1_40b2_bb70;
 
 /// Address of stat entry `idx` (its value is the i32 at `+0x4c`).
 pub unsafe fn stat_entry(stats: u64, idx: i32) -> u64 {

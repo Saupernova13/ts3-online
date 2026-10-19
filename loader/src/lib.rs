@@ -24,6 +24,7 @@ pub mod coop;
 pub mod saves;
 pub mod wallet;
 pub mod watch;
+pub mod world;
 #[cfg(windows)]
 mod window;
 

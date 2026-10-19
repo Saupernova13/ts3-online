@@ -106,6 +106,14 @@ X facing Woody: Buzz carries Woody on both copies; RT throws him, and both copie
 lands. Then the same with the host carrying and throwing Buzz. `work/scratch/pos.py` and `walkto.py`
 read positions from both processes and steer a player to a spot.
 
+## T11: find each other and share the host's save (H4, H5a, passed 2026-10-19)
+
+Both copies with `net=auto` (no addresses). Copy 1 probes the online tailnet peers for 2.5 s, finds
+no host and hosts; copy 2 finds the port taken and joins the local host. Expect in copy 2's log
+`net: save: received N bytes (crc ok)` before `saves: SHGetFolderPathA(APPDATA) -> ...	s3online\session`,
+and in copy 1's `net: save: sent N bytes to player 1`. Then T10's partner checks pass unchanged. The
+first time a copy hosts, Windows Firewall asks about the game: on a tailnet the host must allow it.
+
 ## Reporting
 
 Copy the log plus a note of what was on screen (or a screenshot) into an issue or the progress log.

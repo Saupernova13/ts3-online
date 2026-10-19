@@ -25,6 +25,18 @@ const MOVING_SPEED: f32 = 0.5;
 const IDLE_STICK: f32 = 0.15;
 /// Owner updates older than this (us) count as standing still.
 const STALE_US: u64 = 250_000;
+/// Buttons that start an interaction: A, B, X, Y, LB, RB (XINPUT bits) and the triggers past half.
+const ACTION_BUTTONS: u32 = 0xf300;
+const LT_BIT: u32 = 1 << 16;
+const RT_BIT: u32 = 1 << 17;
+const TRIGGER_PRESSED: u8 = 128;
+const PRESS_LOG_US: u64 = 500_000;
+const FACE_US: u64 = 100_000;
+const FACE_TOLERANCE: f32 = 10.0 * std::f32::consts::PI / 180.0;
+/// `State.flags`: the local avatar carries someone / is carried.
+const FLAG_CARRYING: u32 = 1;
+const FLAG_CARRIED: u32 = 2;
+const CARRY_DISAGREE_US: u64 = 500_000;
 /// Farther than this, a placement fires `PrepareForPlacing` first.
 const PREPARE_DIST: f32 = 2.0;
 /// Local slots for remote players.
@@ -64,6 +76,39 @@ struct Partner {
     last_at: u64,
     /// owner velocity on x and z (m/s)
     vel: [f32; 2],
+    /// owner pressed-button set of the previous state
+    prev_pressed: Option<u32>,
+    last_press_log_us: u64,
+    last_face_us: u64,
+    carry: CarryWatch,
+}
+
+/// Notices when a partner carry state disagrees with its owner for a while.
+#[derive(Default)]
+struct CarryWatch {
+    key: Option<(u32, u32)>,
+    since: u64,
+    logged: bool,
+}
+
+impl CarryWatch {
+    /// True once per disagreement that has lasted `CARRY_DISAGREE_US`.
+    fn check(&mut self, local: u32, owner: u32, now: u64) -> bool {
+        if local == owner {
+            self.key = None;
+            return false;
+        }
+        if self.key != Some((local, owner)) {
+            self.key = Some((local, owner));
+            self.since = now;
+            self.logged = false;
+        }
+        if !self.logged && now.saturating_sub(self.since) >= CARRY_DISAGREE_US {
+            self.logged = true;
+            return true;
+        }
+        false
+    }
 }
 
 impl Partner {
@@ -81,13 +126,18 @@ impl Partner {
             last_pos: [0.0; 3],
             last_at: 0,
             vel: [0.0; 2],
+            prev_pressed: None,
+            last_press_log_us: 0,
+            last_face_us: 0,
+            carry: CarryWatch::default(),
         }
     }
 
     /// Records a received state (once per sequence number) and updates the owner velocity.
-    fn track(&mut self, seq: u32, pos: [f32; 3], now: u64) {
+    /// True when the state is new.
+    fn track(&mut self, seq: u32, pos: [f32; 3], now: u64) -> bool {
         if self.last_seq == Some(seq) {
-            return;
+            return false;
         }
         if self.last_seq.is_some() {
             if let Some(v) = velocity_xz(self.last_pos, self.last_at, pos, now) {
@@ -97,6 +147,7 @@ impl Partner {
         self.last_seq = Some(seq);
         self.last_pos = pos;
         self.last_at = now;
+        true
     }
 
     /// Owner velocity, zero when the owner has gone quiet.
@@ -111,6 +162,8 @@ impl Partner {
 
 static PARTNERS: Mutex<Option<HashMap<u8, Partner>>> = Mutex::new(None);
 static START: OnceLock<Instant> = OnceLock::new();
+/// Last raw `ActorCarriedBy` / `ActorCarried` values of the local avatar, for change logging.
+static LAST_CARRY: Mutex<(u64, u64)> = Mutex::new((0, 0));
 /// `net_stick_sign`: multiplies the camera delta applied to partners' sticks.
 static STICK_SIGN: AtomicI32 = AtomicI32::new(1);
 static STEER: AtomicBool = AtomicBool::new(true);
@@ -150,6 +203,34 @@ pub fn choose_class(own: Option<usize>, used: &[usize], count: usize) -> usize {
 /// Lowest free local slot, given the slots in use.
 pub fn free_slot(taken: &[usize]) -> Option<usize> {
     SLOTS.iter().copied().find(|s| !taken.contains(s))
+}
+
+/// Interaction buttons held in a pad: XINPUT bits plus `LT_BIT` / `RT_BIT` for triggers past half.
+pub fn pressed_bits(p: &Pad) -> u32 {
+    let mut b = p.buttons as u32 & ACTION_BUTTONS;
+    if p.lt >= TRIGGER_PRESSED {
+        b |= LT_BIT;
+    }
+    if p.rt >= TRIGGER_PRESSED {
+        b |= RT_BIT;
+    }
+    b
+}
+
+/// Buttons newly pressed between two pressed sets.
+pub fn rising(prev: u32, cur: u32) -> u32 {
+    cur & !prev
+}
+
+/// Absolute difference of two angles, wrapped to 0..=pi.
+pub fn yaw_diff(a: f32, b: f32) -> f32 {
+    let d = (a - b).rem_euclid(2.0 * std::f32::consts::PI);
+    d.min(2.0 * std::f32::consts::PI - d)
+}
+
+/// Length of the left stick, 0..1.
+fn owner_mag(p: &Pad) -> f32 {
+    len2([p.lx as f32 / 32767.0, p.ly as f32 / 32767.0]).min(1.0)
 }
 
 /// Velocity on x and z between two received positions; None when they are less than 1 ms apart.
@@ -209,7 +290,7 @@ pub fn world_to_stick(dir: [f32; 2], mag: f32, right: [f32; 2], look: [f32; 2], 
 /// The pad a bound partner gets: buttons and triggers from the owner, left stick steered, right stick centred.
 #[allow(clippy::too_many_arguments)]
 pub fn steer_pad(owner: Pad, err: [f32; 2], vel: [f32; 2], right: [f32; 2], look: [f32; 2], delta: f32, sx: i32, sy: i32) -> (Pad, f32) {
-    let owner_mag = len2([owner.lx as f32 / 32767.0, owner.ly as f32 / 32767.0]).min(1.0);
+    let owner_mag = owner_mag(&owner);
     let (lx, ly, mag) = match decide_steer(err, vel, owner_mag) {
         Steer::Dir(d, m) => {
             let (x, y) = world_to_stick(d, m, right, look, sx, sy);
@@ -323,7 +404,8 @@ pub unsafe fn update() {
     let controls = rd_u8(p0 + CONTROLS_ON) != 0;
     let pad_out = if controls { held } else { Pad::default() };
     let cam = view_heading(mgr, 0).unwrap_or(0.0);
-    net::set_local_state(level, own_class.map_or(CLASS_UNKNOWN, |c| c as u8), pos, yaw, cam, pad_out, 0);
+    let flags = carry_flags(p0, true);
+    net::set_local_state(level, own_class.map_or(CLASS_UNKNOWN, |c| c as u8), pos, yaw, cam, pad_out, flags);
 
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;
     let remote = net::remote_states();
@@ -351,14 +433,33 @@ pub unsafe fn update() {
             pad::set_remote_pad(p.slot, None);
             continue;
         }
-        p.track(st.seq, st.pos, now);
+        let fresh = p.track(st.seq, st.pos, now);
         if p.avatar != 0 && slot_avatar(mgr, p.slot as u64) != p.avatar {
             log!("coop: player {id} lost slot {} (avatar {:#x}); will rebind", p.slot, p.avatar);
             p.avatar = 0;
         }
+        let pressed = pressed_bits(&st.pad);
+        let edges = match (fresh, p.prev_pressed) {
+            (true, Some(prev)) => rising(prev, pressed),
+            _ => 0,
+        };
+        if fresh {
+            p.prev_pressed = Some(pressed);
+        }
+        if p.avatar != 0 && edges != 0 {
+            // interactions depend on exact geometry: make the pose match the owner before the press lands
+            let cur = [rd_f32(p.avatar + 0x80), rd_f32(p.avatar + 0x84), rd_f32(p.avatar + 0x88)];
+            let yaw_err = yaw_diff(avatar_yaw(p.avatar), st.yaw);
+            place_pose(p.avatar, st.pos, st.yaw);
+            if now.saturating_sub(p.last_press_log_us) >= PRESS_LOG_US {
+                p.last_press_log_us = now;
+                log!("coop: player {id} press {edges:#x}, pose error {:.2} m / {:.1} deg", dist2(cur, st.pos).sqrt(), yaw_err.to_degrees());
+            }
+        }
         let delta = stick_delta(view_heading(mgr, p.slot as u64), st.cam, STICK_SIGN.load(Ordering::Relaxed));
         let mut out = rotate_pad(st.pad, delta);
         let mut mag = f32::NAN;
+        let mut idle = false;
         if p.avatar != 0 && STEER.load(Ordering::Relaxed) {
             if let Some((right, look)) = view_axes(mgr, p.slot as u64) {
                 let v = p.velocity(now);
@@ -366,6 +467,17 @@ pub unsafe fn update() {
                 let err = [target[0] - rd_f32(p.avatar + 0x80), target[1] - rd_f32(p.avatar + 0x88)];
                 let (sx, sy) = (STEER_X.load(Ordering::Relaxed), STEER_Y.load(Ordering::Relaxed));
                 (out, mag) = steer_pad(st.pad, err, v, right, look, delta, sx, sy);
+                idle = decide_steer(err, v, owner_mag(&st.pad)) == Steer::Idle && len2(v) < MOVING_SPEED;
+            }
+        }
+        if p.avatar != 0 {
+            if idle && edges == 0 && now.saturating_sub(p.last_face_us) >= FACE_US && yaw_diff(avatar_yaw(p.avatar), st.yaw) > FACE_TOLERANCE {
+                p.last_face_us = now;
+                set_rotation(p.avatar, st.yaw);
+            }
+            let local = carry_flags(p.avatar, false);
+            if p.carry.check(local, st.flags & (FLAG_CARRYING | FLAG_CARRIED), now) {
+                log!("coop: player {id} carry state local={local} owner={}", st.flags & (FLAG_CARRYING | FLAG_CARRIED));
             }
         }
         pad::set_remote_pad(p.slot, Some(out));
@@ -481,15 +593,37 @@ unsafe fn spawn(mgr: u64, class: &Class, pos: [f32; 3], yaw: f32) -> u64 {
     avatar
 }
 
-/// The placing handler's sequence (0x1406a2010): PrepareForPlacing when far, position, rotation, node refresh.
-unsafe fn place(actor: u64, actor_id: u64, pos: [f32; 3], yaw: f32) {
-    let cur = [rd_f32(actor + 0x80), rd_f32(actor + 0x84), rd_f32(actor + 0x88)];
-    if dist2(cur, pos) > PREPARE_DIST * PREPARE_DIST {
-        ev5(global(EVENTS), va(0x1_4077_1420), 0, 0, actor_id); // "PrepareForPlacing"
+/// Carry state of an avatar as `FLAG_*` bits. `ActorCarriedBy` and `ActorCarried` each keep a
+/// pointer at `+0x18` (script bindings 0x1400b0020 / 0x1400b0120); which one means which
+/// direction is unconfirmed, so the raw values are logged when the local ones change.
+unsafe fn carry_flags(avatar: u64, log_raw: bool) -> u32 {
+    let raw = |name: &[u8]| {
+        let comp = find_component(avatar, name.as_ptr() as u64);
+        if comp == 0 {
+            0
+        } else {
+            rd_u64(comp + 0x18)
+        }
+    };
+    let (by, carried) = (raw(b"ActorCarriedBy\0"), raw(b"ActorCarried\0"));
+    if log_raw {
+        if let Ok(mut last) = LAST_CARRY.lock() {
+            if *last != (by, carried) {
+                *last = (by, carried);
+                log!("coop: local carry raw ActorCarriedBy={by:#x} ActorCarried={carried:#x}");
+            }
+        }
     }
-    for (i, v) in pos.iter().enumerate() {
-        std::ptr::write_unaligned((actor + 0x80 + i as u64 * 4) as *mut f32, *v);
-    }
+    (if by != 0 { FLAG_CARRYING } else { 0 }) | (if carried != 0 { FLAG_CARRIED } else { 0 })
+}
+
+/// Yaw of an avatar from its rotation quaternion (`+0x90`).
+unsafe fn avatar_yaw(avatar: u64) -> f32 {
+    yaw_from_quat(rd_f32(avatar + 0x94), rd_f32(avatar + 0x9c))
+}
+
+/// Sets only the rotation: node refresh, matrix from the yaw quaternion, setter, node `vt+0x8`.
+unsafe fn set_rotation(actor: u64, yaw: f32) {
     let node = actor + 0x50;
     node_dirty(node);
     let quat = quat_from_yaw(yaw);
@@ -497,6 +631,23 @@ unsafe fn place(actor: u64, actor_id: u64, pos: [f32; 3], yaw: f32) {
     quat_to_mat(mat.as_mut_ptr(), quat.as_ptr());
     node_set_rot(node, mat.as_ptr());
     vt_call(node, 0x8);
+}
+
+/// Position and rotation, without `PrepareForPlacing` (that event may reset carry state).
+unsafe fn place_pose(actor: u64, pos: [f32; 3], yaw: f32) {
+    for (i, v) in pos.iter().enumerate() {
+        std::ptr::write_unaligned((actor + 0x80 + i as u64 * 4) as *mut f32, *v);
+    }
+    set_rotation(actor, yaw);
+}
+
+/// The placing handler's sequence (0x1406a2010): PrepareForPlacing when far, position, rotation, node refresh.
+unsafe fn place(actor: u64, actor_id: u64, pos: [f32; 3], yaw: f32) {
+    let cur = [rd_f32(actor + 0x80), rd_f32(actor + 0x84), rd_f32(actor + 0x88)];
+    if dist2(cur, pos) > PREPARE_DIST * PREPARE_DIST {
+        ev5(global(EVENTS), va(0x1_4077_1420), 0, 0, actor_id); // "PrepareForPlacing"
+    }
+    place_pose(actor, pos, yaw);
 }
 
 #[cfg(test)]
@@ -659,6 +810,50 @@ mod tests {
         assert!(p.lx < -32000 && p.ly.abs() <= 1); // raw stick, rotated by delta
         let (p, mag) = steer_pad(owner, [0.0, 0.1], [0.0; 2], [1.0, 0.0], [0.0, 1.0], 0.0, 1, 1);
         assert_eq!((p.lx, p.ly, mag), (0, 0, 0.0));
+    }
+
+    #[test]
+    fn button_edges() {
+        let pad = |buttons: u16, lt: u8, rt: u8| Pad { buttons, lt, rt, ..Pad::default() };
+        let none = pressed_bits(&pad(0, 0, 0));
+        let x = pressed_bits(&pad(0x4000, 0, 0));
+        assert_eq!(x, 0x4000);
+        assert_eq!(rising(none, x), 0x4000);
+        assert_eq!(rising(x, x), 0); // held
+        assert_eq!(rising(x, none), 0); // release is not a press
+        assert_eq!(rising(x, pressed_bits(&pad(0x4000 | 0x1000, 0, 0))), 0x1000);
+        // d-pad, start and thumb clicks are not interactions
+        assert_eq!(pressed_bits(&pad(0x0001 | 0x0010 | 0x0040, 0, 0)), 0);
+        // triggers count from 128
+        assert_eq!(pressed_bits(&pad(0, 127, 127)), 0);
+        assert_eq!(pressed_bits(&pad(0, 128, 0)), LT_BIT);
+        assert_eq!(rising(none, pressed_bits(&pad(0, 0, 255))), RT_BIT);
+        assert_eq!(pressed_bits(&pad(0x0100 | 0x0200, 0, 0)), 0x0300);
+    }
+
+    #[test]
+    fn yaw_difference_wraps() {
+        assert!(near(yaw_diff(0.1, -0.1), 0.2));
+        assert!(near(yaw_diff(PI - 0.1, -PI + 0.1), 0.2));
+        assert!(near(yaw_diff(-PI + 0.1, PI - 0.1), 0.2));
+        assert!(near(yaw_diff(3.0 * PI, PI), 0.0));
+        assert!(near(yaw_diff(0.0, PI), PI));
+        assert!(yaw_diff(0.0, 0.1) < FACE_TOLERANCE && yaw_diff(0.0, 0.2) > FACE_TOLERANCE);
+    }
+
+    #[test]
+    fn carry_watch_logs_once_after_half_a_second() {
+        let mut w = CarryWatch::default();
+        assert!(!w.check(0, 0, 0));
+        assert!(!w.check(0, 1, 1_000));
+        assert!(!w.check(0, 1, 400_000));
+        assert!(w.check(0, 1, 501_000));
+        assert!(!w.check(0, 1, 900_000)); // already logged
+        assert!(!w.check(0, 2, 1_000_000)); // a new disagreement restarts the clock
+        assert!(w.check(0, 2, 1_500_000));
+        assert!(!w.check(2, 2, 1_600_000)); // agreement resets
+        assert!(!w.check(0, 1, 1_700_000));
+        assert!(w.check(0, 1, 2_200_000));
     }
 
     #[test]

@@ -163,3 +163,11 @@ town.
   probes padded against amplification, and peers' input validated (finite in-range states, level name
   charset, control characters in names, spend cap, save serving limited to once per 200 ms).
   `install.ps1 -Password`. See NETCODE.md "Security".
+
+- 2026-10-19, H6b (protocol 8): world events by reference name. Actor ids differ between copies but the
+  reference name (`actor+0x150`) is unique and equal for most placed actors (756 of 822 in Toy Box), and
+  replaying `ExploderDestroy` (a=0, b=0) on the client's crate by id broke it with its coins. The
+  targeted-post detour now queues whitelisted events (`world::SYNCED`) with the actor's reference name;
+  the host keeps a per-level list that clients acknowledge (`World`, `WorldAck`), clients report their
+  own events (`WorldReport`), and each copy replays entries through `0x140557f60` + `call_post_actor`,
+  retrying for 10 s. Unit tests only; not yet run in game. See NETCODE.md "World events".

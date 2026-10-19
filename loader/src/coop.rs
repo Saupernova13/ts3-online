@@ -7,14 +7,24 @@ use crate::net::proto::{level_hash, Pad, State, CLASS_UNKNOWN};
 use crate::{net, pad};
 use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 const RETRY_US: u64 = 2_000_000;
 const LOG_US: u64 = 1_000_000;
 /// Farther than this from the owner's position, a partner is placed back.
-const SNAP_DIST: f32 = 3.0;
+const SNAP_DIST: f32 = 4.0;
+/// Seconds of owner velocity the steering target leads by.
+const LEAD: f32 = 0.10;
+/// Inside this error (m) the partner copies the owner motion instead of chasing the position.
+const NEAR_ERR: f32 = 0.25;
+/// Error (m) at which chasing reaches full stick.
+const FULL_ERR: f32 = 1.5;
+const MOVING_SPEED: f32 = 0.5;
+const IDLE_STICK: f32 = 0.15;
+/// Owner updates older than this (us) count as standing still.
+const STALE_US: u64 = 250_000;
 /// Farther than this, a placement fires `PrepareForPlacing` first.
 const PREPARE_DIST: f32 = 2.0;
 /// Local slots for remote players.
@@ -48,12 +58,71 @@ struct Partner {
     snaps: u32,
     last_log_us: u64,
     last_drift_us: u64,
+    /// owner position history from received states: seq of the latest, its position and receive time
+    last_seq: Option<u32>,
+    last_pos: [f32; 3],
+    last_at: u64,
+    /// owner velocity on x and z (m/s)
+    vel: [f32; 2],
+}
+
+impl Partner {
+    fn new(slot: usize) -> Partner {
+        Partner {
+            slot,
+            avatar: 0,
+            actor_id: 0,
+            class: 0,
+            next_try_us: 0,
+            snaps: 0,
+            last_log_us: 0,
+            last_drift_us: 0,
+            last_seq: None,
+            last_pos: [0.0; 3],
+            last_at: 0,
+            vel: [0.0; 2],
+        }
+    }
+
+    /// Records a received state (once per sequence number) and updates the owner velocity.
+    fn track(&mut self, seq: u32, pos: [f32; 3], now: u64) {
+        if self.last_seq == Some(seq) {
+            return;
+        }
+        if self.last_seq.is_some() {
+            if let Some(v) = velocity_xz(self.last_pos, self.last_at, pos, now) {
+                self.vel = v;
+            }
+        }
+        self.last_seq = Some(seq);
+        self.last_pos = pos;
+        self.last_at = now;
+    }
+
+    /// Owner velocity, zero when the owner has gone quiet.
+    fn velocity(&self, now: u64) -> [f32; 2] {
+        if now.saturating_sub(self.last_at) > STALE_US {
+            [0.0; 2]
+        } else {
+            self.vel
+        }
+    }
 }
 
 static PARTNERS: Mutex<Option<HashMap<u8, Partner>>> = Mutex::new(None);
 static START: OnceLock<Instant> = OnceLock::new();
 /// `net_stick_sign`: multiplies the camera delta applied to partners' sticks.
 static STICK_SIGN: AtomicI32 = AtomicI32::new(1);
+static STEER: AtomicBool = AtomicBool::new(true);
+static STEER_X: AtomicI32 = AtomicI32::new(1);
+static STEER_Y: AtomicI32 = AtomicI32::new(1);
+
+/// `net_steer`, `net_steer_x`, `net_steer_y`.
+pub fn set_steer(on: bool, x: i32, y: i32) {
+    STEER.store(on, Ordering::Relaxed);
+    STEER_X.store(x, Ordering::Relaxed);
+    STEER_Y.store(y, Ordering::Relaxed);
+}
 
 pub fn set_stick_sign(sign: i32) {
     STICK_SIGN.store(sign, Ordering::Relaxed);
@@ -83,6 +152,78 @@ pub fn free_slot(taken: &[usize]) -> Option<usize> {
     SLOTS.iter().copied().find(|s| !taken.contains(s))
 }
 
+/// Velocity on x and z between two received positions; None when they are less than 1 ms apart.
+pub fn velocity_xz(p0: [f32; 3], t0: u64, p1: [f32; 3], t1: u64) -> Option<[f32; 2]> {
+    let dt = t1.saturating_sub(t0);
+    if dt < 1000 {
+        return None;
+    }
+    let s = dt as f32 / 1e6;
+    Some([(p1[0] - p0[0]) / s, (p1[2] - p0[2]) / s])
+}
+
+fn len2(v: [f32; 2]) -> f32 {
+    (v[0] * v[0] + v[1] * v[1]).sqrt()
+}
+
+fn normalize2(v: [f32; 2]) -> Option<[f32; 2]> {
+    let l = len2(v);
+    (l.is_finite() && l > 1e-4).then(|| [v[0] / l, v[1] / l])
+}
+
+/// What a partner left stick should do.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Steer {
+    /// walk in a world direction (unit) at a stick magnitude 0..1
+    Dir([f32; 2], f32),
+    /// the owner raw left stick, rotated into this view
+    Raw,
+    /// stand still
+    Idle,
+}
+
+/// Closed-loop steering: `err` is target minus the partner position on x/z, `vel` the owner
+/// velocity, `owner_mag` the owner left-stick length (0..1).
+pub fn decide_steer(err: [f32; 2], vel: [f32; 2], owner_mag: f32) -> Steer {
+    let e = len2(err);
+    if !e.is_finite() {
+        return Steer::Idle;
+    }
+    if e < NEAR_ERR {
+        if let Some(d) = normalize2(vel).filter(|_| len2(vel) > MOVING_SPEED) {
+            return Steer::Dir(d, owner_mag.clamp(0.0, 1.0));
+        }
+        return if owner_mag < IDLE_STICK { Steer::Idle } else { Steer::Raw };
+    }
+    Steer::Dir([err[0] / e, err[1] / e], owner_mag.max(e / FULL_ERR).clamp(0.0, 1.0))
+}
+
+/// Left-stick axes for a world direction under a view whose `right` and `look` are unit vectors on
+/// x/z; `sx` and `sy` are the axis signs (`net_steer_x`, `net_steer_y`).
+pub fn world_to_stick(dir: [f32; 2], mag: f32, right: [f32; 2], look: [f32; 2], sx: i32, sy: i32) -> (i16, i16) {
+    let to_i16 = |v: f32| (v * 32767.0).round().clamp(-32767.0, 32767.0) as i16;
+    let dot = |a: [f32; 2], b: [f32; 2]| a[0] * b[0] + a[1] * b[1];
+    (to_i16(mag * dot(dir, right) * sx as f32), to_i16(mag * dot(dir, look) * sy as f32))
+}
+
+/// The pad a bound partner gets: buttons and triggers from the owner, left stick steered, right stick centred.
+#[allow(clippy::too_many_arguments)]
+pub fn steer_pad(owner: Pad, err: [f32; 2], vel: [f32; 2], right: [f32; 2], look: [f32; 2], delta: f32, sx: i32, sy: i32) -> (Pad, f32) {
+    let owner_mag = len2([owner.lx as f32 / 32767.0, owner.ly as f32 / 32767.0]).min(1.0);
+    let (lx, ly, mag) = match decide_steer(err, vel, owner_mag) {
+        Steer::Dir(d, m) => {
+            let (x, y) = world_to_stick(d, m, right, look, sx, sy);
+            (x, y, m)
+        }
+        Steer::Raw => {
+            let (x, y) = rotate_stick(owner.lx, owner.ly, delta);
+            (x, y, owner_mag)
+        }
+        Steer::Idle => (0, 0, 0.0),
+    };
+    (Pad { lx, ly, rx: 0, ry: 0, ..owner }, mag)
+}
+
 /// Rotates a stick (i16 axes, normalised to -1..1) by `d` radians, counter-clockwise.
 pub fn rotate_stick(x: i16, y: i16, d: f32) -> (i16, i16) {
     let (fx, fy) = (x as f32 / 32767.0, y as f32 / 32767.0);
@@ -101,17 +242,28 @@ pub fn rotate_pad(pad: Pad, d: f32) -> Pad {
     Pad { lx, ly, rx, ry, ..pad }
 }
 
-/// Camera heading of the view for player slot `i`, from its view matrix (`view+0x20`, row major):
-/// `atan2(m[0][2], m[2][2])`. None when the view is missing or the values are not finite.
-unsafe fn view_heading(mgr: u64, i: u64) -> Option<f32> {
+unsafe fn view_ptr(mgr: u64, i: u64) -> Option<u64> {
     let views = rd_u64(mgr + 0xd8);
     if views == 0 || rd_i32(views) <= i as i32 {
         return None;
     }
     let view = rd_u64(rd_u64(views + 8) + i * 8);
-    if view == 0 {
-        return None;
-    }
+    (view != 0).then_some(view)
+}
+
+/// Unit `right` and `look` vectors on x/z of the view for slot `i`, from its view matrix
+/// (`right = (m00, m20)`, `look = (-m02, -m22)`).
+unsafe fn view_axes(mgr: u64, i: u64) -> Option<([f32; 2], [f32; 2])> {
+    let view = view_ptr(mgr, i)?;
+    let right = normalize2([rd_f32(view + 0x20), rd_f32(view + 0x40)])?;
+    let look = normalize2([-rd_f32(view + 0x28), -rd_f32(view + 0x48)])?;
+    Some((right, look))
+}
+
+/// Camera heading of the view for player slot `i`, from its view matrix (`view+0x20`, row major):
+/// `atan2(m[0][2], m[2][2])`. None when the view is missing or the values are not finite.
+unsafe fn view_heading(mgr: u64, i: u64) -> Option<f32> {
+    let view = view_ptr(mgr, i)?;
     let h = rd_f32(view + 0x28).atan2(rd_f32(view + 0x48));
     h.is_finite().then_some(h)
 }
@@ -188,7 +340,7 @@ pub unsafe fn update() {
             Some(p) => p,
             None => {
                 let Some(slot) = free_slot(&taken) else { continue };
-                partners.entry(id).or_insert(Partner { slot, avatar: 0, actor_id: 0, class: 0, next_try_us: 0, snaps: 0, last_log_us: 0, last_drift_us: 0 })
+                partners.entry(id).or_insert(Partner::new(slot))
             }
         };
         if st.level != level || level == 0 {
@@ -199,18 +351,31 @@ pub unsafe fn update() {
             pad::set_remote_pad(p.slot, None);
             continue;
         }
+        p.track(st.seq, st.pos, now);
+        if p.avatar != 0 && slot_avatar(mgr, p.slot as u64) != p.avatar {
+            log!("coop: player {id} lost slot {} (avatar {:#x}); will rebind", p.slot, p.avatar);
+            p.avatar = 0;
+        }
         let delta = stick_delta(view_heading(mgr, p.slot as u64), st.cam, STICK_SIGN.load(Ordering::Relaxed));
-        pad::set_remote_pad(p.slot, Some(rotate_pad(st.pad, delta)));
+        let mut out = rotate_pad(st.pad, delta);
+        let mut mag = f32::NAN;
+        if p.avatar != 0 && STEER.load(Ordering::Relaxed) {
+            if let Some((right, look)) = view_axes(mgr, p.slot as u64) {
+                let v = p.velocity(now);
+                let target = [st.pos[0] + v[0] * LEAD, st.pos[2] + v[1] * LEAD];
+                let err = [target[0] - rd_f32(p.avatar + 0x80), target[1] - rd_f32(p.avatar + 0x88)];
+                let (sx, sy) = (STEER_X.load(Ordering::Relaxed), STEER_Y.load(Ordering::Relaxed));
+                (out, mag) = steer_pad(st.pad, err, v, right, look, delta, sx, sy);
+            }
+        }
+        pad::set_remote_pad(p.slot, Some(out));
         if p.avatar == 0 {
             if now >= p.next_try_us {
                 p.next_try_us = now + RETRY_US;
                 bind(mgr, id, p, &st, own_class, &used);
             }
-        } else if slot_avatar(mgr, p.slot as u64) != p.avatar {
-            log!("coop: player {id} lost slot {} (avatar {:#x}); will rebind", p.slot, p.avatar);
-            p.avatar = 0;
         } else {
-            correct(p, id, &st, now, delta);
+            correct(p, id, &st, now, delta, mag);
         }
     }
 }
@@ -277,11 +442,11 @@ unsafe fn unbind(mgr: u64, id: u8, p: &Partner, why: &str) {
 }
 
 /// Places a bound partner back when it drifted from the owner's position.
-unsafe fn correct(p: &mut Partner, id: u8, st: &State, now: u64, delta: f32) {
+unsafe fn correct(p: &mut Partner, id: u8, st: &State, now: u64, delta: f32, mag: f32) {
     let cur = [rd_f32(p.avatar + 0x80), rd_f32(p.avatar + 0x84), rd_f32(p.avatar + 0x88)];
     if now.saturating_sub(p.last_drift_us) >= LOG_US {
         p.last_drift_us = now;
-        log!("coop: player {id} slot {} drift {:.1} m, cam delta {:.1} deg", p.slot, dist2(cur, st.pos).sqrt(), delta.to_degrees());
+        log!("coop: player {id} slot {} drift {:.1} m, cam delta {:.1} deg, steer {:.2}", p.slot, dist2(cur, st.pos).sqrt(), delta.to_degrees(), mag);
     }
     if dist2(cur, st.pos) <= SNAP_DIST * SNAP_DIST {
         return;
@@ -417,6 +582,83 @@ mod tests {
         assert_eq!(stick_delta(None, 0.25, 1), 0.0);
         assert_eq!(stick_delta(Some(1.0), f32::NAN, 1), 0.0);
         assert_eq!(stick_delta(Some(1.0), f32::INFINITY, 1), 0.0);
+    }
+
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    #[test]
+    fn velocity_from_two_states() {
+        let v = velocity_xz([0.0, 5.0, 0.0], 1_000_000, [1.0, 9.0, -0.5], 1_100_000).unwrap_or_default();
+        assert!(near(v[0], 10.0) && near(v[1], -5.0)); // y is ignored
+        assert_eq!(velocity_xz([0.0; 3], 100, [1.0; 3], 600), None);
+        assert_eq!(velocity_xz([0.0; 3], 500, [1.0; 3], 100), None);
+    }
+
+    #[test]
+    fn partner_tracks_once_per_sequence_and_goes_stale() {
+        let mut p = Partner::new(1);
+        p.track(1, [0.0; 3], 0);
+        assert_eq!(p.velocity(0), [0.0; 2]);
+        p.track(2, [0.2, 0.0, 0.0], 20_000);
+        p.track(2, [9.0, 0.0, 0.0], 30_000); // same seq: ignored
+        assert!(near(p.velocity(30_000)[0], 10.0));
+        assert_eq!(p.velocity(20_000 + STALE_US + 1), [0.0; 2]);
+    }
+
+    #[test]
+    fn steering_decisions() {
+        // far: chase the target, at least as fast as the owner stick
+        match decide_steer([3.0, 0.0], [0.0; 2], 0.2) {
+            Steer::Dir(d, m) => assert!(near(d[0], 1.0) && near(d[1], 0.0) && near(m, 1.0)),
+            other => panic!("{other:?}"),
+        }
+        match decide_steer([0.0, -0.6], [0.0; 2], 0.1) {
+            Steer::Dir(d, m) => assert!(near(d[1], -1.0) && near(m, 0.4)),
+            other => panic!("{other:?}"),
+        }
+        match decide_steer([0.0, 1.5], [0.0; 2], 0.9) {
+            Steer::Dir(_, m) => assert!(near(m, 1.0)),
+            other => panic!("{other:?}"),
+        }
+        // near and the owner is moving: follow its velocity
+        match decide_steer([0.1, 0.0], [0.0, 3.0], 0.8) {
+            Steer::Dir(d, m) => assert!(near(d[1], 1.0) && near(m, 0.8)),
+            other => panic!("{other:?}"),
+        }
+        // near and slow: idle or the raw stick
+        assert_eq!(decide_steer([0.1, 0.0], [0.1, 0.0], 0.1), Steer::Idle);
+        assert_eq!(decide_steer([0.1, 0.0], [0.1, 0.0], 0.5), Steer::Raw);
+        assert_eq!(decide_steer([f32::NAN, 0.0], [0.0; 2], 0.5), Steer::Idle);
+    }
+
+    #[test]
+    fn world_to_stick_mapping() {
+        // a view looking along +z with right = -x (any orthonormal pair works)
+        let (right, look) = ([-1.0, 0.0], [0.0, 1.0]);
+        assert_eq!(world_to_stick([0.0, 1.0], 1.0, right, look, 1, 1), (0, 32767));
+        assert_eq!(world_to_stick([-1.0, 0.0], 0.5, right, look, 1, 1), (16384, 0));
+        assert_eq!(world_to_stick([0.0, 1.0], 1.0, right, look, 1, -1), (0, -32767));
+        assert_eq!(world_to_stick([-1.0, 0.0], 1.0, right, look, -1, 1), (-32767, 0));
+        // magnitude over 1 clamps, never wraps
+        assert_eq!(world_to_stick([0.0, 1.0], 3.0, right, look, 1, 1), (0, 32767));
+        let (x, y) = world_to_stick([0.6, 0.8], 1.0, [1.0, 0.0], [0.0, 1.0], 1, 1);
+        assert!((x - 19660).abs() <= 1 && (y - 26214).abs() <= 1);
+    }
+
+    #[test]
+    fn steered_pad_keeps_buttons_and_centres_the_right_stick() {
+        let owner = Pad { buttons: 0x1000, lt: 4, rt: 5, lx: 0, ly: 0, rx: 1000, ry: -2000 };
+        let (p, mag) = steer_pad(owner, [2.0, 0.0], [0.0; 2], [1.0, 0.0], [0.0, 1.0], 0.0, 1, 1);
+        assert_eq!((p.buttons, p.lt, p.rt, p.rx, p.ry), (0x1000, 4, 5, 0, 0));
+        assert_eq!((p.lx, p.ly), (32767, 0));
+        assert!(near(mag, 1.0));
+        let moving = Pad { lx: 0, ly: 32767, ..owner };
+        let (p, _) = steer_pad(moving, [0.0, 0.1], [0.0; 2], [1.0, 0.0], [0.0, 1.0], std::f32::consts::FRAC_PI_2, 1, 1);
+        assert!(p.lx < -32000 && p.ly.abs() <= 1); // raw stick, rotated by delta
+        let (p, mag) = steer_pad(owner, [0.0, 0.1], [0.0; 2], [1.0, 0.0], [0.0, 1.0], 0.0, 1, 1);
+        assert_eq!((p.lx, p.ly, mag), (0, 0, 0.0));
     }
 
     #[test]

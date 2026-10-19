@@ -119,6 +119,7 @@ mod entry {
         if cfg.net.is_some() {
             pad::install_net(base, cfg.pad);
             coop::set_stick_sign(cfg.net_stick_sign);
+            coop::set_steer(cfg.net_steer, cfg.net_steer_x, cfg.net_steer_y);
         } else if let Some(p) = cfg.pad {
             pad::install(base, p);
         }

@@ -13,6 +13,7 @@ pub fn resolve(name: &str) -> Option<u64> {
         "refresh_player_controls" => refresh_player_controls as *const () as u64,
         "reset_player_slots" => reset_player_slots as *const () as u64,
         "level_player_setup" => level_player_setup as *const () as u64,
+        "frame_tick" => frame_tick as *const () as u64,
         _ => return None,
     })
 }
@@ -57,6 +58,17 @@ pub unsafe extern "system" fn level_player_setup(mgr: u64, views: u64) {
     }
     views_finish(views);
     log!("hook level_player_setup: views 1..3 set up");
+}
+
+/// Replaces the three per-frame calls in the input dispatch (0x140280c18): the same calls, then
+/// the network proxy update while a session exists (FINDINGS 9).
+pub unsafe extern "system" fn frame_tick() {
+    frame_a();
+    frame_b();
+    frame_c();
+    if crate::net::active() {
+        crate::proxy::update();
+    }
 }
 
 unsafe fn actor_id(actor: u64) -> u64 {

@@ -87,6 +87,16 @@ Single player in Toy Box: walk to Ham and talk to him. Expect `hook level_player
 level load and no crash when the conversation camera starts. Repeat with 3-4 players in, so the
 conversation camera also runs on views 2/3 with avatars.
 
+## T9: two copies see each other (H1, H2)
+
+Same setup as T7, plus `net=host:27777` in `[copy1]` and `net=client:127.0.0.1:27777` in `[copy2]`
+(and `name=` per copy). Expect in the logs: `net: host on 0.0.0.0:27777`, `net: connected as player
+1` (copy 2), roster lines with both names and `net: rtt` lines. Enter Toy Box in both copies.
+Expect `proxy: spawned` in each log and the other player's avatar standing where the other copy's
+player is. Move the focused copy's player: the proxy follows in the other copy (use
+`tools/shot.ps1 -ProcessId` to capture the covered copy). Exit Toy Box in one copy: no crash in
+either; the proxy comes back after re-entering.
+
 ## Reporting
 
 Copy the log plus a note of what was on screen (or a screenshot) into an issue or the progress log.

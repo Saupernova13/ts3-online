@@ -99,3 +99,15 @@ and H2 (see each other move).
   because views 2/3 were created without camera setup and the conversation camera pushes a state on
   every view. New `level_player_setup` hook sets up views 1..3 at level load; the join hook no longer
   does. Not run in the game yet (T8).
+- H1 (`loader/src/net/`): UDP host/client session thread, `net=host:PORT` / `net=client:ADDR:PORT`
+  and `name=` in `ts3online.ini`. Hello/Welcome/Refuse (full, build or protocol mismatch), roster,
+  ping/pong RTT, 5 s timeouts with client reconnect, and per-player `State` relayed by the host.
+  Tested over loopback in `cargo test` (host + 2 clients); not run in the game.
+- H2 (`loader/src/proxy.rs`): a frame hook (`0x140280c18`) publishes slot 0's position and yaw and
+  spawns one proxy avatar per remote player (sync spawner, a class different from the local one,
+  controls off), placed every frame with the placing handler's sequence; removed when the player
+  leaves, forgotten on level change. Spawn and rotation details: FINDINGS 9. Not run in the game
+  yet (T9). 225 patches.
+
+**Next:** run T9 (two copies connect and see each other), then H3 (drive proxies from the owner's
+input) and H4 (networked-session rules).

@@ -438,6 +438,20 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   hook can replace the block with one Rust function that makes the same three calls and then does
   per-frame network work (read slot 0, place proxies). The stack is 16-byte aligned there.
 - **[obs]** The `PrepareForPlacing` event name is at `0x140771420`.
+- **[obs] Proxy spawn details (`queries/88`).** The property set is 3 qwords (`0x140288540` zeroes
+  it); `0x14050d490` parses `key=value;` pairs into it. `0x1405af7e0(mgr, props, &pos, yaw_radians,
+  0)` returns the avatar. Naming `0x1400e7550(avatar, name, hash)` uses `Woody2`/`hash(0xd4)`,
+  `Buzz2`/`hash(0xcc)`, `Jessie2`/`hash(0xcf)` and fires `RespawnAvatar`. The menu takes the async
+  spawner `0x1405af9e0` because the byte `0x14094cce2` is 1 in the image (read once, never written);
+  level setup uses the sync one. A leaving player's avatar is removed with `0x140556230(avatar)`
+  (player leave `0x1405fc7d0`).
+- **[obs] Rotation.** The node keeps a quaternion `(x, y, z, w)` at node `+0x40` (`actor+0x90`).
+  Euler to quaternion `0x14024b9c0(&euler_radians[3], &quat)` (half-angle factor `0.5` at
+  `0x140776e28`), quaternion to 3x3 matrix `0x140256d00(&mat, &quat)`, and the setter
+  `0x140568b50(node, &mat)` converts back, rotates node `+0x80` along, and marks the node dirty.
+  A pure yaw `(0, yaw, 0)` gives `(0, -sin(yaw/2), 0, cos(yaw/2))`, so yaw = `-2 atan2(qy, qw)`.
+- **[obs] Actor lookup by id.** `0x140558400(id)` returns the actor for an id (`actor+0x38`) or 0;
+  the placing handler resolves its target this way, so a stored id survives a level change safely.
 - **[obs] Verified in game (2026-10-17):** with `enable=instances`, copy 1 started from Steam and copy 2
   started through Explorer run side by side, each with its own number, log, pad mapping and window
   rect; copy 2's saves go to `%LOCALAPPDATA%	s3online\copy2`. Pad isolation holds: a copy ignores

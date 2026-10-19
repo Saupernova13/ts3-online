@@ -67,18 +67,22 @@ from input, and the game already treats it as a player for co-op moves and inter
 
 ## Phases
 
+Principle: online play is the game's own local co-op with the partner's controller on the other end
+of the network. Remote players are real co-op partners in slots 1-3 (pick up, throw, ride, swap),
+never puppets with interactions turned off.
+
 | Phase | Work | Done when |
 |---|---|---|
-| H0 | Two copies on one PC: mutex and Steam relaunch bypass, per-copy pad mapping, per-copy log, no client saves | both copies run Toy Box side by side, each moved by its own pad |
-| H1 | UDP host and client, hello and roster, heartbeat with round-trip time | the logs show both copies connected |
-| H2 | Ghosts: each copy sends slot 0's transform; the other spawns a proxy in slot 1 and places it every frame | each copy shows the other player moving, in one viewport |
-| H3 | Live proxies: drive the proxy from the owner's input, with position correction | proxies run, jump and attack like the owner |
-| H4 | Networked-session rules: no split screen, no shared-screen mode, no regrouping; both copies follow the host's level | two players play a Toy Box session without either world breaking |
-| H5 | Shared world, system by system: pickups and gold, enemies and NPCs owned by the host, missions, rides and vehicles | both players see the same enemies, pickups and mission state |
-| H6 | Tailnet test between two PCs, then up to 4 players, joining and leaving mid-session | a 4-player session across PCs |
+| H0 | Two copies on one PC: mutex and Steam relaunch bypass, per-copy pad mapping, per-copy log | done (T7) |
+| H1 | UDP host and client, hello and roster, heartbeat with round-trip time | done (T9) |
+| H2 | Each copy publishes slot 0's transform; the others show an avatar placed every frame | done (T9) |
+| H3 | Co-op partners: the owner's pad state is sent every frame and fed to a virtual XInput pad 1-3; the remote avatar is bound to a player slot through the join path, so it moves, animates and interacts through the game's own code; the owner's position corrects drift; the `online` patch keeps one full-screen view of slot 0 | partners run, jump, pick each other up and throw on both screens |
+| H4 | Connect: `net=auto` finds a host among the online tailnet peers (`tailscale status`) or becomes the host; two hosts that meet merge; explicit `net=client:<tailnet name>:27777` still works | two PCs on one tailnet connect with the same ini and no addresses |
+| H5 | One world: the host sends its save at connect and the client plays it from a session folder without saving back, as local P2 plays P1's save; the client follows the host into its level (`SwitchLevel`, `0x14012e800`) | both copies load the same Toy Box with the same unlocks |
+| H6 | Shared world state, system by system: gold and pickups, enemies and NPCs owned by the host, missions, shops, rides and vehicles | both players see the same enemies, pickups and mission state |
+| H7 | Release: install/uninstall script, sample ini, README for players, 2-PC tailnet test | a friend installs it and plays |
 
-H0-H3 reuse what already exists (join and bind hooks, slots 1-3, the controls fix). H5 is the
-long tail: every world system the players can touch needs its own sync rule.
+`net_sim=delay,jitter,loss` adds artificial latency and loss for testing on one PC.
 
 ## Risks
 

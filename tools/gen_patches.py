@@ -151,9 +151,13 @@ def main():
         print("\n".join(errors), file=sys.stderr)
         sys.exit(1)
 
-    rvas = [int(p["rva"], 16) for p in patches]
-    if len(set(rvas)) != len(rvas):
-        sys.exit("duplicate patch sites")
+    # alternatives for one site are fine when each sits in its own optional group
+    sites = {}
+    for p in patches:
+        sites.setdefault(int(p["rva"], 16), []).append(p["group"])
+    for groups in sites.values():
+        if len(groups) > 1 and (len(set(groups)) != len(groups) or not all(g in optional for g in groups)):
+            sys.exit("duplicate patch sites")
 
     doc = {
         "game": {

@@ -15,7 +15,7 @@ pub mod net;
 pub mod pad;
 pub mod patch;
 #[cfg(windows)]
-pub mod proxy;
+pub mod coop;
 #[cfg(windows)]
 pub mod saves;
 pub mod watch;
@@ -27,7 +27,7 @@ mod win;
 
 #[cfg(windows)]
 mod entry {
-    use crate::{config, copy, doc, game, hooks, log, net, pad, patch, saves, watch, win, window};
+    use crate::{config, coop, copy, doc, game, hooks, log, net, pad, patch, saves, watch, win, window};
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use windows_sys::core::{GUID, HRESULT};
@@ -116,7 +116,11 @@ mod entry {
         }
         patch_game(&dir, &cfg);
         let base = win::main_module_base();
-        if let Some(p) = cfg.pad {
+        if cfg.net.is_some() {
+            pad::install_net(base, cfg.pad);
+            coop::set_stick_sign(cfg.net_stick_sign);
+            coop::set_steer(cfg.net_steer, cfg.net_steer_x, cfg.net_steer_y);
+        } else if let Some(p) = cfg.pad {
             pad::install(base, p);
         }
         if n > 1 {
@@ -126,7 +130,7 @@ mod entry {
             window::start(rect);
         }
         if let Some(n) = &cfg.net {
-            net::start(n, &cfg.name);
+            net::start(n, &cfg.name, cfg.net_sim);
         }
     }
 

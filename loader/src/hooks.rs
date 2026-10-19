@@ -61,13 +61,20 @@ pub unsafe extern "system" fn level_player_setup(mgr: u64, views: u64) {
 }
 
 /// Replaces the three per-frame calls in the input dispatch (0x140280c18): the same calls, then
-/// the network proxy update while a session exists (FINDINGS 9).
+/// the co-op partner update while a session exists (FINDINGS 9).
+static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub unsafe extern "system" fn frame_tick() {
     frame_a();
     frame_b();
     frame_c();
+    let n = FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if n % 60 == 0 {
+        crate::pad::reassert();
+    }
+
     if crate::net::active() {
-        crate::proxy::update();
+        crate::coop::update();
     }
 }
 

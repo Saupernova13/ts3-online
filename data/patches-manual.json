@@ -2,6 +2,7 @@
  "about": "Hand-reviewed patches that the classifiers cannot find (FINDINGS 3a, 5a, 5b). VAs assume image base 0x140000000.",
  "optional_groups": [
   "quadrants",
+  "online",
   "instances"
  ],
  "patches": [
@@ -172,6 +173,30 @@
    "orig": "4863f9",
    "new": "6a045f",
    "note": "SetSplitScreenMode (0x1405f4700): movsxd rdi,ecx -> push 4; pop rdi, so every split request builds 4 quadrants and the event and mode global say 4 (for streaming each quadrant)"
+  },
+  {
+   "id": "online_1405f4718",
+   "group": "online",
+   "va": "0x1405f4718",
+   "orig": "4863f9",
+   "new": "31ff90",
+   "note": "SetSplitScreenMode (0x1405f4700): movsxd rdi,ecx -> xor edi,edi; nop, so a networked copy keeps one full-screen viewport (view 0, the local player) whatever the player count"
+  },
+  {
+   "id": "online_14027b6b4",
+   "group": "online",
+   "va": "0x14027b6b4",
+   "orig": "e92b090000",
+   "new": "e9e9020000",
+   "note": "input driver update (0x14027b500): keyboard unreadable (window unfocused) -> skip to the controller loop instead of returning, so pads (and partners' virtual pads) keep updating without focus"
+  },
+  {
+   "id": "online_14027b910",
+   "group": "online",
+   "va": "0x14027b910",
+   "orig": "e9cf060000",
+   "new": "e98d000000",
+   "note": "input driver update (0x14027b500): mouse unreadable (window unfocused) -> skip to the controller loop instead of returning"
   },
   {
    "id": "instances_14027e154",

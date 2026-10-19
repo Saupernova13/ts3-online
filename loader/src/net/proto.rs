@@ -1,7 +1,7 @@
 //! Wire format: `b"TS3O"`, protocol version u16, message type u8, body. Little-endian, no padding.
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 3;
 pub const MAX_NAME: usize = 32;
 
 pub const REFUSE_FULL: u8 = 1;
@@ -17,14 +17,44 @@ const T_PONG: u8 = 6;
 const T_STATE: u8 = 7;
 const T_BYE: u8 = 8;
 
-/// One player's transform and action flags, sent by its owner.
+/// Controller state in the XINPUT_GAMEPAD layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Pad {
+    pub buttons: u16,
+    pub lt: u8,
+    pub rt: u8,
+    pub lx: i16,
+    pub ly: i16,
+    pub rx: i16,
+    pub ry: i16,
+}
+
+/// Class byte for a character the receiver cannot place.
+pub const CLASS_UNKNOWN: u8 = 255;
+
+/// One player's transform, controller and action flags, sent by its owner.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct State {
     pub id: u8,
     pub seq: u32,
+    /// FNV-1a of the lowercase level name, 0 when not in a level
+    pub level: u32,
+    /// 0 buzz, 1 woody, 2 jessie, 255 unknown
+    pub class: u8,
     pub pos: [f32; 3],
     pub yaw: f32,
+    /// the sender's camera heading (radians), to rotate its stick into the receiver's view
+    pub cam: f32,
+    pub pad: Pad,
     pub flags: u32,
+}
+
+/// 32-bit FNV-1a of the lowercase level name; 0 for an empty name.
+pub fn level_hash(name: &str) -> u32 {
+    if name.is_empty() {
+        return 0;
+    }
+    name.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ b.to_ascii_lowercase() as u32).wrapping_mul(0x0100_0193))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,7 +120,15 @@ pub fn encode(msg: &Msg) -> Vec<u8> {
         Msg::State(s) => {
             o.extend_from_slice(&[T_STATE, s.id]);
             o.extend_from_slice(&s.seq.to_le_bytes());
-            for v in s.pos.iter().chain(&[s.yaw]) {
+            o.extend_from_slice(&s.level.to_le_bytes());
+            o.push(s.class);
+            for v in s.pos.iter().chain(&[s.yaw, s.cam]) {
+                o.extend_from_slice(&v.to_le_bytes());
+            }
+            let p = &s.pad;
+            o.extend_from_slice(&p.buttons.to_le_bytes());
+            o.extend_from_slice(&[p.lt, p.rt]);
+            for v in [p.lx, p.ly, p.rx, p.ry] {
                 o.extend_from_slice(&v.to_le_bytes());
             }
             o.extend_from_slice(&s.flags.to_le_bytes());
@@ -117,6 +155,12 @@ impl<'a> Reader<'a> {
     }
     fn u64(&mut self) -> Option<u64> {
         Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?))
+    }
+    fn u16(&mut self) -> Option<u16> {
+        Some(u16::from_le_bytes(self.take(2)?.try_into().ok()?))
+    }
+    fn i16(&mut self) -> Option<i16> {
+        Some(self.u16()? as i16)
     }
     fn f32(&mut self) -> Option<f32> {
         Some(f32::from_bits(self.u32()?))
@@ -158,8 +202,12 @@ pub fn decode(bytes: &[u8]) -> Result<Msg, DecodeError> {
             T_STATE => Msg::State(State {
                 id: r.u8()?,
                 seq: r.u32()?,
+                level: r.u32()?,
+                class: r.u8()?,
                 pos: [r.f32()?, r.f32()?, r.f32()?],
                 yaw: r.f32()?,
+                cam: r.f32()?,
+                pad: Pad { buttons: r.u16()?, lt: r.u8()?, rt: r.u8()?, lx: r.i16()?, ly: r.i16()?, rx: r.i16()?, ry: r.i16()? },
                 flags: r.u32()?,
             }),
             T_BYE => Msg::Bye { id: r.u8()? },
@@ -182,7 +230,17 @@ mod tests {
             Msg::Roster { players: Vec::new() },
             Msg::Ping { seq: 7, t_us: u64::MAX },
             Msg::Pong { seq: 7, t_us: 123_456 },
-            Msg::State(State { id: 1, seq: 99, pos: [1.5, -2.0, 300.25], yaw: 3.14, flags: 0xdead_beef }),
+            Msg::State(State {
+                id: 1,
+                seq: 99,
+                level: level_hash("ST_ToyBox"),
+                class: 1,
+                pos: [1.5, -2.0, 300.25],
+                yaw: 3.14,
+                cam: -1.25,
+                pad: Pad { buttons: 0x3001, lt: 5, rt: 255, lx: -32768, ly: 32767, rx: -1, ry: 1234 },
+                flags: 0xdead_beef,
+            }),
             Msg::Bye { id: 3 },
         ]
     }
@@ -225,6 +283,14 @@ mod tests {
             framed.truncate(framed.len() / 2);
             let _ = decode(&framed);
         }
+    }
+
+    #[test]
+    fn level_hash_ignores_case_and_empty_is_zero() {
+        assert_eq!(level_hash(""), 0);
+        assert_eq!(level_hash("ST_ToyBox"), level_hash("st_toybox"));
+        assert_ne!(level_hash("st_toybox"), level_hash("st_daycare"));
+        assert_eq!(level_hash("a"), 0xe40c_292c); // FNV-1a test vector
     }
 
     #[test]

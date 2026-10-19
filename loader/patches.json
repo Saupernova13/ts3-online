@@ -2409,6 +2409,17 @@
    "hook": "reset_player_slots",
    "note": "level teardown (0x1405b0ea0): slot-1 reset block -> reset slots 1..3; mgr in RBX, R14 = 0 stays live",
    "prefix": "4889d9"
+  },
+  {
+   "id": "hook_level_views_1405aee38",
+   "group": "hooks",
+   "rva": "0x5aee38",
+   "orig": "418bd4498bcee8dd150000488b8d98030000e801fbf1ff",
+   "kind": "hook",
+   "mode": "call",
+   "hook": "level_player_setup",
+   "note": "level setup (0x1405ae570): player 2's view setup + view-array finish -> view setup for players 2..4; mgr in R14, view array at [RBP+0x398]",
+   "prefix": "4c89f1488b9598030000"
   }
  ]
 }

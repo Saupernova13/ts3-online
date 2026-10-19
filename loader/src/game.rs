@@ -97,6 +97,7 @@ game_fn!(registry_get, 0x1_4055_8400, fn(entry: u64) -> u64);
 game_fn!(prop_string, 0x1_404f_dff0, fn(obj: u64, name: u64, flag: u8) -> u64);
 game_fn!(slot_init, 0x1_405f_0cf0, fn(slot: u64, avatar: u64) -> ());
 game_fn!(player_setup, 0x1_405b_0420, fn(mgr: u64, idx: u32) -> ());
+game_fn!(views_finish, 0x1_404c_e950, fn(views: u64) -> ());
 game_fn!(control_mapper, 0x1_4055_9010, fn(actor: u64) -> u64);
 game_fn!(cstack_pop, 0x1_4028_0930, fn(stacks: u64, entry: u64, player: u32) -> u64);
 game_fn!(cstack_unregister, 0x1_4028_1470, fn(stacks: u64, entry: u64, player: u32, flag: u8) -> ());

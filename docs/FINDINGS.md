@@ -322,6 +322,26 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
 - **[obs]** `0x1401b5bc0` disables controls for players `< 2` from a list; its guard
   (`0x1401b5bec`) was already patched by the bounds pass.
 
+### 5f. Conversation camera crash on views 2/3 (`queries/87`)
+
+- **[obs] Crash.** Talking to a Toy Box character (Ham) crashed with an access violation writing
+  `0x194` at `0x1403f81d7` in `CameraGroup::SetState` (RTTI `.?AVCameraGroup@@`, vtable
+  `0x1407d3f60`, slot 1): the group's current state (`group+0x50`) was null. Four dumps, same fault,
+  single player, all after the 4-view patch.
+- **[obs] Path.** The ShowDown (conversation) camera `0x1406a8f40` walks every view
+  (`[0x140b274c8]+0x38`, next at `view+0x2f0`) and pushes a camera state on each view's camera
+  stack (`view+0x258`) through `0x1403ff250`, which ends in `SetState`.
+- **[obs] Cause.** The `views` patch makes level setup create 4 views, but per-player view setup
+  `0x1405b0420` (Avatar/General/Tether/SpaceFlight/ToyCamera/ShowDown cameras and the first state)
+  ran for views 0/1 only. Views 2/3 had camera groups with no state until a P3/P4 join set them up.
+- **[obs] Setup is safe without a player.** `0x1405b0420(mgr, i)` reads slot i's avatar (0 when
+  absent) and calls `0x140400990(view, i < player_count)` to mark the view inactive; vanilla already
+  runs it for an absent player 2. Joining activates the view through `assign_avatar`
+  (`0x1405f1030` -> `0x140400990(view, 1)`).
+- **[obs] Fix.** Call hook `level_player_setup` at `0x1405aee38` (the slot-1 view setup and the
+  view-array finish `0x1404ce950([rbp+0x398])`): view setup for 1..3, then the finish. The join hook
+  no longer runs view setup, so cameras are not added twice.
+
 ## 6. Rendering and window
 
 - **[obs]** `-dxresolution WxH` is parsed with `strtok` (`0x1402a5930`); the window is created

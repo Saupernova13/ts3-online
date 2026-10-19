@@ -114,6 +114,23 @@ no host and hosts; copy 2 finds the port taken and joins the local host. Expect 
 and in copy 1's `net: save: sent N bytes to player 1`. Then T10's partner checks pass unchanged. The
 first time a copy hosts, Windows Firewall asks about the game: on a tailnet the host must allow it.
 
+## T12: follow each other between levels (H5b, passed 2026-10-19)
+
+Start as for T11. Then:
+
+1. Host: `post SwitchLevel wt_stuntpark` in `cmd.copy1.txt` (needs `dev_cmds=1`). Expect in the
+   client's log `coop: following the host to level wt_stuntpark` about 1.5 s after the host's
+   `coop: level "wt_stuntpark"`, then both rebind their partner.
+2. Client: `post SwitchLevel wt_stuntpark` (`post` goes through the game's own post entry, so the
+   loader sees it like a door). Expect in the host's log `coop: a client changed level, following to ...`.
+3. Close the client, wait, start it again (`work/scratch/rejoin.sh`): the host parks the partner
+   (`parked`), and wakes it when the player is back (`is back`). Close the host: the client parks
+   its partner, takes over hosting and keeps running.
+4. Both copies keep running for a minute in the new level with drift under 0.5 m.
+
+A client on the game board does not follow (menus are not levels); it enters Toy Box through its own
+menus and follows from there.
+
 ## Reporting
 
 Copy the log plus a note of what was on screen (or a screenshot) into an issue or the progress log.

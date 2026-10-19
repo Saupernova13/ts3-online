@@ -132,5 +132,17 @@ and H2 (see each other move).
   `%LOCALAPPDATA%\ts3online\session`, never writing to its own saves. The save-folder hook waits up
   to 8 s at startup for that decision. The host's first run triggers a Windows Firewall prompt.
 
-**Next:** follow the host's level automatically (H5b), an event logger to plan world sync (H6), then
-release packaging.
+- Event tools (PR #8): detour hooks on the three event-post functions, `log_events=1` logs every game
+  event, `dev_cmds=1` runs `event`/`post`/`log` lines from `cmd.copyN.txt`. Posting `SwitchLevel` with
+  a level name reloads that copy in about 5 s.
+
+- H5b (T12 passed, OBS recording `2026-10-19 15-07-49`): the host sends its level name; a client in
+  another level for 1.5 s follows it, and a client's own level switch makes the host follow. Found on
+  the way: removing a partner avatar mid-level crashed `wt_stuntpark` a few seconds later (FINDINGS
+  10), so partners whose owner left or changed level now stay parked, idle, until the owner returns or
+  the level ends; the level teardown frees them. Menus (`gui_*`) are not followed.
+- Release prep: `tools/install.ps1` (find the game through Steam, copy the DLL, write a `net=auto` ini,
+  optional firewall rule, uninstall), `docs/PLAYING.md`, and a CI workflow that tests, builds and
+  attaches `ts3-online.zip` to `v*` tags. Keyboard input is not replicated yet (issue #9).
+
+**Next:** world sync (H6): gold and the stats table first, then pickups, enemies and missions.

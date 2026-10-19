@@ -10,6 +10,7 @@ pub mod hooks;
 #[cfg(windows)]
 pub mod iat;
 pub mod log;
+pub mod net;
 #[cfg(windows)]
 pub mod pad;
 pub mod patch;
@@ -24,7 +25,7 @@ mod win;
 
 #[cfg(windows)]
 mod entry {
-    use crate::{config, copy, doc, game, hooks, log, pad, patch, saves, watch, win, window};
+    use crate::{config, copy, doc, game, hooks, log, net, pad, patch, saves, watch, win, window};
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use windows_sys::core::{GUID, HRESULT};
@@ -121,6 +122,9 @@ mod entry {
         }
         if let Some(rect) = cfg.window {
             window::start(rect);
+        }
+        if let Some(n) = &cfg.net {
+            net::start(n, &cfg.name);
         }
     }
 

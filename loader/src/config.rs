@@ -1,4 +1,12 @@
 //! `ts3online.ini`: optional `key=value` lines, `#` comments. `[copy1]`..`[copy4]` sections apply to that copy only.
+use crate::net::proto::clamp_name;
+
+/// `net = host:27777` / `net = client:host:port`; a client target is resolved when the session starts.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Net {
+    Host(u16),
+    Client(String),
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -11,11 +19,15 @@ pub struct Config {
     pub window: Option<(i32, i32, i32, i32)>,
     /// `pad = N` (1-4): the physical XInput pad this copy's player 1 uses
     pub pad: Option<u32>,
+    /// `net = host:PORT` or `net = client:ADDR:PORT`
+    pub net: Option<Net>,
+    /// `name = text`: shown to other players (max 32 bytes)
+    pub name: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None }
+        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, name: "player".into() }
     }
 }
 
@@ -76,6 +88,25 @@ pub fn parse(text: &str, copy: u32) -> Config {
                     c.pad = Some(n);
                 }
             }
+            "net" => {
+                let (kind, rest) = v.split_once(':').unwrap_or((v, ""));
+                let rest = rest.trim();
+                match kind.trim().to_ascii_lowercase().as_str() {
+                    "host" => {
+                        if let Ok(p @ 1..) = rest.parse::<u16>() {
+                            c.net = Some(Net::Host(p));
+                        }
+                    }
+                    "client" if rest.contains(':') && !rest.starts_with(':') && !rest.ends_with(':') => c.net = Some(Net::Client(rest.to_string())),
+                    _ => {}
+                }
+            }
+            "name" => {
+                let n = clamp_name(v).trim();
+                if !n.is_empty() {
+                    c.name = n.to_string();
+                }
+            }
             _ => {}
         }
     }
@@ -88,13 +119,13 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None });
+        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, name: "player".into() });
     }
 
     #[test]
     fn overrides_and_comments() {
         let c = parse("# hi\n enabled = 0 \nwatch=false\nWATCH_INTERVAL_MS=250\nbogus=1\nnoequals\n", 1);
-        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None });
+        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, name: "player".into() });
     }
 
     #[test]
@@ -116,6 +147,36 @@ mod tests {
         assert_eq!(parse("pad=0", 1).pad, None);
         assert_eq!(parse("pad=5", 1).pad, None);
         assert_eq!(parse("pad=x", 1).pad, None);
+    }
+
+    #[test]
+    fn net_key() {
+        assert_eq!(parse("net=host:27777", 1).net, Some(Net::Host(27777)));
+        assert_eq!(parse("net = HOST : 1", 1).net, Some(Net::Host(1)));
+        assert_eq!(parse("net=client:127.0.0.1:27777", 1).net, Some(Net::Client("127.0.0.1:27777".into())));
+        assert_eq!(parse("net=client: pc.tail.ts.net:27777", 1).net, Some(Net::Client("pc.tail.ts.net:27777".into())));
+        for bad in ["host:0", "host:70000", "host", "host:x", "client:", "client:nohost", "client::5", "client:a:", "server:1", ""] {
+            assert_eq!(parse(&format!("net={bad}"), 1).net, None, "{bad}");
+        }
+        assert_eq!(parse("net=host:1
+net=bogus", 1).net, Some(Net::Host(1)));
+    }
+
+    #[test]
+    fn name_key() {
+        assert_eq!(parse("name =  Bob the Builder ", 1).name, "Bob the Builder");
+        assert_eq!(parse("name=", 1).name, "player");
+        assert_eq!(parse(&format!("name={}", "x".repeat(50)), 1).name.len(), 32);
+        assert_eq!(parse("name=a
+[copy2]
+name=b
+net=host:5
+", 2).name, "b");
+        assert_eq!(parse("name=a
+[copy2]
+name=b
+net=host:5
+", 1).net, None);
     }
 
     #[test]

@@ -163,3 +163,11 @@ town.
   probes padded against amplification, and peers' input validated (finite in-range states, level name
   charset, control characters in names, spend cap, save serving limited to once per 200 ms).
   `install.ps1 -Password`. See NETCODE.md "Security".
+
+- 2026-10-19, connect menu: `net=menu` opens a small Win32 window at game start (own thread, own message
+  loop) that probes `127.0.0.1`, the LAN broadcast, `net_peers` and the online tailnet peers once a second,
+  lists the hosts of our build (`name  players/4  ip:port`, `[password]`, `[full]`) and lets the player join,
+  type an address or host. Nothing times out while it is open (`menu_open` in the net state: `wait_decision`
+  starts its clock only after it closes). Name, password and the joined address (`menu_last`) are written
+  back to the ini. `install.ps1` now writes `net=menu`. Logic in `menu_model.rs` (tested), window in `menu.rs`
+  (not exercised without the game).

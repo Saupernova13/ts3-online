@@ -9,6 +9,8 @@ pub enum Net {
     Client(String),
     /// find a host among the peers, else host (FINDINGS 10)
     Auto,
+    /// show the connect menu at start and let the player choose host or join
+    Menu,
 }
 
 pub const DEFAULT_PORT: u16 = 27777;
@@ -83,11 +85,13 @@ pub struct Config {
     pub name: String,
     /// `net_key = text`: shared password every datagram is authenticated with (max 64 bytes)
     pub net_key: NetKey,
+    /// `menu_last = addr`: the game the connect menu joined last, prefilled in its address box
+    pub menu_last: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default() }
+        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default(), menu_last: String::new() }
     }
 }
 
@@ -159,6 +163,7 @@ pub fn parse(text: &str, copy: u32) -> Config {
                         }
                     }
                     "auto" if rest.is_empty() => c.net = Some(Net::Auto),
+                    "menu" if rest.is_empty() => c.net = Some(Net::Menu),
                     "client" if !rest.is_empty() && !rest.starts_with(':') && !rest.ends_with(':') => c.net = Some(Net::Client(rest.to_string())),
                     _ => {}
                 }
@@ -194,6 +199,7 @@ pub fn parse(text: &str, copy: u32) -> Config {
                 }
             }
             "net_key" => c.net_key = NetKey::new(v),
+            "menu_last" => c.menu_last = v.to_string(),
             "name" => {
                 let n = clamp_name(v).trim();
                 if !n.is_empty() {
@@ -224,13 +230,13 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default() });
+        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default(), menu_last: String::new() });
     }
 
     #[test]
     fn overrides_and_comments() {
         let c = parse("# hi\n enabled = 0 \nwatch=false\nWATCH_INTERVAL_MS=250\nbogus=1\nnoequals\n", 1);
-        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default() });
+        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default(), menu_last: String::new() });
     }
 
     #[test]
@@ -324,6 +330,18 @@ enable=online
         assert_eq!(parse("net_port=0", 1).net_port, 27777);
         assert_eq!(parse("net_port=x", 1).net_port, 27777);
         assert_eq!(parse("net=auto", 1).enable, ["online"]);
+    }
+
+    #[test]
+    fn net_menu_and_menu_last() {
+        let c = parse("net=menu
+menu_last = 100.64.0.7:27777", 1);
+        assert_eq!(c.net, Some(Net::Menu));
+        assert_eq!(c.menu_last, "100.64.0.7:27777");
+        assert_eq!(c.enable, ["online"]);
+        assert_eq!(parse("net = MENU", 1).net, Some(Net::Menu));
+        assert_eq!(parse("net=menu:1", 1).net, None);
+        assert_eq!(parse("", 1).menu_last, "");
     }
 
     #[test]

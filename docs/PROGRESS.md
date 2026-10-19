@@ -92,3 +92,10 @@ Oldest first. One entry per working session: what was learned, what changed, wha
 
 **Next:** find the input focus gate so both local copies can be played at once, then H1 (connect)
 and H2 (see each other move).
+
+## 2026-10-19
+
+- Ham crash (FINDINGS 5f): talking to a Toy Box character crashed in `CameraGroup::SetState`
+  because views 2/3 were created without camera setup and the conversation camera pushes a state on
+  every view. New `level_player_setup` hook sets up views 1..3 at level load; the join hook no longer
+  does. 221 patches. Not run in the game yet (T8).

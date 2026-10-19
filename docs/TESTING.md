@@ -81,6 +81,12 @@ focused copy reacts to its pad. To see where: press a button on the unfocused co
 its log for `pad: result=0 buttons=...`. No line, or `foreground=false` with `buttons=0x0000` while
 held, means XInput hands it neutral input; retry with Steam Input off for the game to confirm.
 
+## T8: talk to Ham (conversation camera)
+
+Single player in Toy Box: walk to Ham and talk to him. Expect `hook level_player_setup` in the log at
+level load and no crash when the conversation camera starts. Repeat with 3-4 players in, so the
+conversation camera also runs on views 2/3 with avatars.
+
 ## Reporting
 
 Copy the log plus a note of what was on screen (or a screenshot) into an issue or the progress log.

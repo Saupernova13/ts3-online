@@ -18,9 +18,9 @@ Relocation: `0x258` bytes at RVA `0x9582b0` -> a `0x400` buffer; fields from `+0
 | views | 11 | Level setup creates 4 per-player views instead of 2, and the inline view-array guards accept 4. | FINDINGS 5c | verified in game 2026-10-16 |
 | quadrants (optional) | 1 | Optional (`enable=quadrants` in `ts3online.ini`): every split request builds 4 quadrants, so each player keeps the same 16:9 quarter for streaming. | FINDINGS 2; PLAN rig design | not tested in game |
 | instances (optional) | 3 | Optional (`enable=instances`): lets a second copy of the game run on the same PC for host/client play. | FINDINGS 9 | not tested in game |
-| hooks | 7 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5e | all verified in game (teardown and the controls fix 2026-10-17) |
+| hooks | 8 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5e | all verified in game (teardown and the controls fix 2026-10-17) |
 
-Total: 223 patches.
+Total: 224 patches.
 
 ## relocate
 
@@ -280,6 +280,7 @@ Total: 223 patches.
 | `0x1400e2490` | entry -> `bind_joining_avatar`, 12 bytes | bind(avatar, level_info, start): Rust mirror with the joining player's index instead of 1 |
 | `0x1400eb6f0` | entry -> `join_request`, 12 bytes | join handler(pad): Rust reimplementation using the first free player index for assign, screen owner and release |
 | `0x1400fe910` | entry -> `join_cancel`, 12 bytes | ScreenJoinIn cancel: release the joining index (not 1), then the shared tail 0x1400e7450 |
+| `0x1405aee38` | call -> `level_player_setup` (prefix `4c89f1488b9598030000`), 23 bytes | level setup (0x1405ae570): player 2's view setup + view-array finish -> view setup for players 2..4; mgr in R14, view array at [RBP+0x398] |
 | `0x1405b0fd6` | call -> `reset_player_slots` (prefix `4889d9`), 293 bytes | level teardown (0x1405b0ea0): slot-1 reset block -> reset slots 1..3; mgr in RBX, R14 = 0 stays live |
 | `0x1405bae40` | entry_caller -> `find_avatar_by_class`, 12 bytes | avatar-by-class lookup: unchanged except calls from the pick handler skip player-owned avatars |
 | `0x1405d32da` | call -> `refresh_player_controls` (prefix `4889f1`), 49 bytes | global controls-disabled add (0x1405d3200): slot-1 refresh block -> refresh slots 1..3; mgr in RSI |

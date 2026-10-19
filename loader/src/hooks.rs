@@ -12,6 +12,7 @@ pub fn resolve(name: &str) -> Option<u64> {
         "find_avatar_by_class" => find_avatar_by_class as *const () as u64,
         "refresh_player_controls" => refresh_player_controls as *const () as u64,
         "reset_player_slots" => reset_player_slots as *const () as u64,
+        "level_player_setup" => level_player_setup as *const () as u64,
         _ => return None,
     })
 }
@@ -33,9 +34,9 @@ unsafe fn joining_index() -> u32 {
     idx
 }
 
-/// Level setup only prepares slots 0/1: index, empty slot init, then the per-player view's cameras.
-/// Slots 2/3 keep the ctor's index -1 (slot init would drain control stack -1 forever) and have no
-/// view setup, so do the same for them the first time they are used (FINDINGS 5b, 5c).
+/// Level setup only prepares slots 0/1: index and empty slot init. Slots 2/3 keep the ctor's index
+/// -1 (slot init would drain control stack -1 forever), so do the same for them the first time they
+/// are used (FINDINGS 5b). Their views were already set up by `level_player_setup`.
 unsafe fn ensure_player_setup(mgr: u64, idx: u32) {
     let slot = mgr + SLOT_INDEX_BASE + idx as u64 * SLOT_STRIDE;
     if rd_i32(slot) != -1 {
@@ -43,8 +44,19 @@ unsafe fn ensure_player_setup(mgr: u64, idx: u32) {
     }
     wr_i32(slot, idx as i32);
     slot_init(slot, 0);
-    player_setup(mgr, idx);
-    log!("hook ensure_player_setup idx={idx}: slot index set, slot init, per-player view setup");
+    log!("hook ensure_player_setup idx={idx}: slot index set, slot init");
+}
+
+/// Replaces the end of level setup (0x1405aee38), which runs per-player view setup for players 0/1
+/// only. Views 2/3 then had camera groups with no state, and the ShowDown (conversation) camera,
+/// which pushes a state on every view, crashed on them (FINDINGS 5f). Set up views 1..=3 the same
+/// way, then finish the view array as the original does.
+pub unsafe extern "system" fn level_player_setup(mgr: u64, views: u64) {
+    for i in 1..4 {
+        player_setup(mgr, i);
+    }
+    views_finish(views);
+    log!("hook level_player_setup: views 1..3 set up");
 }
 
 unsafe fn actor_id(actor: u64) -> u64 {

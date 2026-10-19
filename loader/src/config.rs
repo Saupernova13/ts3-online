@@ -1,12 +1,17 @@
 //! `ts3online.ini`: optional `key=value` lines, `#` comments. `[copy1]`..`[copy4]` sections apply to that copy only.
 use crate::net::proto::clamp_name;
 
-/// `net = host:27777` / `net = client:host:port`; a client target is resolved when the session starts.
+/// `net = host:27777` / `net = client:host:port` / `net = auto`; a client target is resolved when
+/// the session starts. `net=host` and `net=client:ADDR` use `net_port`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Net {
     Host(u16),
     Client(String),
+    /// find a host among the peers, else host (FINDINGS 10)
+    Auto,
 }
+
+pub const DEFAULT_PORT: u16 = 27777;
 
 /// `net_sim = delay_ms[,jitter_ms[,loss_pct]]`: simulated link quality for outgoing datagrams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +41,10 @@ pub struct Config {
     /// `net_steer_x` / `net_steer_y` = 1|-1: axis signs of the steering stick
     pub net_steer_x: i32,
     pub net_steer_y: i32,
+    /// `net_port = N`: default port of every net mode
+    pub net_port: u16,
+    /// `net_peers = a,b,c`: explicit peers for `net=auto` (replaces Tailscale discovery)
+    pub net_peers: Vec<String>,
     /// `net_sim = delay_ms[,jitter_ms[,loss_pct]]`
     pub net_sim: Option<Sim>,
     /// `name = text`: shown to other players (max 32 bytes)
@@ -44,7 +53,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() }
+        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() }
     }
 }
 
@@ -109,15 +118,23 @@ pub fn parse(text: &str, copy: u32) -> Config {
                 let (kind, rest) = v.split_once(':').unwrap_or((v, ""));
                 let rest = rest.trim();
                 match kind.trim().to_ascii_lowercase().as_str() {
+                    "host" if rest.is_empty() => c.net = Some(Net::Host(0)),
                     "host" => {
                         if let Ok(p @ 1..) = rest.parse::<u16>() {
                             c.net = Some(Net::Host(p));
                         }
                     }
-                    "client" if rest.contains(':') && !rest.starts_with(':') && !rest.ends_with(':') => c.net = Some(Net::Client(rest.to_string())),
+                    "auto" if rest.is_empty() => c.net = Some(Net::Auto),
+                    "client" if !rest.is_empty() && !rest.starts_with(':') && !rest.ends_with(':') => c.net = Some(Net::Client(rest.to_string())),
                     _ => {}
                 }
             }
+            "net_port" => {
+                if let Ok(p @ 1..) = v.parse::<u16>() {
+                    c.net_port = p;
+                }
+            }
+            "net_peers" => c.net_peers = v.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
             "net_stick_sign" => {
                 if let Ok(n @ (-1 | 1)) = v.parse::<i32>() {
                     c.net_stick_sign = n;
@@ -149,6 +166,11 @@ pub fn parse(text: &str, copy: u32) -> Config {
             _ => {}
         }
     }
+    match &mut c.net {
+        Some(Net::Host(p)) if *p == 0 => *p = c.net_port,
+        Some(Net::Client(a)) if !a.contains(':') => *a = format!("{a}:{}", c.net_port),
+        _ => {}
+    }
     if c.net.is_some() {
         // a networked copy keeps one full-screen viewport; `online` and `quadrants` patch the same site
         c.enable.retain(|g| g != "quadrants");
@@ -165,13 +187,13 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() });
+        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() });
     }
 
     #[test]
     fn overrides_and_comments() {
         let c = parse("# hi\n enabled = 0 \nwatch=false\nWATCH_INTERVAL_MS=250\nbogus=1\nnoequals\n", 1);
-        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() });
+        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() });
     }
 
     #[test]
@@ -201,7 +223,7 @@ mod tests {
         assert_eq!(parse("net = HOST : 1", 1).net, Some(Net::Host(1)));
         assert_eq!(parse("net=client:127.0.0.1:27777", 1).net, Some(Net::Client("127.0.0.1:27777".into())));
         assert_eq!(parse("net=client: pc.tail.ts.net:27777", 1).net, Some(Net::Client("pc.tail.ts.net:27777".into())));
-        for bad in ["host:0", "host:70000", "host", "host:x", "client:", "client:nohost", "client::5", "client:a:", "server:1", ""] {
+        for bad in ["host:0", "host:70000", "host:x", "client:", "client::5", "client:a:", "server:1", "auto:1", ""] {
             assert_eq!(parse(&format!("net={bad}"), 1).net, None, "{bad}");
         }
         assert_eq!(parse("net=host:1
@@ -249,6 +271,28 @@ enable=online
         for bad in ["", "x", "1,2,3,4", "1,2,101", "-5", "1,,2"] {
             assert_eq!(parse(&format!("net_sim={bad}"), 1).net_sim, None, "{bad}");
         }
+    }
+
+    #[test]
+    fn net_auto_and_default_port() {
+        assert_eq!(parse("net=auto", 1).net, Some(Net::Auto));
+        assert_eq!(parse("net = AUTO", 1).net, Some(Net::Auto));
+        assert_eq!(parse("net=host", 1).net, Some(Net::Host(27777)));
+        assert_eq!(parse("net=host\nnet_port=4000", 1).net, Some(Net::Host(4000)));
+        assert_eq!(parse("net_port=4000\nnet=host:5", 1).net, Some(Net::Host(5)));
+        assert_eq!(parse("net=client:pc.tail.ts.net", 1).net, Some(Net::Client("pc.tail.ts.net:27777".into())));
+        assert_eq!(parse("net=client:10.0.0.2\nnet_port=99", 1).net, Some(Net::Client("10.0.0.2:99".into())));
+        assert_eq!(parse("net=client:10.0.0.2:5\nnet_port=99", 1).net, Some(Net::Client("10.0.0.2:5".into())));
+        assert_eq!(parse("", 1).net_port, 27777);
+        assert_eq!(parse("net_port=0", 1).net_port, 27777);
+        assert_eq!(parse("net_port=x", 1).net_port, 27777);
+        assert_eq!(parse("net=auto", 1).enable, ["online"]);
+    }
+
+    #[test]
+    fn net_peers_list() {
+        assert!(parse("net_peers=", 1).net_peers.is_empty());
+        assert_eq!(parse("net_peers = 10.0.0.2, box.tail.ts.net ,,127.0.0.1", 1).net_peers, ["10.0.0.2", "box.tail.ts.net", "127.0.0.1"]);
     }
 
     #[test]

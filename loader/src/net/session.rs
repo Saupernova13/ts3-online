@@ -1,5 +1,6 @@
 //! Sans-IO session state machine: bytes and the clock go in, datagrams and events come out.
 use super::proto::{self, clamp_name, DecodeError, Msg, Pad, State};
+use super::save::{self, Reassembler};
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 
@@ -8,6 +9,9 @@ const TIMEOUT_US: u64 = 5_000_000;
 const HELLO_US: u64 = 500_000;
 const PING_US: u64 = 1_000_000;
 const STATE_US: u64 = 16_000;
+const SAVE_REQ_US: u64 = 300_000;
+/// Chunks sent per `SaveRequest`.
+const SAVE_BURST: usize = 64;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
@@ -21,6 +25,16 @@ pub enum Event {
     PeerLeft { id: u8 },
     RosterChanged,
     Rtt { id: u8, ms: u32 },
+    /// A `ProbeReply` arrived (discovery and host merging).
+    Discovered { from: SocketAddr, build: u64, host: bool, players: u8, name: String },
+    /// Host: the save went out to a client (first service of its request).
+    SaveSent { id: u8, bytes: usize },
+    /// Client: the host's save arrived complete and its CRC matched.
+    SaveReceived(Vec<u8>),
+    /// Client: the host has no save to send.
+    SaveMissing,
+    /// Client: a complete download failed its CRC; it restarts.
+    SaveBad,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +61,9 @@ struct Peer {
     addr: SocketAddr,
     id: u8,
     last_seen: u64,
+    /// host side: the save read for this client, once `save_read`
+    save: Option<Vec<u8>>,
+    save_read: bool,
 }
 
 pub struct Session {
@@ -68,6 +85,13 @@ pub struct Session {
     ping_seq: u32,
     out: Vec<(SocketAddr, Vec<u8>)>,
     events: Vec<Event>,
+    /// host: where the save to send comes from
+    save_source: Option<Box<dyn Fn() -> Option<Vec<u8>> + Send>>,
+    /// client: fetch the host save after connecting
+    want_save: bool,
+    save_done: bool,
+    rx: Option<Reassembler>,
+    last_save_req: Option<u64>,
 }
 
 /// `new` is ahead of `old` in wrapping sequence order.
@@ -97,6 +121,11 @@ impl Session {
             ping_seq: 0,
             out: Vec::new(),
             events: Vec::new(),
+            save_source: None,
+            want_save: !host,
+            save_done: false,
+            rx: None,
+            last_save_req: None,
         }
     }
 
@@ -106,6 +135,16 @@ impl Session {
 
     pub fn client(build: u64, name: &str, host_addr: SocketAddr) -> Session {
         Session::new(build, name, Some(host_addr))
+    }
+
+    /// Host: how to read the save when a client asks for it.
+    pub fn set_save_source(&mut self, f: impl Fn() -> Option<Vec<u8>> + Send + 'static) {
+        self.save_source = Some(Box::new(f));
+    }
+
+    /// Client: whether to fetch the host save (on by default).
+    pub fn set_want_save(&mut self, want: bool) {
+        self.want_save = want;
     }
 
     pub fn is_host(&self) -> bool {
@@ -162,6 +201,12 @@ impl Session {
 
     pub fn handle(&mut self, from: SocketAddr, bytes: &[u8], now_us: u64) {
         match proto::decode(bytes) {
+            Ok(Msg::Probe { .. }) => {
+                let players = if self.is_host() { self.roster.len() as u8 } else { 0 };
+                let m = Msg::ProbeReply { build: self.build, host: self.is_host(), players, name: self.name.clone() };
+                self.send(from, &m);
+            }
+            Ok(Msg::ProbeReply { build, host, players, name }) => self.events.push(Event::Discovered { from, build, host, players, name }),
             Ok(msg) if self.is_host() => self.host_msg(from, msg, now_us),
             Ok(msg) => self.client_msg(from, msg, now_us),
             Err(DecodeError::Version(_)) if self.is_host() => self.send(from, &Msg::Refuse { reason: proto::REFUSE_PROTOCOL }),
@@ -253,6 +298,7 @@ impl Session {
                 }
             }
             Msg::Bye { id: b } if b == id => self.drop_client(i),
+            Msg::SaveRequest { have } => self.serve_save(i, &have),
             _ => {}
         }
     }
@@ -269,12 +315,32 @@ impl Session {
         let Some(id) = (1..MAX_PLAYERS as u8).find(|i| self.peers.iter().all(|p| p.id != *i)) else {
             return self.send(from, &Msg::Refuse { reason: proto::REFUSE_FULL });
         };
-        self.peers.push(Peer { addr: from, id, last_seen: now });
+        self.peers.push(Peer { addr: from, id, last_seen: now, save: None, save_read: false });
         self.roster.push((id, name.clone()));
         self.roster.sort_by_key(|(i, _)| *i);
         self.send(from, &Msg::Welcome { id });
         self.events.push(Event::PeerJoined { id, name });
         self.broadcast_roster();
+    }
+
+    /// Answers a `SaveRequest`: the info message, then the chunks the client lacks.
+    fn serve_save(&mut self, i: usize, have: &[u8]) {
+        let first = !self.peers[i].save_read;
+        if first {
+            self.peers[i].save = self.save_source.as_ref().and_then(|f| f()).filter(|d| d.len() <= save::MAX_SAVE);
+            self.peers[i].save_read = true;
+        }
+        let (addr, id) = (self.peers[i].addr, self.peers[i].id);
+        let data = self.peers[i].save.clone().unwrap_or_default();
+        self.send(addr, &Msg::SaveInfo { total: data.len() as u32, crc: save::crc32(&data) });
+        if first && !data.is_empty() {
+            self.events.push(Event::SaveSent { id, bytes: data.len() });
+        }
+        for n in save::missing(have, data.len()).into_iter().take(SAVE_BURST) {
+            if let Some((offset, part)) = save::chunk(&data, n) {
+                self.send(addr, &Msg::SaveChunk { total: data.len() as u32, offset, data: part.to_vec() });
+            }
+        }
     }
 
     fn drop_client(&mut self, index: usize) {
@@ -306,7 +372,7 @@ impl Session {
             Msg::Welcome { id } if self.link == Link::Connecting => {
                 self.link = Link::Connected;
                 self.local_id = Some(id);
-                self.peers.push(Peer { addr: from, id: 0, last_seen: now });
+                self.peers.push(Peer { addr: from, id: 0, last_seen: now, save: None, save_read: false });
                 self.events.push(Event::Connected { id });
             }
             Msg::Refuse { reason } if self.link == Link::Connecting => {
@@ -321,6 +387,29 @@ impl Session {
                 self.store_state(s);
             }
             Msg::Bye { id: 0 } => self.host_lost(),
+            Msg::SaveInfo { total, crc } if self.want_save && !self.save_done => {
+                if total == 0 {
+                    self.save_done = true;
+                    self.events.push(Event::SaveMissing);
+                } else if !self.rx.as_ref().is_some_and(|r| r.total() == total as usize && r.crc() == crc) {
+                    self.rx = Reassembler::new(total, crc);
+                }
+            }
+            Msg::SaveChunk { total, offset, data } if self.want_save && !self.save_done => {
+                let Some(rx) = self.rx.as_mut().filter(|r| r.total() == total as usize) else { return };
+                if rx.add(offset, &data) && rx.complete() {
+                    match rx.finish().map(<[u8]>::to_vec) {
+                        Some(d) => {
+                            self.save_done = true;
+                            self.events.push(Event::SaveReceived(d));
+                        }
+                        None => {
+                            self.events.push(Event::SaveBad);
+                            self.rx = None;
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -352,6 +441,9 @@ impl Session {
         self.rtt.clear();
         self.last_hello = None;
         self.last_ping = None;
+        self.rx = None;
+        self.save_done = false;
+        self.last_save_req = None;
     }
 
     fn client_tick(&mut self, now: u64) {
@@ -367,6 +459,10 @@ impl Session {
             Link::Connected => {
                 if self.peers.first().is_some_and(|p| now.saturating_sub(p.last_seen) >= TIMEOUT_US) {
                     return self.host_lost();
+                }
+                if self.want_save && !self.save_done && Self::due(&mut self.last_save_req, now, SAVE_REQ_US) {
+                    let have = self.rx.as_ref().map(|r| r.bitmap().to_vec()).unwrap_or_default();
+                    self.send(host, &Msg::SaveRequest { have });
                 }
                 self.tick_traffic(now);
             }
@@ -542,6 +638,7 @@ mod tests {
     fn ping_pong_rtt() {
         let mut host = Session::host(BUILD, "h");
         let mut c = Session::client(BUILD, "bob", addr(H));
+        c.set_want_save(false);
         connect(&mut host, &mut c, addr(1), addr(H), 0);
         host.drain_events();
         c.drain_events();
@@ -639,6 +736,106 @@ mod tests {
         // nothing pending, nothing sent
         a.tick(300 * MS);
         assert_eq!(states(&mut a), 0);
+    }
+
+    fn pump_pair(host: &mut Session, c: &mut Session, from: u64, to: u64) {
+        let mut t = from;
+        while t < to {
+            c.tick(t);
+            deliver(addr(1), c, addr(H), host, t);
+            host.tick(t);
+            deliver(addr(H), host, addr(1), c, t);
+            t += 10 * MS;
+        }
+    }
+
+    fn sample_save() -> Vec<u8> {
+        (0..19926usize).map(|i| (i * 31 + i / 7) as u8).collect()
+    }
+
+    #[test]
+    fn client_receives_the_hosts_save() {
+        let save = sample_save();
+        let copy = save.clone();
+        let mut host = Session::host(BUILD, "h");
+        host.set_save_source(move || Some(copy.clone()));
+        let mut c = Session::client(BUILD, "bob", addr(H));
+        pump_pair(&mut host, &mut c, 0, 2000 * MS);
+        let ev = c.drain_events();
+        assert!(ev.contains(&Event::SaveReceived(save.clone())), "{ev:?}");
+        assert!(host.drain_events().contains(&Event::SaveSent { id: 1, bytes: save.len() }));
+        // done: no more requests
+        c.drain_outgoing();
+        c.tick(2500 * MS);
+        assert!(!msgs(&mut c).iter().any(|(_, m)| matches!(m, Msg::SaveRequest { .. })));
+    }
+
+    #[test]
+    fn lost_save_chunks_are_requested_again() {
+        let save = sample_save();
+        let copy = save.clone();
+        let mut host = Session::host(BUILD, "h");
+        host.set_save_source(move || Some(copy.clone()));
+        let mut c = Session::client(BUILD, "bob", addr(H));
+        connect(&mut host, &mut c, addr(1), addr(H), 0);
+        c.drain_events();
+        // first request: the network drops every third chunk
+        c.tick(10 * MS);
+        deliver(addr(1), &mut c, addr(H), &mut host, 10 * MS);
+        let mut n = 0;
+        for (d, b) in host.drain_outgoing() {
+            if d == addr(1) {
+                if matches!(decode(&b), Ok(Msg::SaveChunk { .. })) {
+                    n += 1;
+                    if n % 3 == 0 {
+                        continue;
+                    }
+                }
+                c.handle(addr(H), &b, 11 * MS);
+            }
+        }
+        assert!(!c.drain_events().iter().any(|e| matches!(e, Event::SaveReceived(_))));
+        // the next request carries the bitmap and gets only the missing chunks
+        c.tick(400 * MS);
+        let req = msgs(&mut c).into_iter().find_map(|(_, m)| if let Msg::SaveRequest { have } = m { Some(have) } else { None });
+        let have = req.unwrap_or_default();
+        assert_eq!(save::missing(&have, save.len()).len(), 6);
+        host.handle(addr(1), &encode(&Msg::SaveRequest { have }), 401 * MS);
+        let chunks = msgs(&mut host).into_iter().filter(|(_, m)| matches!(m, Msg::SaveChunk { .. })).count();
+        assert_eq!(chunks, 6);
+    }
+
+    #[test]
+    fn missing_save_and_bad_crc() {
+        let mut host = Session::host(BUILD, "h");
+        host.set_save_source(|| None);
+        let mut c = Session::client(BUILD, "bob", addr(H));
+        pump_pair(&mut host, &mut c, 0, 1000 * MS);
+        assert!(c.drain_events().contains(&Event::SaveMissing));
+
+        let mut c2 = Session::client(BUILD, "bob", addr(H));
+        connect(&mut Session::host(BUILD, "x"), &mut c2, addr(1), addr(H), 0);
+        c2.handle(addr(H), &encode(&Msg::Welcome { id: 1 }), 0);
+        c2.drain_events();
+        c2.handle(addr(H), &encode(&Msg::SaveInfo { total: 5, crc: 1 }), 1);
+        c2.handle(addr(H), &encode(&Msg::SaveChunk { total: 5, offset: 0, data: vec![1; 5] }), 1);
+        assert!(c2.drain_events().contains(&Event::SaveBad));
+    }
+
+    #[test]
+    fn probes_are_answered_by_hosts_and_clients() {
+        let mut host = Session::host(BUILD, "hoster");
+        host.handle(addr(9), &encode(&Msg::Probe { build: 1 }), 0);
+        assert_eq!(msgs(&mut host), vec![(addr(9), Msg::ProbeReply { build: BUILD, host: true, players: 1, name: "hoster".into() })]);
+        let mut c = Session::client(BUILD, "bob", addr(H));
+        c.handle(addr(9), &encode(&Msg::Probe { build: BUILD }), 0);
+        assert_eq!(msgs(&mut c), vec![(addr(9), Msg::ProbeReply { build: BUILD, host: false, players: 0, name: "bob".into() })]);
+        // a reply surfaces as an event and is never relayed
+        host.handle(addr(1), &encode(&Msg::Hello { build: BUILD, name: "p".into() }), 0);
+        host.drain_outgoing();
+        host.handle(addr(9), &encode(&Msg::ProbeReply { build: BUILD, host: true, players: 1, name: "x".into() }), 0);
+        assert!(host.drain_outgoing().is_empty());
+        assert!(host.drain_events().contains(&Event::Discovered { from: addr(9), build: BUILD, host: true, players: 1, name: "x".into() }));
     }
 
     #[test]

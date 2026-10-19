@@ -114,6 +114,9 @@ mod entry {
                 log!("{name}=4049180: {}", if ok != 0 { "set" } else { "failed" });
             }
         }
+        if cfg.net.is_some() {
+            net::expect_role();
+        }
         patch_game(&dir, &cfg);
         let base = win::main_module_base();
         if cfg.net.is_some() {
@@ -123,14 +126,14 @@ mod entry {
         } else if let Some(p) = cfg.pad {
             pad::install(base, p);
         }
-        if n > 1 {
+        if n > 1 || cfg.net.is_some() {
             saves::install(base, n);
         }
         if let Some(rect) = cfg.window {
             window::start(rect);
         }
-        if let Some(n) = &cfg.net {
-            net::start(n, &cfg.name, cfg.net_sim);
+        if let Some(mode) = &cfg.net {
+            net::start(mode, net::Options { name: cfg.name.clone(), sim: cfg.net_sim, copy: n, port: cfg.net_port, peers: cfg.net_peers.clone() });
         }
     }
 

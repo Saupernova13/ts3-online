@@ -21,6 +21,25 @@ pub fn save_root(local_app_data: &str, n: u32) -> PathBuf {
     PathBuf::from(local_app_data).join("ts3online").join(format!("copy{n}"))
 }
 
+/// `<local app data>	s3online\session`: the app data root a client uses to play the host save.
+pub fn session_root(local_app_data: &str) -> PathBuf {
+    PathBuf::from(local_app_data).join("ts3online").join("session")
+}
+
+/// The game folder holding `Saved Game` and `newsettings.bin` below an app data root.
+pub fn savedata_dir(root: &std::path::Path) -> PathBuf {
+    root.join("Disney").join("Toy Story 3 Complete Edition").join("savedata")
+}
+
+/// The app data root copy `n` normally uses: the real one for copy 1, the redirected one otherwise.
+pub fn normal_root(app_data: &str, local_app_data: &str, n: u32) -> PathBuf {
+    if n <= 1 {
+        PathBuf::from(app_data)
+    } else {
+        save_root(local_app_data, n)
+    }
+}
+
 /// First copy number whose claim succeeds; 4 when all are taken.
 pub fn choose(mut claim: impl FnMut(u32) -> bool) -> u32 {
     (1..MAX_COPIES).find(|&n| claim(n)).unwrap_or(MAX_COPIES)
@@ -56,6 +75,15 @@ mod tests {
         assert_eq!(log_name(1), "ts3online.log");
         assert_eq!(log_name(3), "ts3online.copy3.log");
         assert_eq!(save_root(r"C:\L", 2), PathBuf::from(r"C:\L").join("ts3online").join("copy2"));
+        assert_eq!(session_root(r"C:\L"), PathBuf::from(r"C:\L").join("ts3online").join("session"));
+    }
+
+    #[test]
+    fn save_folders() {
+        let root = session_root(r"C:\L");
+        assert!(savedata_dir(&root).ends_with(PathBuf::from("Disney").join("Toy Story 3 Complete Edition").join("savedata")));
+        assert_eq!(normal_root(r"C:\A", r"C:\L", 1), PathBuf::from(r"C:\A"));
+        assert_eq!(normal_root(r"C:\A", r"C:\L", 3), save_root(r"C:\L", 3));
     }
 
     #[test]

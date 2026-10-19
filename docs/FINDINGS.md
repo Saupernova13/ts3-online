@@ -542,3 +542,10 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   (writing its value makes the counter animate to it; `GoldCoins` pickups add 100 via `0x140632130`).
   `Stat_IMAGINATION_POINTS_COLLECTED` is the second counter. `0x140617c40(stats, name)` finds a stat
   index (-1 when absent).
+- **[obs] Actor ids differ between copies (2026-10-19, `queries/115`).** The actor registry behind
+  `0x140558400(id)` is a 256-bucket hash table at `0x140b2bb90` (bucket `id & 0xff`; node `[0]` actor,
+  `[1]` id, `[3]` next). Two copies in Toy Box from the same save both held 943 actors (RTTI: 818
+  `Npc`, 86 `CLineEntity`, 20 `CStageEntity`, 14 `CSphereEntity`, 4 `TS3Avatar`), but only 887 shared
+  an id and class, and 163 `Npc` with the same id stood at different places: the same set of
+  positions under other ids, from a different spawn order. Ids therefore cannot match NPCs or enemies
+  across copies; a world sync has to match them another way (name, spawner, start position).

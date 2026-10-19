@@ -18,7 +18,7 @@ Relocation: `0x258` bytes at RVA `0x9582b0` -> a `0x400` buffer; fields from `+0
 | views | 11 | Level setup creates 4 per-player views instead of 2, and the inline view-array guards accept 4. | FINDINGS 5c | verified in game 2026-10-16 |
 | quadrants (optional) | 1 | Optional (`enable=quadrants` in `ts3online.ini`): every split request builds 4 quadrants, so each player keeps the same 16:9 quarter for streaming. | FINDINGS 2; PLAN rig design | not tested in game |
 | instances (optional) | 3 | Optional (`enable=instances`): lets a second copy of the game run on the same PC for host/client play. | FINDINGS 9 | not tested in game |
-| hooks | 8 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5e | all verified in game (teardown and the controls fix 2026-10-17) |
+| hooks | 8 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5f | verified in game (teardown and the controls fix 2026-10-17) except level_player_setup (T8) |
 
 Total: 224 patches.
 

@@ -25,8 +25,10 @@ const MOVING_SPEED: f32 = 0.5;
 const IDLE_STICK: f32 = 0.15;
 /// Owner updates older than this (us) count as standing still.
 const STALE_US: u64 = 250_000;
-/// Buttons that start an interaction: A, B, X, Y, LB, RB (XINPUT bits) and the triggers past half.
-const ACTION_BUTTONS: u32 = 0xf300;
+/// Buttons that start an interaction: B, X, Y, LB, RB (XINPUT bits) and the triggers past half. A
+/// (jump) is left out: a pose snap on the press moved the partner back to an older, lower position
+/// and cut the jump (or a double jump in the air).
+const ACTION_BUTTONS: u32 = 0xe300;
 const LT_BIT: u32 = 1 << 16;
 const RT_BIT: u32 = 1 << 17;
 const TRIGGER_PRESSED: u8 = 128;
@@ -931,7 +933,9 @@ mod tests {
         assert_eq!(rising(none, x), 0x4000);
         assert_eq!(rising(x, x), 0); // held
         assert_eq!(rising(x, none), 0); // release is not a press
-        assert_eq!(rising(x, pressed_bits(&pad(0x4000 | 0x1000, 0, 0))), 0x1000);
+        assert_eq!(rising(x, pressed_bits(&pad(0x4000 | 0x2000, 0, 0))), 0x2000);
+        // jumping (A) is not an interaction: no pose snap
+        assert_eq!(pressed_bits(&pad(0x1000, 0, 0)), 0);
         // d-pad, start and thumb clicks are not interactions
         assert_eq!(pressed_bits(&pad(0x0001 | 0x0010 | 0x0040, 0, 0)), 0);
         // triggers count from 128

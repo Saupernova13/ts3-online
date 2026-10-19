@@ -6,6 +6,26 @@ in the same world. First target: two copies on one PC; the same code then works 
 No screen streaming. The game has no networking code at all (FINDINGS §1, §8), so all of it lives
 in our loader.
 
+## Direction: the host's world is the only world (long-term goal)
+
+Playtesting (2026-10-19) confirmed what the model below implies: every copy runs its own world and
+only the players are shared, so enemies, physics objects and NPCs differ between screens and
+partners collide with things that are not there for their owner. That is not true multiplayer.
+The long-term goal is host authority over the whole world: the host simulates everything, clients
+stop simulating what the host owns and show the host's version (positions, animation, state), and
+whatever a client does to the world (hits, pickups, interactions) is decided on the host.
+
+Until then the owner-driven model stays, refined step by step toward that goal: each system that
+can come from the host does (wallets, broken objects so far), and new work is judged by how much
+of the world it moves under the host. Order of work:
+
+1. Partner fidelity: the owner's moves (jumps, carries, throws) look the same on every screen.
+2. NPCs and enemies: the host streams their transforms and state by reference name; a client
+   stops their AI and movement and shows the host's.
+3. Objects and pickups: breakables (done), collectables, doors, runtime spawns with network ids.
+4. Interactions: a client's hits and pickups become requests the host decides.
+5. Missions and progress follow the host.
+
 ## Model: host session, owner-driven avatars
 
 ```

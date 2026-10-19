@@ -158,6 +158,30 @@ level u32, seq u32; `WorldReport` = level u32, event len u8 + bytes, name len u8
 
 `net_sim=delay,jitter,loss` adds artificial latency and loss for testing on one PC.
 
+## Performance
+
+Every copy logs two `perf:` lines every 30 s: the game's frame rate with the loader's own work per
+frame (`coop::update`, timed in the frame hook), and the session thread's loop passes, datagrams
+and bytes each way, and how long it held the session lock. The session thread receives and sends
+outside that lock, so the game thread never waits on a socket call.
+
+Measured 2026-10-19, two copies on one PC in Toy Box, host and one client:
+
+| | Host | Client |
+|---|---|---|
+| Frames | 59.8/s (gap max 33 ms) | 60.0/s (gap max 19 ms) |
+| Loader work per frame | avg 4 us, max 172 us | avg 5 us, max 157 us |
+| Session thread | 186 passes/s | 185 passes/s |
+| Datagrams | 59 in, 61 out per s | 62 in, 60 out per s |
+| Bandwidth | 4.0 kB/s in, 4.1 kB/s out | 4.1 kB/s in, 4.1 kB/s out |
+| Session lock held | avg 2 us, max 95 us | avg 2 us, max 96 us |
+
+The loader's work is under 0.1 % of a 16.7 ms frame and its thread uses about 0.3 % of a core;
+both games' own main threads run at a full core whether or not the loader is there. The session
+thread's 5 ms sleep adds at most 5 ms before a state goes out or is read. Each player's state is a
+stream of about 4 kB/s, and a host sends every client the other players' streams, so with N players
+it uploads (N-1)^2 streams: about 36 kB/s for a full game of 4; a client uploads one.
+
 ## Risks
 
 - **World consistency (H5).** Each copy simulates its own enemies and NPCs until a system is

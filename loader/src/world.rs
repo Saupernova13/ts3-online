@@ -15,6 +15,8 @@ pub const MAX_LIST: usize = 512;
 
 /// How long an entry whose actor is not found is retried.
 pub const GIVE_UP_MS: u64 = 10_000;
+/// Replays wait this long after the local player appears in the level.
+pub const SETTLE_MS: u64 = 3_000;
 
 /// Most captured events waiting for the game thread.
 const MAX_CAPTURED: usize = 256;
@@ -72,6 +74,8 @@ pub struct Applier {
     level: u32,
     applied: HashSet<(String, String)>,
     pending: Vec<Pending>,
+    /// when replays may start: `SETTLE_MS` after the local player appeared (None while loading)
+    ready_at: Option<u64>,
 }
 
 impl Applier {
@@ -83,7 +87,18 @@ impl Applier {
         self.level = level;
         self.applied.clear();
         self.pending.clear();
+        self.ready_at = None;
         true
+    }
+
+    /// Whether the local player is in the level. Replays wait until it has been for `SETTLE_MS`:
+    /// the level name changes when the switch is posted, and a post during the load is lost.
+    pub fn set_ready(&mut self, ready: bool, now_ms: u64) {
+        match (ready, self.ready_at) {
+            (false, _) => self.ready_at = None,
+            (true, None) => self.ready_at = Some(now_ms + SETTLE_MS),
+            (true, Some(_)) => {}
+        }
     }
 
     /// The local game has this event already (it produced it, or it was replayed).
@@ -108,7 +123,9 @@ impl Applier {
     /// actor stays missing past `GIVE_UP_MS` are dropped and counted as applied, so they are never retried.
     pub fn process(&mut self, now_ms: u64, mut try_apply: impl FnMut(&str, &str) -> bool) -> Vec<Outcome> {
         let mut out = Vec::new();
-        for p in std::mem::take(&mut self.pending) {
+        let Some(ready) = self.ready_at.filter(|t| now_ms >= *t) else { return out };
+        for mut p in std::mem::take(&mut self.pending) {
+            p.since = p.since.max(ready);
             if try_apply(&p.event, &p.name) {
                 self.applied.insert((p.event.clone(), p.name.clone()));
                 out.push(Outcome::Applied(p.event, p.name));
@@ -211,8 +228,30 @@ mod live {
         if actor < 0x1_0000 {
             return false;
         }
+        if event == "ExploderDestroy" {
+            return explode(actor);
+        }
         let id = rd_u64(actor + ACTOR_ID);
         hooks::call_post_actor(global(EVENTS), ev, 0, 0, id).is_some()
+    }
+
+    /// `MExploder+0xdc`: bit 0 exploded, bit 1 break requested (the `Explode` handler at 0x140656710
+    /// runs the break when the two read 2, FINDINGS 10).
+    const EXPLODER_FLAGS: u64 = 0xdc;
+
+    /// Breaks the actor's exploder the way its `Explode` handler does (the `ExploderDestroy` post is
+    /// only the notice that follows). True once it is broken, also when it already was.
+    unsafe fn explode(actor: u64) -> bool {
+        let comp = component(actor, c"MExploder".as_ptr());
+        if comp < 0x1_0000 {
+            return false;
+        }
+        let flags = rd_u8(comp + EXPLODER_FLAGS);
+        if flags & 1 == 0 {
+            wr_u8(comp + EXPLODER_FLAGS, flags | 2);
+            exploder_break(comp);
+        }
+        rd_u8(comp + EXPLODER_FLAGS) & 1 != 0
     }
 
     /// Per-frame world sync on the game thread; `level` is the hash of the current play level (0 outside one).
@@ -231,6 +270,8 @@ mod live {
             return;
         }
         let now = now_ms();
+        let mgr = global(MGR_PTR);
+        live.applier.set_ready(mgr != 0 && slot_avatar(mgr, 0) != 0, now);
         for (event, name) in captured {
             live.applier.mark_applied(&event, &name);
             if net::world_local(level, &event, &name) && !net::is_client() {
@@ -316,7 +357,25 @@ mod tests {
     fn applier(level: u32) -> Applier {
         let mut a = Applier::default();
         a.set_level(level);
+        a.ready_at = Some(0);
         a
+    }
+
+    #[test]
+    fn replays_wait_for_the_player_to_settle_in() {
+        let mut a = Applier::default();
+        a.set_level(7);
+        a.enqueue(7, "ExploderDestroy", CRATE, 0);
+        assert!(a.process(60_000, |_, _| true).is_empty()); // still loading: no player
+        a.set_ready(true, 60_000);
+        assert!(a.process(60_000 + SETTLE_MS - 1, |_, _| true).is_empty());
+        a.set_ready(true, 61_000); // staying ready does not restart the wait
+        // the give-up clock starts when replays may start, not when the entry arrived
+        assert!(a.process(60_000 + SETTLE_MS, |_, _| false).is_empty());
+        assert_eq!(a.process(60_000 + SETTLE_MS + 1, |_, _| true).len(), 1);
+        a.set_ready(false, 70_000);
+        a.enqueue(7, "ExploderDestroy", "B", 70_000);
+        assert!(a.process(80_000, |_, _| true).is_empty());
     }
 
     #[test]

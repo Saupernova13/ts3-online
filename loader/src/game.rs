@@ -61,6 +61,10 @@ pub unsafe fn vcall_u8(this: u64, off: u64, a: u8) {
     f(this, a)
 }
 
+pub unsafe fn wr_u8(addr: u64, v: u8) {
+    std::ptr::write(addr as *mut u8, v)
+}
+
 pub unsafe fn wr_i32(addr: u64, v: i32) {
     std::ptr::write_unaligned(addr as *mut i32, v)
 }
@@ -126,6 +130,8 @@ game_fn!(stat_add, 0x1_4063_2130, fn(stats: u64, idx: i32, delta: i32) -> ());
 game_fn!(stat_get, 0x1_4061_7bc0, fn(stats: u64, idx: i32) -> i32);
 game_fn!(find_actor_by_name, 0x1_4055_7e10, fn(mgr: u64, name: *const c_char) -> u64);
 game_fn!(find_actor_by_ref, 0x1_4055_7f60, fn(mgr: u64, name: *const c_char) -> u64);
+game_fn!(component, 0x1_4055_8fb0, fn(actor: u64, name: *const c_char) -> u64);
+game_fn!(exploder_break, 0x1_4065_2ac0, fn(exploder: u64) -> ());
 
 /// The actor manager pointer (the actor-name lookups take it).
 pub const ACTOR_MGR: u64 = 0x1_40b2_bb70;

@@ -6,6 +6,9 @@ use std::collections::HashMap;
 /// The synced stats, in wire order (`Wallet.values`, `Spend` indexes).
 pub const WALLETS: [&str; 2] = ["Stat_GOLD_COLLECTED", "Stat_IMAGINATION_POINTS_COLLECTED"];
 
+/// Largest single spend the host applies; anything bigger is dropped (but acked).
+pub const MAX_SPEND: i32 = 1_000_000;
+
 /// A spend as sent: (seq, wallet index, negative delta).
 pub type Spend = (u32, u8, i32);
 
@@ -81,7 +84,7 @@ pub struct HostWallet {
 
 impl HostWallet {
     /// The (wallet index, delta) to apply for the spends of `client` not seen before, in seq order.
-    /// Only spending is forwarded: positive deltas and unknown indexes are skipped (but acked).
+    /// Only spending is forwarded: positive deltas, unknown indexes and deltas below `-MAX_SPEND` are skipped (but acked).
     pub fn accept(&mut self, client: u8, spends: &[Spend]) -> Vec<(u8, i32)> {
         let last = self.last.entry(client).or_insert(0);
         let mut fresh: Vec<Spend> = spends.iter().copied().filter(|s| s.0 > *last).collect();
@@ -90,7 +93,7 @@ impl HostWallet {
         let mut out = Vec::new();
         for (seq, idx, delta) in fresh {
             *last = seq;
-            if (idx as usize) < WALLETS.len() && delta < 0 {
+            if (idx as usize) < WALLETS.len() && (-MAX_SPEND..0).contains(&delta) {
                 out.push((idx, delta));
             }
         }
@@ -286,6 +289,14 @@ mod tests {
         h.forget(1);
         assert_eq!(h.acked(1), 0);
         assert_eq!(h.accept(1, &[(1, 0, -1)]), vec![(0, -1)]);
+    }
+
+    #[test]
+    fn oversized_spends_are_dropped_but_acked() {
+        let mut h = HostWallet::default();
+        let spends = [(1, 0, -MAX_SPEND), (2, 0, -MAX_SPEND - 1), (3, 0, i32::MIN), (4, 1, -5)];
+        assert_eq!(h.accept(1, &spends), vec![(0, -MAX_SPEND), (1, -5)]);
+        assert_eq!(h.acked(1), 4);
     }
 
     #[test]

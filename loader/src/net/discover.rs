@@ -99,7 +99,7 @@ pub fn local_ip_towards(peer: SocketAddr) -> Option<Ipv4Addr> {
 }
 
 pub fn send_probes(sock: &UdpSocket, peers: &[SocketAddr], build: u64) {
-    let bytes = proto::encode(&Msg::Probe { build });
+    let bytes = proto::encode(&Msg::Probe { build }, &[]);
     for p in peers {
         let _ = sock.send_to(&bytes, p);
     }
@@ -124,11 +124,11 @@ pub fn find_host(sock: &UdpSocket, peers: &[SocketAddr], build: u64, name: &str,
             next += PROBE_EVERY;
         }
         while let Ok((n, from)) = sock.recv_from(&mut buf) {
-            match proto::decode(&buf[..n]) {
+            match proto::decode(&buf[..n], &[]) {
                 Ok(Msg::ProbeReply { build: b, host: true, name, .. }) if b == build && from != own => return Some(Found { addr: from, name }),
                 Ok(Msg::Probe { .. }) => {
-                    let reply = Msg::ProbeReply { build, host: false, players: 0, name: name.to_string() };
-                    let _ = sock.send_to(&proto::encode(&reply), from);
+                    let reply = Msg::ProbeReply { build, host: false, players: 0, locked: false, name: name.to_string() };
+                    let _ = sock.send_to(&proto::encode(&reply, &[]), from);
                 }
                 _ => {}
             }
@@ -215,9 +215,9 @@ mod tests {
             let start = Instant::now();
             while start.elapsed() < Duration::from_secs(2) {
                 if let Ok((n, from)) = host.recv_from(&mut buf) {
-                    if let Ok(Msg::Probe { .. }) = proto::decode(&buf[..n]) {
-                        let reply = Msg::ProbeReply { build: 7, host: true, players: 1, name: "hoster".into() };
-                        let _ = host.send_to(&proto::encode(&reply), from);
+                    if let Ok(Msg::Probe { .. }) = proto::decode(&buf[..n], &[]) {
+                        let reply = Msg::ProbeReply { build: 7, host: true, players: 1, locked: false, name: "hoster".into() };
+                        let _ = host.send_to(&proto::encode(&reply, &[]), from);
                     }
                 }
                 std::thread::sleep(Duration::from_millis(5));

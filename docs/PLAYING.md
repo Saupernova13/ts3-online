@@ -48,8 +48,16 @@ The copy that starts first hosts. A host takes up to 4 players (tested with 2).
 | `name` | `player` | the name other players see |
 | `net_port` | `27777` | UDP port |
 | `net_peers` | (Tailscale) | comma-separated addresses to look for a host at, instead of the tailnet |
+| `net_key` | (none) | shared password, up to 64 bytes; every player must use the same one |
 | `pad` | `1` | which of this PC's controllers plays |
 | `enabled` | `1` | `0` turns the loader off |
+
+### Password
+
+`net_key` is optional. Every player sets the same value (or runs `install.ps1 -Password <text>`);
+a player with a different or missing password is refused, and the log says so. Without it, anyone
+who can reach your PC on the tailnet or LAN can join. The password is never written to the log.
+It authenticates the traffic but does not encrypt it.
 
 The loader writes `ts3online.log` next to the game exe; attach it to bug reports.
 

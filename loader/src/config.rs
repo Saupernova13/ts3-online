@@ -12,6 +12,34 @@ pub enum Net {
 }
 
 pub const DEFAULT_PORT: u16 = 27777;
+/// Longest `net_key` in bytes.
+pub const MAX_KEY: usize = 64;
+
+/// `net_key`: the shared password. Debug never shows it, so `config: {cfg:?}` stays safe to log.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct NetKey(String);
+
+impl NetKey {
+    /// `text` trimmed and cut to `MAX_KEY` bytes on a char boundary; empty means none.
+    pub fn new(text: &str) -> NetKey {
+        let t = text.trim();
+        let mut end = t.len().min(MAX_KEY);
+        while !t.is_char_boundary(end) {
+            end -= 1;
+        }
+        NetKey(t[..end].to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for NetKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_empty() { "<none>" } else { "<set>" })
+    }
+}
 
 /// `net_sim = delay_ms[,jitter_ms[,loss_pct]]`: simulated link quality for outgoing datagrams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,11 +81,13 @@ pub struct Config {
     pub net_sim: Option<Sim>,
     /// `name = text`: shown to other players (max 32 bytes)
     pub name: String,
+    /// `net_key = text`: shared password every datagram is authenticated with (max 64 bytes)
+    pub net_key: NetKey,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() }
+        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default() }
     }
 }
 
@@ -163,6 +193,7 @@ pub fn parse(text: &str, copy: u32) -> Config {
                     c.net_sim = Some(Sim { delay_ms: n[0], jitter_ms: n.get(1).copied().unwrap_or(0), loss_pct: n.get(2).copied().unwrap_or(0) });
                 }
             }
+            "net_key" => c.net_key = NetKey::new(v),
             "name" => {
                 let n = clamp_name(v).trim();
                 if !n.is_empty() {
@@ -193,13 +224,13 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() });
+        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default() });
     }
 
     #[test]
     fn overrides_and_comments() {
         let c = parse("# hi\n enabled = 0 \nwatch=false\nWATCH_INTERVAL_MS=250\nbogus=1\nnoequals\n", 1);
-        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into() });
+        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default() });
     }
 
     #[test]
@@ -369,5 +400,27 @@ enable=instances
         assert_eq!(parse("window=0,0,100", 1).window, None);
         assert_eq!(parse("window=0,0,100,50,7", 1).window, None);
         assert_eq!(parse("window=a,0,100,50", 1).window, None);
+    }
+
+    #[test]
+    fn net_key_setting() {
+        assert_eq!(parse("", 1).net_key.as_str(), "");
+        assert_eq!(parse("net_key =  pass word  ", 1).net_key.as_str(), "pass word");
+        assert_eq!(parse("net_key=", 1).net_key.as_str(), "");
+        assert_eq!(parse(&format!("net_key={}", "k".repeat(100)), 1).net_key.as_str().len(), MAX_KEY);
+        // cut on a char boundary: 63 ASCII bytes then a two-byte char
+        let k = format!("{}\u{e9}", "k".repeat(63));
+        assert_eq!(parse(&format!("net_key={k}"), 1).net_key.as_str().len(), 63);
+        assert_eq!(parse("net_key=a\n[copy2]\nnet_key=b\n", 2).net_key.as_str(), "b");
+        assert_eq!(parse("net_key=a\n[copy2]\nnet_key=b\n", 1).net_key.as_str(), "a");
+    }
+
+    #[test]
+    fn net_key_never_shows_in_debug_output() {
+        let c = parse("net=auto\nnet_key=hunter2-very-secret", 1);
+        let shown = format!("{c:?}");
+        assert!(!shown.contains("hunter2"), "{shown}");
+        assert!(shown.contains("<set>"), "{shown}");
+        assert!(format!("{:?}", Config::default()).contains("<none>"));
     }
 }

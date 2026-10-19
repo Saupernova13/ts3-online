@@ -51,7 +51,8 @@ Real netcode instead of streaming: each person runs their own copy with one loca
 screen, one copy hosts, and remote players appear as proxy avatars in slots 1-3 driven by network
 data. The host owns the world. Design and phases H0-H6 are in [NETCODE.md](NETCODE.md); the first
 target is two copies on one PC. It reuses the 4-player work from phases 3-5. The streaming rig
-below stays on file as the fallback.
+below stays on file as the fallback. Today each copy still runs its own world with shared players;
+full host authority over the world is the long-term goal (NETCODE.md "Direction").
 
 ## Streaming options (phase 6)
 

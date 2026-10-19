@@ -118,5 +118,13 @@ and H2 (see each other move).
 - Seen in T9: the host shows the "X Pick up" prompt next to the Buzz proxy, so the game treats a
   proxy as a co-op partner that can be picked up and thrown; proxies slide in their idle pose.
 
-**Next:** H3 (drive proxies from the owner's input, so they run, jump and animate), then H4
-(networked-session rules: no pick-up/throw of proxies, no regrouping).
+- H3 (T10 passed, OBS recording): remote players are real co-op partners. Their owner's pad goes to a
+  virtual XInput pad 1-3, the partner is bound to a player slot through the join path, and the
+  `online` patch keeps one full-screen view. Found on the way: stick input is camera-relative (fixed
+  with closed-loop steering in the partner view's camera frame, `view+0x20` matrix), and the game
+  stops updating every controller while its window is unfocused (DirectInput keyboard read fails ->
+  early return; patched). Action presses first match the partner's pose to the owner's, after which
+  carry and throw replicate in both directions.
+
+**Next:** H4 (find each other on the tailnet with `net=auto`), H5 (one world: host save, follow the
+host's level), then shared world state.

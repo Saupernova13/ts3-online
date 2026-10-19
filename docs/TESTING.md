@@ -97,6 +97,15 @@ player is. Move the focused copy's player: the proxy follows in the other copy (
 `tools/shot.ps1 -ProcessId` to capture the covered copy). Exit Toy Box in one copy: no crash in
 either; the proxy comes back after re-entering.
 
+## T10: co-op partners online (H3, passed 2026-10-19)
+
+T9's setup. Host (Woody) and client (Buzz) in Toy Box: each copy shows one full-screen view; the
+other player joins as player 2 (`coop: player N bound: slot 1`, `player_count -> 2`). The client runs
+a square: on the host, drift stays under 0.5 m with no snaps. Bring them together; the client presses
+X facing Woody: Buzz carries Woody on both copies; RT throws him, and both copies agree on where he
+lands. Then the same with the host carrying and throwing Buzz. `work/scratch/pos.py` and `walkto.py`
+read positions from both processes and steer a player to a spot.
+
 ## Reporting
 
 Copy the log plus a note of what was on screen (or a screenshot) into an issue or the progress log.

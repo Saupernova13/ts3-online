@@ -487,6 +487,18 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   (rows at `+0x20/+0x30/+0x40/+0x50`). Column 0 is the camera's right vector (y = 0), column 2 its
   forward axis, so the camera heading is `atan2(view[+0x28], view[+0x48])`. Views are `0x300` bytes
   apart in one block; `views[i]` belongs to slot i.
+- **[obs] The focus gate (corrects §9).** The input driver update `0x14027b500` reads the keyboard
+  and mouse through DirectInput first; while the window is unfocused those reads fail, it re-acquires
+  them and jumps straight to its exit (`0x14027b6b4`, `0x14027b910`), so no controller is updated at
+  all. The `online` group retargets both jumps to the controller loop (`0x14027b9a2`). Steam Input was
+  not the cause. With it, partner input works on a copy without focus.
+- **[obs] Closed-loop steering tracks within 0.1-0.4 m** (T10): the partner's left stick is computed
+  from the owner's position and velocity in the partner view's camera frame; buttons and triggers are
+  replayed as they are.
+- **[obs] Carry and throw replicate through button replay** once the partner's pose is matched to the
+  owner's at the moment of an action press (pose error 0.00-0.11 m, under 1 degree). Buzz picking up
+  Woody and Woody picking up Buzz both showed on both copies; after the throw the thrown player landed
+  within 0.3 m on both.
 - **[obs] HUD prompts of every player show on the one viewport.** With slot 1 bound, the partner's
   context prompts (for example "X Pick up" next to a pickup) appear on the local screen as well.
 - **[obs] Level changes are events.** The app registers `SwitchLevel`, `ProcessSwitchLevel` and

@@ -32,7 +32,7 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist/ts3-online
-          cp loader/target/release/dinput8.dll tools/install.ps1 LICENSE dist/ts3-online/
+          cp loader/target/release/dinput8.dll tools/install.ps1 tools/Setup.cmd tools/Uninstall.cmd LICENSE dist/ts3-online/
           cp docs/PLAYING.md dist/ts3-online/README.md
           cd dist && 7z a -tzip ts3-online.zip ts3-online >/dev/null
       - uses: actions/upload-artifact@v4

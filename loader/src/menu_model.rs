@@ -44,9 +44,12 @@ impl Table {
         self.games.iter().find(|g| g.addr == addr)
     }
 
-    /// (address, text) per game, in a stable order (by address).
+    /// (address, text) per game, in a stable order (by address). A game on this PC also answers
+    /// from 127.0.0.1; that entry is hidden while the same game is listed at another address.
     pub fn lines(&self) -> Vec<(SocketAddr, String)> {
-        let mut v: Vec<(SocketAddr, String)> = self.games.iter().map(|g| (g.addr, format_line(g))).collect();
+        let twin = |g: &Game| self.games.iter().any(|o| !o.addr.ip().is_loopback() && o.addr.port() == g.addr.port() && o.name == g.name && o.players == g.players);
+        let shown = self.games.iter().filter(|g| !(g.addr.ip().is_loopback() && twin(g)));
+        let mut v: Vec<(SocketAddr, String)> = shown.map(|g| (g.addr, format_line(g))).collect();
         v.sort_by_key(|(a, _)| *a);
         v
     }
@@ -205,6 +208,18 @@ mod tests {
         assert_eq!(t.lines().len(), 1);
         t.expire(7500);
         assert!(t.lines().is_empty());
+    }
+
+    #[test]
+    fn a_local_game_is_listed_once() {
+        let mut t = Table::default();
+        let lan: SocketAddr = "26.77.7.159:27777".parse().unwrap();
+        let lo: SocketAddr = "127.0.0.1:27777".parse().unwrap();
+        t.heard(lan, "Host", 1, false, 0);
+        t.heard(lo, "Host", 1, false, 0);
+        assert_eq!(t.lines().iter().map(|(a, _)| *a).collect::<Vec<_>>(), [lan]);
+        t.heard(lo, "Other", 1, false, 0);
+        assert_eq!(t.lines().len(), 2);
     }
 
     #[test]

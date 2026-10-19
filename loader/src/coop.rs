@@ -4,6 +4,7 @@ use crate::game::*;
 use crate::hooks::bind_joining_avatar;
 use crate::{hooks, log};
 use crate::net::proto::{level_hash, Pad, State, CLASS_UNKNOWN};
+use crate::target::{self, Target};
 use crate::{net, pad};
 use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
@@ -87,6 +88,11 @@ struct Partner {
     last_press_log_us: u64,
     last_face_us: u64,
     carry: CarryWatch,
+    /// the owner's pick-up target, and what this copy last wrote as the partner's candidate
+    target: Target,
+    target_written: Option<u64>,
+    target_lost: u32,
+    last_target_log_us: u64,
     /// owner gone or elsewhere: the avatar stays, idle, until the owner returns or the level ends
     parked: bool,
 }
@@ -139,6 +145,10 @@ impl Partner {
             last_press_log_us: 0,
             last_face_us: 0,
             carry: CarryWatch::default(),
+            target: Target::None,
+            target_written: None,
+            target_lost: 0,
+            last_target_log_us: 0,
         }
     }
 
@@ -173,6 +183,7 @@ static PARTNERS: Mutex<Option<HashMap<u8, Partner>>> = Mutex::new(None);
 static START: OnceLock<Instant> = OnceLock::new();
 /// Last raw `ActorCarriedBy` / `ActorCarried` values of the local avatar, for change logging.
 static LAST_CARRY: Mutex<(u64, u64)> = Mutex::new((0, 0));
+static LOCAL_TARGET: Mutex<Target> = Mutex::new(Target::None);
 /// `net_stick_sign`: multiplies the camera delta applied to partners' sticks.
 static STICK_SIGN: AtomicI32 = AtomicI32::new(1);
 static STEER: AtomicBool = AtomicBool::new(true);
@@ -507,6 +518,17 @@ pub unsafe fn update() {
     let pad_out = if controls { held } else { Pad::default() };
     let cam = view_heading(mgr, 0).unwrap_or(0.0);
     let flags = carry_flags(p0, true);
+    // who is who on this copy: (avatar actor id, player id), for naming pick-up targets
+    let mut players: Vec<(u64, u8)> = partners.iter().filter(|(_, p)| p.avatar != 0).map(|(id, p)| (p.actor_id, *id)).collect();
+    if let Some(me) = net::local_id() {
+        players.push((rd_u64(p0 + 0x38), me));
+    }
+    let target = target::local(p0, &players, level);
+    if let Ok(mut prev) = LOCAL_TARGET.lock() {
+        target::log_change(&mut prev, target);
+    }
+    let (flags, target_value) = target.encode(flags);
+    net::set_local_target(target_value);
     net::set_local_state(level, own_class.map_or(CLASS_UNKNOWN, |c| c as u8), pos, yaw, cam, pad_out, flags);
 
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;
@@ -577,6 +599,18 @@ pub unsafe fn update() {
             }
         }
         if p.avatar != 0 {
+            let want = Target::decode(st.flags, st.target);
+            if want != p.target {
+                p.target = want;
+                log!("coop: player {id} target {want:?}");
+            }
+            if !target::steer(p.avatar, want, &players, level, &mut p.target_written) {
+                p.target_lost += 1;
+                if now.saturating_sub(p.last_target_log_us) >= LOG_US {
+                    p.last_target_log_us = now;
+                    log!("coop: player {id} pick-up candidate rewritten by the game ({} frames)", p.target_lost);
+                }
+            }
             if idle && edges == 0 && now.saturating_sub(p.last_face_us) >= FACE_US && yaw_diff(avatar_yaw(p.avatar), st.yaw) > FACE_TOLERANCE {
                 p.last_face_us = now;
                 set_rotation(p.avatar, st.yaw);

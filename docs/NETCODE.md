@@ -154,6 +154,13 @@ game's own stat add (`0x140632130`), so resends are harmless and a lost datagram
 a spend is unacknowledged the client shows the host value plus its pending spends, so the counter
 does not flicker back. Only spending is forwarded; a host that spends needs no message.
 
+**Pick-up targets.** Each state carries what its player would pick up or is carrying: nothing, a
+player (by id), a uniquely named actor (the `level_hash` of its reference name) or something else
+(a runtime spawn no other copy can name). The receiving copy points the partner avatar's
+`PlayerPerception` candidate at the same player or named actor, or at nothing, every frame while the
+partner is only looking (FINDINGS 10). A replayed X press then picks up the owner's target, and
+never a different object that only stands near the partner on this copy.
+
 **World events (H6b).** Actor ids differ between copies, so a one-off event on an actor is carried
 by the actor's reference name (`actor+0x150`, unique and equal in both copies for most actors;
 FINDINGS 10). Only events in `world::SYNCED` (now `ExploderDestroy`, a crate breaking) posted with

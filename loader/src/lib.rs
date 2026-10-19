@@ -26,6 +26,7 @@ pub mod perf;
 pub mod coop;
 #[cfg(windows)]
 pub mod saves;
+pub mod target;
 pub mod wallet;
 pub mod watch;
 pub mod world;

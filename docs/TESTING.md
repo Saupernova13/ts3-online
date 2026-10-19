@@ -77,7 +77,9 @@ Config in `%LOCALAPPDATA%	s3online	s3online.ini`: `enable=instances`, then `[cop
 copy 1 from Steam, then `tools/launch_copy.ps1 -CopySave`. Expect `copy 1 of 4` / `copy 2 of 4` in
 `ts3online.log` / `ts3online.copy2.log`, both pad hooks, and the saves redirect in copy 2's log. Use
 `tools/focus.ps1 -ProcessId` and `tools/shot.ps1 -ProcessId` to pick a copy. Known gap: only the
-focused copy reacts to its pad.
+focused copy reacts to its pad. To see where: press a button on the unfocused copy's pad and check
+its log for `pad: result=0 buttons=...`. No line, or `foreground=false` with `buttons=0x0000` while
+held, means XInput hands it neutral input; retry with Steam Input off for the game to confirm.
 
 ## Reporting
 

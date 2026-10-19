@@ -4,6 +4,8 @@ use crate::iat::{self, Entry};
 use crate::log;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
 const DLL: &str = "XINPUT1_4.dll";
 const ORD_GET_STATE: u16 = 2;
@@ -13,6 +15,8 @@ const ERROR_DEVICE_NOT_CONNECTED: u32 = 1167;
 static PAD: AtomicU32 = AtomicU32::new(0);
 static ORIG_GET_STATE: AtomicUsize = AtomicUsize::new(0);
 static ORIG_GET_CAPS: AtomicUsize = AtomicUsize::new(0);
+/// Last logged `wButtons`, or u32::MAX before the first read.
+static LAST_BUTTONS: AtomicU32 = AtomicU32::new(u32::MAX);
 
 type GetStateFn = unsafe extern "system" fn(u32, *mut c_void) -> u32;
 type GetCapsFn = unsafe extern "system" fn(u32, u32, *mut c_void) -> u32;
@@ -24,8 +28,23 @@ pub fn map_index(pad: u32, game_index: u32) -> Option<u32> {
 
 unsafe extern "system" fn get_state(index: u32, state: *mut c_void) -> u32 {
     match map_index(PAD.load(Ordering::Relaxed), index) {
-        Some(phys) => std::mem::transmute::<usize, GetStateFn>(ORIG_GET_STATE.load(Ordering::Acquire))(phys, state),
+        Some(phys) => {
+            let r = std::mem::transmute::<usize, GetStateFn>(ORIG_GET_STATE.load(Ordering::Acquire))(phys, state);
+            log_buttons(r, state);
+            r
+        }
         None => ERROR_DEVICE_NOT_CONNECTED,
+    }
+}
+
+/// Logs each change of the pad's buttons with whether this copy is in the foreground, to show
+/// whether an unfocused copy is handed neutral input by XInput itself (FINDINGS 9).
+unsafe fn log_buttons(result: u32, state: *mut c_void) {
+    let buttons = if result == 0 { std::ptr::read_unaligned((state as *const u8).add(4) as *const u16) as u32 } else { 0x1_0000 };
+    if LAST_BUTTONS.swap(buttons, Ordering::Relaxed) != buttons {
+        let mut pid = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), &mut pid);
+        log!("pad: result={result} buttons={buttons:#06x} foreground={}", pid == GetCurrentProcessId());
     }
 }
 

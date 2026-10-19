@@ -424,8 +424,15 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   the other copy's pad.
 - **[obs] Only the focused copy reads its pad.** An unfocused copy keeps running (attract demo at
   about 15 fps) but ignores its own pad. `GetFocus` is only used for the cursor, and the XInput
-  read `0x14027c000` (the controller's update, via the thunk `0x140717a60`) has no focus check, so
-  the gate is upstream, where the driver decides to update controllers. Open.
+  read `0x14027c000` (the controller's update, via the thunk `0x140717a60`) has no focus check.
+- **[obs] The exe does not gate pads on focus (`queries/85`-`86`).** The driver update `0x14027b500`
+  calls every controller's `vt+0xd8` each frame (XInput: `0x14027c000`), gated only by a device
+  re-enumeration timer. Focus flag `driver+0x501` (set on `WM_ACTIVATE`) only zeroes keyboard and
+  mouse state. The exe never calls `XInputEnable` (only ordinals 2-4 are imported).
+- **[inf]** So `XInputGetState` itself returns neutral input to the unfocused copy, most likely
+  Steam Input's in-process hook (the test pads are seen by Steam). The pad hook now logs each
+  button change with `foreground=` to confirm. Real online play is unaffected (one focused copy per
+  PC); this only matters for two copies on one PC.
 - **[obs]** On deactivation the window handler sends the window to the bottom of the z-order
   (`SetWindowPos(HWND_BOTTOM)` in the `WM_ACTIVATE` branch of `0x1402b08f0`), so only the focused copy
   stays visible; `tools/shot.ps1` uses `PrintWindow` to capture a covered copy.

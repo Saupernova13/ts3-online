@@ -143,6 +143,25 @@ running copy, standing in for a purchase or a pickup.
    within a frame and its HUD counter animating up.
 3. Put the host's value back afterwards: the host's save is real.
 
+## T15: player state (passed 2026-10-19)
+
+Start as for T11. `work/scratch/ytrace.py <pid> <actor id> <s>` samples an actor's height.
+
+1. Host jumps (A), then double-jumps. Expect the partner on the client to rise as high (within
+   0.1 m), about 0.1 s later.
+2. Host switches tools (B) a few times. Expect as many `ToolChanged` on the partner in the client's
+   log (`log_events=1`).
+3. Host Woody picks up client Buzz (X) and throws him (RT). Expect `coop: local target Player(1)`
+   on the host, `coop: player 0 target Player(1)` on the client, `CARRY_START` on both with the
+   right ids, and Buzz landing within 0.3 m on both.
+
+## T16: NPCs follow the host (H6c, passed 2026-10-19)
+
+Start as for T11 and wait in Toy Box for a minute. Expect `npc: host streaming N movers` on the
+host and `npc: client following N actors` on the client.
+`work/scratch/npcdiff.py <host pid> <client pid>` compares named actors: none should be more than
+0.5 m apart (townspeople are a few tenths of a metre behind the host).
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

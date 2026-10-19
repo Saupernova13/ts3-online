@@ -1,6 +1,7 @@
 # Bring the game window to the front (a tapped Alt lets a background process take focus).
-#   powershell -File tools/focus.ps1 [-Escape]    -Escape first dismisses an open Start menu
-param([switch]$Escape)
+#   powershell -File tools/focus.ps1 [-Escape] [-ProcessId <pid>]
+# -Escape first dismisses an open Start menu; -ProcessId picks one of several running copies.
+param([switch]$Escape, [int]$ProcessId = 0)
 Add-Type @"
 using System; using System.Runtime.InteropServices;
 public class TsFg {
@@ -10,7 +11,8 @@ public class TsFg {
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
 }
 "@
-$p = Get-Process | Where-Object { $_.ProcessName -like 'Toy Story 3*' } | Select-Object -First 1
+$all = @(Get-Process | Where-Object { $_.ProcessName -like 'Toy Story 3*' })
+$p = if ($ProcessId) { $all | Where-Object { $_.Id -eq $ProcessId } } else { $all | Select-Object -First 1 }
 if (-not $p) { Write-Error "game is not running"; exit 1 }
 if ($Escape) {
   [TsFg]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [TsFg]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)

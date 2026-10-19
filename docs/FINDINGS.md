@@ -396,9 +396,46 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
 - **[obs] Focus.** The window class (registered in `0x1402a5930`, WndProc `0x1402b6d70` ->
   `0x1402b08f0`) handles `WM_ACTIVATE` by releasing or restoring the cursor clip and re-acquiring
   input (driver `vt+0x100`); it sets no pause flag. `WM_SIZE` minimise sets flags at `+0x681`-`+0x684`.
-- **[obs] Transforms.** `0x140568b50(node, transform)` sets a node's rotation (quaternion at
-  `+0x40`) and updates a rotated vector at `+0x80`; the placing handler calls it before `vt+0x8`.
-  Avatar position fields still need confirming at runtime.
+- **[obs] Transforms.** An actor embeds its scene node at `actor+0x50`. The placing handler
+  (`0x1406a2010`, `queries/68`) teleports an actor like this: fire `PrepareForPlacing` with the actor
+  id, write the position to `actor+0x80/+0x84/+0x88` (x, y, z), mark the node dirty
+  (`0x14056dab0(node)`), build a yaw quaternion and set it with `0x140568b50(node, quat)` (rotation
+  at node `+0x40` = `actor+0x90`), then call the node's `vt+0x8`. Reading those fields gives the
+  local player's transform; repeating the sequence places a proxy.
+- **[obs] Spawning an avatar without the menu** (pick handler `0x140104190`, `queries/16`): build a
+  property set (`0x140288540`) from a string such as
+  `class=woody; model_name=characters/Woody/Woody` (`0x14050d490`), spawn with
+  `0x1405af7e0(mgr, props, &pos, yaw, 0)` (the spawner level setup uses; an async variant
+  `0x1405af9e0` is used when `0x14094cce2` is set), name it (`0x1400e7550`), free the property set
+  (`0x1404f8cb0`), activate it if `avatar+0x17c` bit 0 is clear (`0x1405503e0(world, avatar)`,
+  `0x14055b850(avatar, 0)`), then bind it (`0x1400e2490`, hooked as `bind_joining_avatar`). The
+  spawn point is next to player 1 (`p1+0x1d0`) or the level's `StartPosition_P2_<region>`.
+- **[inf]** With controls off, an avatar's `KinematicDriver` is active (`0x1405565c0`, §5d), which
+  suits a proxy placed from network data.
+- **[obs] A once-per-frame hook site on the game thread** (`queries/82`): the input dispatch
+  `0x140280b90` runs once per frame and, at `0x140280c18`-`0x140280c2a` (18 bytes), makes three calls
+  with no arguments, each followed by a nop: `0x140227920`, `0x1402292a0`, `0x140229660`. A `call`
+  hook can replace the block with one Rust function that makes the same three calls and then does
+  per-frame network work (read slot 0, place proxies). The stack is 16-byte aligned there.
+- **[obs]** The `PrepareForPlacing` event name is at `0x140771420`.
+- **[obs] Verified in game (2026-10-17):** with `enable=instances`, copy 1 started from Steam and copy 2
+  started through Explorer run side by side, each with its own number, log, pad mapping and window
+  rect; copy 2's saves go to `%LOCALAPPDATA%	s3online\copy2`. Pad isolation holds: a copy ignores
+  the other copy's pad.
+- **[obs] Only the focused copy reads its pad.** An unfocused copy keeps running (attract demo at
+  about 15 fps) but ignores its own pad. `GetFocus` is only used for the cursor, and the XInput
+  read `0x14027c000` (the controller's update, via the thunk `0x140717a60`) has no focus check.
+- **[obs] The exe does not gate pads on focus (`queries/85`-`86`).** The driver update `0x14027b500`
+  calls every controller's `vt+0xd8` each frame (XInput: `0x14027c000`), gated only by a device
+  re-enumeration timer. Focus flag `driver+0x501` (set on `WM_ACTIVATE`) only zeroes keyboard and
+  mouse state. The exe never calls `XInputEnable` (only ordinals 2-4 are imported).
+- **[inf]** So `XInputGetState` itself returns neutral input to the unfocused copy, most likely
+  Steam Input's in-process hook (the test pads are seen by Steam). The pad hook now logs each
+  button change with `foreground=` to confirm. Real online play is unaffected (one focused copy per
+  PC); this only matters for two copies on one PC.
+- **[obs]** On deactivation the window handler sends the window to the bottom of the z-order
+  (`SetWindowPos(HWND_BOTTOM)` in the `WM_ACTIVATE` branch of `0x1402b08f0`), so only the focused copy
+  stays visible; `tools/shot.ps1` uses `PrintWindow` to capture a covered copy.
 - **[obs] Pads** are read through `XINPUT1_4` ordinals 2, 3 and 4 (`XInputGetState`,
   `XInputSetState`, `XInputGetCapabilities`).
 

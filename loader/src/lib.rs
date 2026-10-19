@@ -1,13 +1,20 @@
 //! ts3online: a `dinput8.dll` proxy that patches Toy Story 3 in memory before its CRT initializers run.
 pub mod config;
+pub mod copy;
 pub mod doc;
 #[cfg(windows)]
 pub mod game;
 pub mod hex;
 #[cfg(windows)]
 pub mod hooks;
+#[cfg(windows)]
+pub mod iat;
 pub mod log;
+#[cfg(windows)]
+pub mod pad;
 pub mod patch;
+#[cfg(windows)]
+pub mod saves;
 pub mod watch;
 #[cfg(windows)]
 mod window;
@@ -17,11 +24,12 @@ mod win;
 
 #[cfg(windows)]
 mod entry {
-    use crate::{config, doc, game, hooks, log, patch, watch, win, window};
+    use crate::{config, copy, doc, game, hooks, log, pad, patch, saves, watch, win, window};
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use windows_sys::core::{GUID, HRESULT};
     use windows_sys::Win32::Foundation::{BOOL, E_FAIL, HINSTANCE, TRUE};
+    use windows_sys::Win32::System::Environment::SetEnvironmentVariableW;
     use windows_sys::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
     use windows_sys::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
     use windows_sys::Win32::System::Threading::{CreateThread, Sleep};
@@ -73,19 +81,44 @@ mod entry {
     fn attach() {
         let Some(exe) = win::exe_path() else { return };
         let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-        log::init(&dir.join("ts3online.log"));
+        let n = copy::claim();
+        log::init(&dir.join(copy::log_name(n)));
         log!("ts3online {} loaded in {}", env!("CARGO_PKG_VERSION"), exe.display());
+        log!("copy {n} of {}", copy::MAX_COPIES);
 
-        let cfg = match std::fs::read_to_string(dir.join("ts3online.ini")) {
-            Ok(t) => config::parse(&t),
-            Err(_) => config::Config::default(),
+        let local = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
+        let beside = dir.join("ts3online.ini");
+        let fallback = local.map(|l| l.join("ts3online").join("ts3online.ini"));
+        let found = [Some(beside), fallback].into_iter().flatten().find_map(|p| std::fs::read_to_string(&p).ok().map(|t| (p, t)));
+        let cfg = match found {
+            Some((p, t)) => {
+                log!("config file: {}", p.display());
+                config::parse(&t, n)
+            }
+            None => {
+                log!("no ts3online.ini found; using defaults");
+                config::Config::default()
+            }
         };
         log!("config: {cfg:?}");
         if !cfg.enabled {
             log!("disabled by ts3online.ini");
             return;
         }
+        if cfg.enable.iter().any(|g| g == "instances") {
+            for name in ["SteamAppId", "SteamGameId"] {
+                let ok = unsafe { SetEnvironmentVariableW(win::wide(name.as_ref()).as_ptr(), win::wide("4049180".as_ref()).as_ptr()) };
+                log!("{name}=4049180: {}", if ok != 0 { "set" } else { "failed" });
+            }
+        }
         patch_game(&dir, &cfg);
+        let base = win::main_module_base();
+        if let Some(p) = cfg.pad {
+            pad::install(base, p);
+        }
+        if n > 1 {
+            saves::install(base, n);
+        }
         if let Some(rect) = cfg.window {
             window::start(rect);
         }

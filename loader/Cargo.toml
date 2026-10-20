@@ -1,6 +1,6 @@
 [package]
 name = "ts3online"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 description = "dinput8.dll proxy that patches Toy Story 3 in memory"
 license = "MIT"

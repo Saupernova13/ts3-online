@@ -31,6 +31,7 @@ pub mod patch;
 pub mod pe;
 pub mod perf;
 pub mod projectile;
+pub mod respawn;
 #[cfg(windows)]
 pub mod coop;
 #[cfg(windows)]

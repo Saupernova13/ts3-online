@@ -148,6 +148,9 @@ game_fn!(audio_state, 0x1_4047_6800, fn() -> u64);
 game_fn!(audio_state_pause, 0x1_4027_0640, fn(state: u64) -> ());
 game_fn!(audio_state_resume, 0x1_4027_53a0, fn(state: u64) -> ());
 
+/// Two-player respawn points (FINDINGS 10): per player, where it respawns when down.
+pub const RESPAWN_POINTS: u64 = 0x1_40b2_fdf8;
+
 /// Actor manager pointer, taken by the actor-name lookups.
 pub const ACTOR_MGR: u64 = 0x1_40b2_bb70;
 

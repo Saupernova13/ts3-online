@@ -112,6 +112,7 @@ pub unsafe fn update() {
         // slot 0 still holds the old level's avatar: a partner spawned now dies with that level
         return;
     }
+    crate::respawn::update(mgr);
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;
     let frame = Frame { mgr, level, now, own_class, players: &players };
 

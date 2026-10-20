@@ -103,6 +103,8 @@ mod entry {
         let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let n = copy::claim();
         log::init(&dir.join(copy::log_name(n)));
+        // the build aborts on panic; without this the log would end without a trace
+        std::panic::set_hook(Box::new(|info| log!("panic: {info}")));
         log!("ts3online {} loaded in {}", env!("CARGO_PKG_VERSION"), exe.display());
         log!("copy {n} of {}", copy::MAX_COPIES);
 
@@ -122,18 +124,35 @@ mod entry {
         if cfg.dev_cmds {
             devcmd::enable(n);
         }
+        let patched = match install::patch_game(&dir, &cfg) {
+            Ok(a) => {
+                if cfg.watch && !a.watch.is_empty() {
+                    watch::spawn(watch::Ctx { module_base: a.module_base, buffer: a.buffer, interval_ms: cfg.watch_interval_ms, watch: a.watch });
+                }
+                true
+            }
+            Err(e) => {
+                log!("{e}; leaving the game unpatched");
+                false
+            }
+        };
+        let base = win::main_module_base();
+        if let Some(rect) = cfg.window {
+            window::start(rect);
+        }
+        // an unpatched game has no partner slots and no frame hook: no pads, no net, no save redirect
+        // for online play; copies 2-4 still get their own save folder so they never share copy 1's
+        if !patched {
+            if n > 1 {
+                saves::install(base, n);
+            }
+            if cfg.net.is_some() {
+                log!("online play is off: the game is unpatched");
+            }
+            return;
+        }
         if cfg.net.is_some() {
             net::expect_role();
-        }
-        match install::patch_game(&dir, &cfg) {
-            Ok(a) if cfg.watch && !a.watch.is_empty() => {
-                watch::spawn(watch::Ctx { module_base: a.module_base, buffer: a.buffer, interval_ms: cfg.watch_interval_ms, watch: a.watch });
-            }
-            Ok(_) => {}
-            Err(e) => log!("{e}; leaving the game unpatched"),
-        }
-        let base = win::main_module_base();
-        if cfg.net.is_some() {
             pad::install_net(base, cfg.pad);
             coop::set_stick_sign(cfg.net_stick_sign);
             coop::set_steer(cfg.net_steer, cfg.net_steer_x, cfg.net_steer_y);
@@ -142,9 +161,6 @@ mod entry {
         }
         if n > 1 || cfg.net.is_some() {
             saves::install(base, n);
-        }
-        if let Some(rect) = cfg.window {
-            window::start(rect);
         }
         if let Some(mode) = &cfg.net {
             let opts = net::Options { name: cfg.name.clone(), sim: cfg.net_sim, copy: n, port: cfg.net_port, peers: cfg.net_peers.clone(), key: cfg.net_key.clone() };

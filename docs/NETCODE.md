@@ -92,12 +92,20 @@ from input, and the game already treats it as a player for co-op moves and inter
   devices. `net_key` (a shared password in `ts3online.ini`) gates who can join and authenticates
   every datagram, but it does not encrypt: payloads are readable by anyone who can see the link.
   Without a `net_key`, anyone who can reach the host's UDP port on the tailnet or LAN can join.
-- **Tag.** Protocol version 8. Every datagram ends with a 16-byte tag, the first 16 bytes of
+- **Tag.** Since protocol version 7. Every datagram ends with a 16-byte tag, the first 16 bytes of
   HMAC-SHA256 over all bytes before it, keyed with `net_key` (empty when none is set, so
   passwordless sessions work). Checked in constant time before anything is parsed. `Probe`,
   `ProbeReply` and `Refuse` always use the empty key, so a host can be found and can tell a wrong
   key apart (`Refuse` reason 4; `ProbeReply.locked` says the host has a key). A bad tag is dropped,
-  except a `Hello` with a bad tag, which is answered with that refusal.
+  except a `Hello` or `Check` with a bad tag, which is answered with that refusal.
+- **Join check.** Protocol 12. Before leaving the connect window, Join sends a `Probe` and a
+  `Check { nonce }` tagged with the typed password; a host answers `CheckReply` with the nonce under
+  its key, which proves the passwords match without taking a player slot. Both are 8-byte bodies,
+  so neither amplifies.
+- **Other versions.** A host answers a datagram of another protocol version with `Refuse` reason 3
+  in its own version, but never answers a refusal (two hosts of different versions would otherwise
+  refuse each other forever). Magic, version, type and reason sit at the same offsets in every
+  version, so a client or connect window reads such a refusal as "the host runs version N".
 - **Replays.** The tag does not stop a recorded datagram being sent again. Replays are bounded by
   the sequence numbers: states older than the newest seen and spends already applied are ignored.
 - **Amplification.** A `Probe` is padded to be at least as long as the largest `ProbeReply`, so a

@@ -170,6 +170,23 @@ one copy; run it on both copies, then throw. Expect `projectile: threw ... (seq 
 copy and `projectile: player P seq N -> ... following` on the other, and both traces within a few
 tenths of a metre through the bounces (the follower trails by the network delay).
 
+## T18: join checks in the connect window (passed 2026-10-20)
+
+`net=menu` on both copies, `net_key=pw` for copy 1 only. `work/scratch/menuctl.ps1 <pid>
+list|title|host|join [-Index n]|set -Field name|key|addr -Text t` drives a menu by window messages;
+no pad input is needed.
+
+1. Copy 1: the title shows the loader version and the second-to-last line `This PC: <tailnet>
+   (Tailscale), <lan> (LAN)`. Click Host.
+2. Copy 2 lists the host with `[password]`. Join with an empty password: "This game needs a
+   password". With `nope`: "Wrong password...". Type `127.0.0.1:27790` (nothing there) with no
+   selection and Join: "Checking..." then, after 3 s, "No answer from...". Join again: the window
+   closes and the log shows `net: client to 127.0.0.1:27790`.
+3. With ` pw ` (spaces around): the window closes, `net: connected as player 1`, the save arrives.
+4. Other version: start copy 1 with the v1.0.0 DLL (`net=host`), rename the loaded DLL, put the new
+   one in place and start copy 2. It lists `<address>  [other ts3-online version]`; Join says "The
+   host has an older ts3-online than you...".
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

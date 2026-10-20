@@ -218,6 +218,16 @@ left stick, not the d-pad; Train Rescue is the train piece next to space 3.
 3. Both players start the opening ride together; neither is shot down while the other loads.
 4. Put the host save back.
 
+## T21: a downed player respawns with a remote partner (passed 2026-10-20)
+
+Start as for T20 and play into Train Rescue; let one player stand idle until it is shot down.
+
+1. Its log shows `respawn: state local 3`, then `4` and `6` within a second.
+2. 2 s later: `respawn: no checkpoint from the partner on this copy; respawning at ...`, then
+   state 7 and 0, with `FinishedRespawn` in the event log. The screen comes back from black with
+   full health.
+3. Put the host save back.
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

@@ -6,7 +6,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 12;
+pub const VERSION: u16 = 13;
 /// Length of the authentication tag that ends every datagram.
 pub const TAG_LEN: usize = 16;
 /// Zero bytes after a `Probe`'s build, so a probe is never shorter than the reply it provokes.

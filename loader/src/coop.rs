@@ -40,6 +40,8 @@ const FACE_TOLERANCE: f32 = 10.0 * std::f32::consts::PI / 180.0;
 /// `State.flags`: the local avatar carries someone / is carried.
 const FLAG_CARRYING: u32 = 1;
 const FLAG_CARRIED: u32 = 2;
+/// The owner's controls are off: a tutorial, shop screen or menu has its pad (bits 8-9 are the target kind).
+const FLAG_CONTROLS_OFF: u32 = 1 << 10;
 const CARRY_DISAGREE_US: u64 = 500_000;
 /// Farther than this, a placement fires `PrepareForPlacing` first.
 const PREPARE_DIST: f32 = 2.0;
@@ -230,6 +232,18 @@ pub fn choose_class(own: Option<usize>, used: &[usize], count: usize) -> usize {
 /// Lowest free local slot, given the slots in use.
 pub fn free_slot(taken: &[usize]) -> Option<usize> {
     SLOTS.iter().copied().find(|s| !taken.contains(s))
+}
+
+/// The owner's state with its pad as this copy's partner should get it. While the owner's controls
+/// are off its pad drives a screen of its own copy (a tutorial, a shop, a menu): it reaches the partner
+/// only while the partner's controls are off here too, so the same screen here gets the same input;
+/// a partner that is free to move gets a neutral pad instead.
+pub fn mirror_input(st: State, partner_off: bool) -> State {
+    if st.flags & FLAG_CONTROLS_OFF != 0 && !partner_off {
+        State { pad: Pad::default(), ..st }
+    } else {
+        st
+    }
 }
 
 /// Interaction buttons held in a pad: XINPUT bits plus `LT_BIT` / `RT_BIT` for triggers past half.
@@ -517,9 +531,8 @@ pub unsafe fn update() {
     let pos = [rd_f32(p0 + 0x80), rd_f32(p0 + 0x84), rd_f32(p0 + 0x88)];
     let yaw = yaw_from_quat(rd_f32(p0 + 0x94), rd_f32(p0 + 0x9c));
     let controls = rd_u8(p0 + CONTROLS_ON) != 0;
-    let pad_out = if controls { held } else { Pad::default() };
     let cam = view_heading(mgr, 0).unwrap_or(0.0);
-    let flags = carry_flags(p0, true);
+    let flags = carry_flags(p0, true) | if controls { 0 } else { FLAG_CONTROLS_OFF };
     // who is who on this copy: (avatar actor id, player id), for naming pick-up targets
     let mut players: Vec<(u64, u8)> = partners.iter().filter(|(_, p)| p.avatar != 0).map(|(id, p)| (p.actor_id, *id)).collect();
     if let Some(me) = net::local_id() {
@@ -534,7 +547,7 @@ pub unsafe fn update() {
     let partner_ids: Vec<(u64, u8)> = players.iter().copied().filter(|(_, id)| Some(*id) != net::local_id()).collect();
     let slot_ids: Vec<u64> = (0..4).map(|i| slot_avatar(mgr, i)).filter(|a| *a != 0).map(|a| rd_u64(a + 0x38)).collect();
     net::set_local_proj(projectile::update(rd_u64(p0 + 0x38), &partner_ids, &slot_ids));
-    net::set_local_state(level, own_class.map_or(CLASS_UNKNOWN, |c| c as u8), pos, yaw, cam, pad_out, flags);
+    net::set_local_state(level, own_class.map_or(CLASS_UNKNOWN, |c| c as u8), pos, yaw, cam, held, flags);
 
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;
     let remote = net::remote_states();
@@ -571,6 +584,8 @@ pub unsafe fn update() {
             log!("coop: player {id} lost slot {} (avatar {:#x}); will rebind", p.slot, p.avatar);
             p.avatar = 0;
         }
+        let partner_off = p.avatar != 0 && rd_u8(p.avatar + CONTROLS_ON) == 0;
+        let st = &mirror_input(st, partner_off);
         let pressed = pressed_bits(&st.pad);
         let edges = match (fresh, p.prev_pressed) {
             (true, Some(prev)) => rising(prev, pressed),
@@ -630,10 +645,10 @@ pub unsafe fn update() {
         if p.avatar == 0 {
             if now >= p.next_try_us {
                 p.next_try_us = now + RETRY_US;
-                bind(mgr, id, p, &st, own_class, &used);
+                bind(mgr, id, p, st, own_class, &used);
             }
         } else {
-            correct(p, id, &st, now, delta, mag);
+            correct(p, id, st, now, delta, mag);
         }
     }
 }
@@ -811,6 +826,20 @@ mod tests {
     fn ang_diff(a: f32, b: f32) -> f32 {
         let d = (a - b).rem_euclid(2.0 * PI);
         d.min(2.0 * PI - d)
+    }
+
+    #[test]
+    fn an_owner_on_a_screen_drives_only_a_partner_on_the_same_screen() {
+        let pad = Pad { buttons: 0x1000, rt: 255, ..Pad::default() };
+        let st = |flags| State { id: 1, seq: 1, level: 7, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad, flags, target: 0, proj: Default::default() };
+        // owner in a tutorial or shop screen, partner here too: the same input reaches the same screen
+        assert_eq!(mirror_input(st(FLAG_CONTROLS_OFF), true).pad, pad);
+        // owner in a menu of its own: the partner here stands still
+        assert_eq!(mirror_input(st(FLAG_CONTROLS_OFF | FLAG_CARRYING), false).pad, Pad::default());
+        assert_eq!(mirror_input(st(FLAG_CONTROLS_OFF), false).flags, FLAG_CONTROLS_OFF);
+        // owner playing: its pad goes through whatever the partner is doing
+        assert_eq!(mirror_input(st(0), false).pad, pad);
+        assert_eq!(mirror_input(st(0), true).pad, pad);
     }
 
     #[test]

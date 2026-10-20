@@ -45,7 +45,10 @@ of the world it moves under the host. Order of work:
   1. the owner's pad input for that frame goes into the proxy's control mapper, so the proxy runs,
      jumps and attacks through the game's own `PlayerDriver` and animation;
   2. the owner's position, facing and velocity, sent 30-60 times a second, correct the proxy
-     (blend when close, snap when far), so small differences never build up.
+     (blend when close, snap when far), so small differences never build up;
+  3. while the owner's controls are off (a tutorial, a shop screen, a menu) its pad is flagged, and a
+     copy passes it on only while the proxy's controls are off there too, so the same screen on both
+     copies gets the same buttons and a menu of the owner's own leaves the proxy still.
 - **The host owns the world.** Enemies, pickups, doors, missions and level changes are decided on
   the host and sent to clients as events and corrections; a client that hits an enemy or grabs a
   pickup sends a request. This part grows system by system.

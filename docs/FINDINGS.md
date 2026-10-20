@@ -600,3 +600,22 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   to a crate a late-joining client had intact changed nothing; setting bit 1 and calling
   `0x140652ac0` broke it with its coins (screenshot), and `actor+0x3f8` became 0 as on a crate broken
   by hand.
+- **[obs] Screens a partner opens on the other copy (2026-10-20).** Carrying a townsperson puts the
+  carrier in `StrafeAndThrowAlien` with its controls off (`avatar+0x428` = 0) and, the first time,
+  shows the throw tutorial (`ShowThrowTut`, a push on that slot's controller stack:
+  `cstack<slot>_count` 1 -> 2). The copy where the carrier is a partner shows the same tutorial for the
+  partner's slot and waits for the partner's RT. Throwing into a shop (`ActorEnteredBuilding a=<lot>
+  b=<townsperson>`) opens the shop's customization screen (`SharedScreenModeChanged a=1`), which also
+  reads the carrier's pad on both copies. A choice ends with `BlockheadCustomized actor=<townsperson>`,
+  `ActorCustomizationTaskSuccess`, `CHALLENGE_PASS_MESSAGE`, `CHALLENGE_AVAILABLE_MESSAGE`, then the
+  reward coins (`TriggerPrimedRewards`, `TriggerPickup`). With the owner's pad mirrored to a partner
+  whose controls are off too, both copies ran the mission "Give an Alien a Hat" to the same hat and
+  the same completion.
+- **[obs] Toy Box lots (`queries/122`-`123`).** Each building site is an `Npc` actor with reference
+  name `LOT_<site>` (`LOT_TownHall`, `LOT_TownMedium2`, `LOT_HatShop`, ...) and actor name
+  `BL_<building>`, `BL_EmptyLot` while nothing is built. 15 lots in Toy Box town on this save. The
+  purchase flow is named by strings: Al's Toy Barn catalog (`ScreenAlsToyBarn`, `Catalog_ItemPurchased`,
+  `PurchaseBuilding`), a lot selector (`BuildingLotSelector`, `BldgLotSlctEnter`), then
+  `BuildingContructionComplete`; script bindings include `BuildingData_SetBuildingStateForBuildingLot`,
+  `BuildingData_SetBuildingBuilt` and `BuildingLotData_InitializeLot`. [unk] Not exercised: the test
+  save has not opened the catalog yet.

@@ -45,6 +45,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Update.cmd compares the tag with the version built into the DLL
-          version=$(sed -n 's/^version = "\(.*\)"//p' loader/Cargo.toml | head -1)
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' loader/Cargo.toml | head -1)
           [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match Cargo version $version"; exit 1; }
           gh release create "$GITHUB_REF_NAME" dist/ts3-online.zip --title "$GITHUB_REF_NAME" --notes-file docs/PLAYING.md

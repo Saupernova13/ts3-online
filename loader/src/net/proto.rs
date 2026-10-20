@@ -222,6 +222,11 @@ pub fn is_hello(bytes: &[u8]) -> bool {
     bytes.get(6) == Some(&T_HELLO)
 }
 
+/// Whether `bytes` is a `Refuse` frame, of any version (its type byte has not moved).
+pub fn is_refuse(bytes: &[u8]) -> bool {
+    bytes.get(..4) == Some(MAGIC.as_slice()) && bytes.get(6) == Some(&T_REFUSE)
+}
+
 /// `msg` as a datagram tagged with `key` (the empty key for the public message types).
 pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
     let mut o = Vec::with_capacity(32);

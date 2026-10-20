@@ -523,7 +523,8 @@ impl Session {
             Ok(Msg::ProbeReply { build, host, players, name, .. }) => self.events.push(Event::Discovered { from, build, host, players, name }),
             Ok(msg) if self.is_host() => self.host_msg(from, msg, now_us),
             Ok(msg) => self.client_msg(from, msg, now_us),
-            Err(DecodeError::Version(_)) if self.is_host() => self.send(from, &Msg::Refuse { reason: proto::REFUSE_PROTOCOL }),
+            // never answer a refusal: two hosts of different versions would refuse each other forever
+            Err(DecodeError::Version(_)) if self.is_host() && !proto::is_refuse(bytes) => self.send(from, &Msg::Refuse { reason: proto::REFUSE_PROTOCOL }),
             Err(DecodeError::BadKey) if self.is_host() && proto::is_hello(bytes) => self.send(from, &Msg::Refuse { reason: proto::REFUSE_KEY }),
             Err(_) => {}
         }
@@ -944,6 +945,11 @@ mod tests {
         host.handle(addr(1), &hello, 0);
         assert_eq!(msgs(&mut host), vec![(addr(1), Msg::Refuse { reason: proto::REFUSE_PROTOCOL })]);
         host.handle(addr(1), b"junk", 0);
+        assert!(host.drain_outgoing().is_empty());
+        // another version's refusal is not answered (two hosts would otherwise loop)
+        let mut refuse = encode(&Msg::Refuse { reason: proto::REFUSE_PROTOCOL });
+        refuse[4] = 200;
+        host.handle(addr(2), &refuse, 0);
         assert!(host.drain_outgoing().is_empty());
     }
 

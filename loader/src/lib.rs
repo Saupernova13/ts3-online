@@ -11,6 +11,7 @@ pub mod evlog;
 #[cfg(windows)]
 pub mod game;
 pub mod hex;
+pub mod hold;
 #[cfg(windows)]
 pub mod hooks;
 #[cfg(windows)]

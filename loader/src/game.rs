@@ -131,6 +131,23 @@ game_fn!(find_actor_by_ref, 0x1_4055_7f60, fn(mgr: u64, name: *const c_char) -> 
 game_fn!(component, 0x1_4055_8fb0, fn(actor: u64, name: *const c_char) -> u64);
 game_fn!(exploder_break, 0x1_4065_2ac0, fn(exploder: u64) -> ());
 
+/// The game timer gameplay and scripted sequences run on (FINDINGS 10); an object, not a pointer.
+pub const GAME_TIMER: u64 = 0x1_4095_4820;
+/// `timer_set_speed` speeds: 0 stops the timer, 9 is normal.
+pub const TIMER_STOPPED: u32 = 0;
+pub const TIMER_NORMAL: u32 = 9;
+/// The sound system the pause handlers pause and resume.
+pub const AUDIO_PTR: u64 = 0x1_40ac_2ec0;
+game_fn!(timer_set_speed, 0x1_4047_9c00, fn(timer: u64, speed: u32, flag: u8) -> ());
+game_fn!(timer_sync, 0x1_4047_79d0, fn(timer: u64) -> ());
+game_fn!(set_timer_scaled, 0x1_404c_7620, fn(on: u8) -> ());
+game_fn!(audio_pause, 0x1_4027_0530, fn(audio: u64, all: u8) -> ());
+game_fn!(audio_resume, 0x1_4027_5270, fn(audio: u64, all: u8) -> ());
+// the second step of the handlers' sound pause and resume, on the object `audio_state` returns
+game_fn!(audio_state, 0x1_4047_6800, fn() -> u64);
+game_fn!(audio_state_pause, 0x1_4027_0640, fn(state: u64) -> ());
+game_fn!(audio_state_resume, 0x1_4027_53a0, fn(state: u64) -> ());
+
 /// Actor manager pointer, taken by the actor-name lookups.
 pub const ACTOR_MGR: u64 = 0x1_40b2_bb70;
 

@@ -135,6 +135,9 @@ pub unsafe extern "system" fn post_broadcast(events: u64, name: u64, a: u64, b: 
     if a != 0 && is_event(name, b"SwitchLevel\0") {
         crate::coop::on_local_switch(&CStr::from_ptr(a as *const c_char).to_string_lossy());
     }
+    if is_event(name, b"LevelLoadComplete\0") {
+        crate::coop::on_level_loaded();
+    }
     match original("post_broadcast") {
         Some(o) => std::mem::transmute::<u64, Post4>(o)(events, name, a, b),
         None => 0,

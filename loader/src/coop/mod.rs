@@ -15,7 +15,7 @@ use crate::net::proto::{flags, level_hash, Pad, State, CLASS_UNKNOWN};
 use crate::projectile;
 use crate::target::{self, Target};
 use crate::{log, net, pad};
-use level::{follow_levels, local_level_name};
+use level::{follow_levels, level_loaded, local_level_name};
 use partner::{adopt_parked, choose_class, class_name, free_slot, Class, Partner, CLASSES, SLOTS};
 use steer::{is_idle, mirror_input, pressed_bits, rising, rotate_pad, steer_pad, stick_delta};
 use std::collections::HashMap;
@@ -48,6 +48,11 @@ static STEER: AtomicBool = AtomicBool::new(true);
 static STEER_X: AtomicI32 = AtomicI32::new(1);
 static STEER_Y: AtomicI32 = AtomicI32::new(1);
 static LAST_LEVEL: AtomicU32 = AtomicU32::new(0);
+/// `LevelLoadComplete` was posted since the last level switch.
+static LOAD_COMPLETE: AtomicBool = AtomicBool::new(false);
+/// When slot 0 last went from empty to an avatar; cleared by a level switch.
+static AVATAR_SINCE: Mutex<Option<Instant>> = Mutex::new(None);
+static LOADED: AtomicBool = AtomicBool::new(false);
 
 /// `net_steer`, `net_steer_x`, `net_steer_y`.
 pub fn set_steer(on: bool, x: i32, y: i32) {
@@ -74,7 +79,7 @@ struct Frame<'a> {
 
 /// Per frame, on the game thread.
 pub unsafe fn update() {
-    let (level, switched) = current_level();
+    let (name, level, switched) = current_level();
     follow_levels(level);
     crate::wallet::update(level);
     crate::world::update(level);
@@ -89,17 +94,24 @@ pub unsafe fn update() {
     }
     let mgr = global(MGR_PTR);
     let p0 = if mgr != 0 { slot_avatar(mgr, 0) } else { 0 };
+    let loading = level != 0 && !track_load(switched, p0, &name);
+    crate::hold::update(if loading || p0 == 0 { "" } else { &name });
+    let loading_flag = if loading { flags::LOADING } else { 0 };
 
     let held = pad::take_local_pad();
     if p0 == 0 {
-        net::set_local_state(0, CLASS_UNKNOWN, [0.0; 3], 0.0, 0.0, Pad::default(), 0);
+        net::set_local_state(0, CLASS_UNKNOWN, [0.0; 3], 0.0, 0.0, Pad::default(), loading_flag);
         // the level teardown already reset slots 1-3
         partners.clear();
         forget_pads();
         return;
     }
     let own_class = class_of(p0);
-    let players = publish_local(mgr, p0, level, own_class, held, partners);
+    let players = publish_local(mgr, p0, level, own_class, held, loading_flag, partners);
+    if loading {
+        // slot 0 still holds the old level's avatar: a partner spawned now dies with that level
+        return;
+    }
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;
     let frame = Frame { mgr, level, now, own_class, players: &players };
 
@@ -124,7 +136,7 @@ pub unsafe fn update() {
                 partners.entry(id).or_insert(Partner::new(slot))
             }
         };
-        if st.level != level || level == 0 {
+        if st.level != level || level == 0 || st.flags & flags::LOADING != 0 {
             park(id, p, "is in another level");
             continue;
         }
@@ -132,8 +144,34 @@ pub unsafe fn update() {
     }
 }
 
-/// Play level hash (0 in a menu) and whether the level changed since the last frame.
-unsafe fn current_level() -> (u32, bool) {
+/// The detour saw `LevelLoadComplete`.
+pub fn on_level_loaded() {
+    LOAD_COMPLETE.store(true, Ordering::Relaxed);
+}
+
+/// Whether the current level has finished loading (and its intro movie); logs the moment it has.
+fn track_load(switched: bool, p0: u64, name: &str) -> bool {
+    if switched {
+        LOAD_COMPLETE.store(false, Ordering::Relaxed);
+        LOADED.store(false, Ordering::Relaxed);
+    }
+    let Ok(mut since) = AVATAR_SINCE.lock() else { return true };
+    if switched || p0 == 0 {
+        *since = None;
+    } else if since.is_none() {
+        *since = Some(Instant::now());
+    }
+    let complete = LOAD_COMPLETE.load(Ordering::Relaxed);
+    let loaded = level_loaded(complete, since.map(|t| t.elapsed()));
+    if loaded && !LOADED.swap(true, Ordering::Relaxed) && !name.is_empty() {
+        let how = if complete { "" } else { " (no LevelLoadComplete; assumed after 60 s)" };
+        log!("coop: level {name} loaded{how}");
+    }
+    loaded
+}
+
+/// Play level name ("" in a menu), its hash and whether the level changed since the last frame.
+unsafe fn current_level() -> (String, u32, bool) {
     let raw = local_level_name();
     let level = level_hash(&raw);
     let switched = LAST_LEVEL.swap(level, Ordering::Relaxed) != level;
@@ -142,15 +180,16 @@ unsafe fn current_level() -> (u32, bool) {
     }
     let name = if is_play_level(&raw) { raw } else { String::new() };
     net::set_local_level_name(&name);
-    (level_hash(&name), switched)
+    let hash = level_hash(&name);
+    (name, hash, switched)
 }
 
 /// Sends this copy's state, target and projectile; returns the players here for naming pick-up targets.
-unsafe fn publish_local(mgr: u64, p0: u64, level: u32, own_class: Option<usize>, held: Pad, partners: &HashMap<u8, Partner>) -> Vec<(u64, u8)> {
+unsafe fn publish_local(mgr: u64, p0: u64, level: u32, own_class: Option<usize>, held: Pad, extra_flags: u32, partners: &HashMap<u8, Partner>) -> Vec<(u64, u8)> {
     let (pos, yaw) = actor::pose(p0);
     let controls = actor::controls_enabled(p0);
     let cam = view_heading(mgr, 0).unwrap_or(0.0);
-    let state_flags = carry_flags(p0, true) | if controls { 0 } else { flags::CONTROLS_OFF };
+    let state_flags = carry_flags(p0, true) | extra_flags | if controls { 0 } else { flags::CONTROLS_OFF };
     let mut players: Vec<(u64, u8)> = partners.iter().filter(|(_, p)| p.avatar != 0).map(|(id, p)| (p.actor_id, *id)).collect();
     if let Some(me) = net::local_id() {
         players.push((actor::id(p0), me));

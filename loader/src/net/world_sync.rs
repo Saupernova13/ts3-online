@@ -126,13 +126,29 @@ impl WorldSync {
         }
     }
 
-    /// Host: acks for another level are ignored.
+    /// Client: the highest contiguous seq taken so far.
+    pub fn seq(&self) -> u32 {
+        self.seq
+    }
+
+    /// Client: the host's list started over (it left and re-entered its level); take it from seq 1
+    /// again. Pending reports stay, since the host forgot them too.
+    pub fn host_restarted(&mut self) {
+        self.seq = 0;
+        self.seen.clear();
+    }
+
+    /// Host: acks for another level are ignored. A lower ack means the client started over (it
+    /// re-entered the level or reconnected): the cursor rewinds so the list is sent again.
     pub fn on_ack(&mut self, addr: SocketAddr, level: u32, seq: u32) {
         if level != self.level {
             return;
         }
         let c = self.cursors.entry(addr).or_default();
-        c.acked = c.acked.max(seq);
+        if seq < c.acked {
+            c.sent = seq;
+        }
+        c.acked = seq;
     }
 
     /// Host: per peer, the batch to send now. New entries go out at once; unacked ones every `WORLD_US`.
@@ -317,6 +333,31 @@ mod tests {
         assert!(w.due_world(1100 * MS, &[addr(1)]).is_empty());
         w.forget_peer(addr(1));
         assert_eq!(seqs(&w.due_world(1101 * MS, &[addr(1)])[0].1), vec![1, 2]);
+    }
+
+    #[test]
+    fn a_lower_ack_rewinds_the_cursor_and_a_host_restart_resets_the_client() {
+        let mut w = in_level();
+        let peers = [addr(1)];
+        w.add(EV, "Crate_1");
+        w.add(EV, "Crate_2");
+        w.due_world(0, &peers);
+        w.on_ack(addr(1), L, 2);
+        assert!(w.due_world(1000 * MS, &peers).is_empty());
+        // the client re-entered the level: it says it holds nothing and gets everything again
+        w.on_ack(addr(1), L, 0);
+        assert_eq!(seqs(&w.due_world(1001 * MS, &peers)[0].1), vec![1, 2]);
+        w.on_ack(addr(1), L, 2);
+        assert!(w.due_world(2000 * MS, &peers).is_empty());
+        // client side: a host restart takes the list from 1 again, applying it once more
+        let mut c = in_level();
+        assert_eq!(c.on_world(L, vec![entry(1), entry(2)]), Some(2));
+        assert_eq!(c.on_world(L, vec![entry(1)]), Some(2), "still rejected as old");
+        c.take_apply();
+        c.host_restarted();
+        assert_eq!(c.seq(), 0);
+        assert_eq!(c.on_world(L, vec![entry(1)]), Some(1));
+        assert_eq!(c.take_apply().len(), 1);
     }
 
     #[test]

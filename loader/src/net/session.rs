@@ -265,9 +265,20 @@ impl Session {
         }
     }
 
-    /// 0 outside a level; a change resets all world state.
+    /// 0 outside a level; a change resets all world state. A client entering a level tells the host
+    /// it holds nothing yet, so the host sends the list from the start (also after a reconnect).
     pub fn set_world_level(&mut self, level: u32) {
-        self.world.set_level(level);
+        if self.world.set_level(level) && !self.is_host() {
+            self.ack_world_position();
+        }
+    }
+
+    /// Client: tells the host which world entries it holds; a lower seq rewinds the host's cursor.
+    fn ack_world_position(&mut self) {
+        let level = self.world.level();
+        if let (Some(host), Link::Connected, true) = (self.host_addr, self.link, level != 0) {
+            self.send(host, &Msg::WorldAck { level, seq: self.world.seq() });
+        }
     }
 
     /// A local world event. Host: listed. Client: reported until listed. True if new.
@@ -479,6 +490,8 @@ impl Session {
         if let Some(p) = self.peers.iter_mut().find(|p| p.addr == from) {
             p.last_seen = now;
             let id = p.id;
+            // a known client saying hello again lost us: it starts the world list over
+            self.world.forget_peer(from);
             return self.send(from, &Msg::Welcome { id });
         }
         if build != self.build {
@@ -578,7 +591,14 @@ impl Session {
                 self.store_state(s);
             }
             Msg::Bye { id: 0 } => self.host_lost(),
-            Msg::Level { name } if proto::valid_level(&name) => self.host_level = Some(name),
+            // a changed host level means its world list started over
+            Msg::Level { name } if proto::valid_level(&name) => {
+                if self.host_level.as_deref() != Some(name.as_str()) {
+                    self.host_level = Some(name);
+                    self.world.host_restarted();
+                    self.ack_world_position();
+                }
+            }
             Msg::Wallet { values, acked } => self.host_wallet = Some((values, acked)),
             Msg::World { level, entries } => {
                 if let Some(seq) = self.world.on_world(level, entries) {
@@ -1323,6 +1343,7 @@ mod tests {
         let (mut host, mut a, _) = two_clients();
         host.set_world_level(7);
         a.set_world_level(7);
+        a.drain_outgoing();
         a.set_npcs(7, &[(1, [0.0; 3], 0.0)]);
         assert!(a.drain_outgoing().is_empty(), "only the host sends");
         // from an address that is not the host
@@ -1528,6 +1549,69 @@ mod tests {
         c.set_world_level(L + 1);
         c.handle(addr(H), &encode(&Msg::World { level: L + 1, entries: sent[0].2.clone() }), 504 * MS);
         assert_eq!(c.take_world_apply().len(), 1);
+    }
+
+    /// Lists `names` on the host and runs them through to the client, which acks.
+    fn sync_entries(host: &mut Session, c: &mut Session, names: &[&str], t: u64) -> usize {
+        for n in names {
+            host.world_local(L, EV, n);
+        }
+        host.tick(t);
+        deliver(addr(H), host, addr(1), c, t);
+        let applied = c.take_world_apply().len();
+        deliver(addr(1), c, addr(H), host, t);
+        applied
+    }
+
+    #[test]
+    fn a_client_that_re_enters_the_level_gets_the_list_again() {
+        let (mut host, mut c) = world_pair();
+        assert_eq!(sync_entries(&mut host, &mut c, &["Crate_1", "Crate_2", "Crate_3"], MS), 3);
+        host.tick(500 * MS);
+        assert!(worlds(&mut host).is_empty(), "acked: nothing to resend");
+        // the client visits a menu and comes back: its position is 0 again and the host hears so
+        c.set_world_level(0);
+        c.set_world_level(L);
+        assert_eq!(msgs(&mut c), vec![(addr(H), Msg::WorldAck { level: L, seq: 0 })]);
+        host.handle(addr(1), &encode(&Msg::WorldAck { level: L, seq: 0 }), 501 * MS);
+        host.tick(502 * MS);
+        deliver(addr(H), &mut host, addr(1), &mut c, 502 * MS);
+        assert_eq!(c.take_world_apply().len(), 3);
+        // and a new entry after that arrives in order
+        assert_eq!(sync_entries(&mut host, &mut c, &["Crate_4"], 503 * MS), 1);
+    }
+
+    #[test]
+    fn a_client_that_lost_the_host_gets_the_list_again_after_reconnecting() {
+        let (mut host, mut c) = world_pair();
+        assert_eq!(sync_entries(&mut host, &mut c, &["Crate_1", "Crate_2"], MS), 2);
+        // the host went quiet for the client only; the host still knows the client
+        c.tick(5001 * MS);
+        assert!(c.drain_events().contains(&Event::HostLost));
+        c.tick(5002 * MS);
+        deliver(addr(1), &mut c, addr(H), &mut host, 5002 * MS);
+        deliver(addr(H), &mut host, addr(1), &mut c, 5002 * MS);
+        assert_eq!(c.local_id(), Some(1));
+        host.tick(5003 * MS);
+        deliver(addr(H), &mut host, addr(1), &mut c, 5003 * MS);
+        assert_eq!(c.take_world_apply().len(), 2);
+    }
+
+    #[test]
+    fn a_host_that_re_enters_its_level_restarts_the_client() {
+        let (mut host, mut c) = world_pair();
+        host.set_local_level_name("ST_ToyBox");
+        deliver(addr(H), &mut host, addr(1), &mut c, MS);
+        assert_eq!(sync_entries(&mut host, &mut c, &["Crate_1", "Crate_2"], MS), 2);
+        // the host visits a menu and comes back: its list restarts at 1
+        host.set_world_level(0);
+        host.set_local_level_name("");
+        host.set_world_level(L);
+        host.set_local_level_name("ST_ToyBox");
+        host.world_local(L, EV, "Crate_1");
+        host.tick(10 * MS);
+        deliver(addr(H), &mut host, addr(1), &mut c, 10 * MS);
+        assert_eq!(c.take_world_apply(), vec![(L, EV.to_string(), "Crate_1".to_string())]);
     }
 
     #[test]

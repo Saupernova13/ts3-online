@@ -193,7 +193,12 @@ the game thread. The host keeps the authoritative list for its play level: `(seq
 seq from 1, no duplicates, cleared when its level changes. It sends each client
 `World { level, entries }` (at most 8 per datagram) when something is new and every 200 ms while
 unacknowledged; the client answers `WorldAck { level, seq }` with the highest contiguous seq (entries
-are taken in order; a late joiner starts at 0 and receives everything). A client whose own game
+are taken in order; a late joiner starts at 0 and receives everything). The two sides re-converge
+after either restarts: a client entering a level acks its position (0), and a lower ack rewinds the
+host's send cursor for that client, as does a repeated `Hello` from a known address (the client lost
+the host and reconnected); a change of the host's `Level` name tells a client the host's list
+started over, so it takes the list from seq 1 again (the game-thread applier skips entries it
+already applied). A client whose own game
 produced a synced event sends `WorldReport { level, event, name }` every 200 ms until the entry shows
 up in the host's list; the host accepts it only for its current level with a whitelisted event and a
 valid name, applies it in its own game and lists it. Applying looks the actor up by reference name

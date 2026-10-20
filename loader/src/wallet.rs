@@ -73,10 +73,12 @@ impl ClientWallet {
     }
 }
 
-/// Host side: highest applied seq per client.
+/// Host side, per client: the highest spend seq accepted and the highest the game applied.
 #[derive(Debug, Default)]
 pub struct HostWallet {
     last: HashMap<u8, u32>,
+    /// Sent as `Wallet.acked`; trails `last` until the game applies the spend.
+    applied: HashMap<u8, u32>,
 }
 
 impl HostWallet {
@@ -101,8 +103,24 @@ impl HostWallet {
         self.last.get(&client).copied().unwrap_or(0)
     }
 
+    /// The game applied `client`'s spends up to `upto`. True if that advanced.
+    pub fn confirm(&mut self, client: u8, upto: u32) -> bool {
+        let e = self.applied.entry(client).or_insert(0);
+        if upto > *e {
+            *e = upto;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn applied(&self, client: u8) -> u32 {
+        self.applied.get(&client).copied().unwrap_or(0)
+    }
+
     pub fn forget(&mut self, client: u8) {
         self.last.remove(&client);
+        self.applied.remove(&client);
     }
 }
 
@@ -293,6 +311,23 @@ mod tests {
         let spends = [(1, 0, -MAX_SPEND), (2, 0, -MAX_SPEND - 1), (3, 0, i32::MIN), (4, 1, -5)];
         assert_eq!(h.accept(1, &spends), vec![(0, -MAX_SPEND), (1, -5)]);
         assert_eq!(h.acked(1), 4);
+    }
+
+    #[test]
+    fn applied_advances_on_confirm_and_is_forgotten_with_the_client() {
+        let mut h = HostWallet::default();
+        h.accept(1, &[(1, 0, -5), (2, 0, -5)]);
+        assert_eq!(h.applied(1), 0);
+        assert!(h.confirm(1, 2));
+        assert_eq!(h.applied(1), 2);
+        // a lower or repeated confirm does not regress or re-dirty
+        assert!(!h.confirm(1, 1));
+        assert!(!h.confirm(1, 2));
+        assert_eq!(h.applied(1), 2);
+        assert_eq!(h.applied(9), 0);
+        h.forget(1);
+        assert_eq!(h.applied(1), 0);
+        assert_eq!(h.acked(1), 0);
     }
 
     #[test]

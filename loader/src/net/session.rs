@@ -1,9 +1,9 @@
 //! Sans-IO session state machine: bytes and the clock go in, datagrams and events come out.
 use super::proto::{self, clamp_name, DecodeError, Msg, Pad, Proj, State};
 use super::save::{self, Reassembler};
+use super::world_sync::WorldSync;
 use crate::wallet::HostWallet;
-use crate::world;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 
 pub const MAX_PLAYERS: usize = 4;
@@ -14,9 +14,6 @@ const STATE_US: u64 = 16_000;
 const SAVE_REQ_US: u64 = 300_000;
 const LEVEL_US: u64 = 1_000_000;
 const WALLET_US: u64 = 1_000_000;
-const WORLD_US: u64 = 200_000;
-const MAX_NPCS_IN: usize = 4096;
-const MAX_REPORTS: usize = 32;
 /// Per-client limit on answering `SaveRequest`.
 const SAVE_SERVE_US: u64 = 200_000;
 const SAVE_BURST: usize = 64;
@@ -72,9 +69,6 @@ struct Peer {
     save: Option<Vec<u8>>,
     save_read: bool,
     last_save_serve: Option<u64>,
-    world_acked: u32,
-    world_sent: u32,
-    last_world: Option<u64>,
 }
 
 pub struct Session {
@@ -110,25 +104,10 @@ pub struct Session {
     host_level: Option<String>,
     wallet: Vec<i32>,
     spent: HostWallet,
-    /// Host: per client, the highest spend seq the game applied; sent as `Wallet.acked`.
-    published: HashMap<u8, u32>,
     wallet_dirty: bool,
     last_wallet: Option<u64>,
     host_wallet: Option<(Vec<i32>, u32)>,
-    /// Level hash; 0 outside a level.
-    world_level: u32,
-    /// Host: the authoritative (seq, event, name) list.
-    world: Vec<(u32, String, String)>,
-    /// Client: highest contiguous seq received.
-    world_seq: u32,
-    /// Client: reports the host has not listed yet.
-    reports: Vec<(String, String)>,
-    last_report: Option<u64>,
-    world_seen: Vec<(String, String)>,
-    /// To replay locally: the host list on a client, accepted reports on the host.
-    world_apply: Vec<(u32, String, String)>,
-    /// Client: actor hash to latest (pos, yaw).
-    npcs_in: HashMap<u32, ([f32; 3], f32)>,
+    world: WorldSync,
 }
 
 fn newer(new: u32, old: u32) -> bool {
@@ -170,18 +149,10 @@ impl Session {
             host_level: None,
             wallet: Vec::new(),
             spent: HostWallet::default(),
-            published: HashMap::new(),
             wallet_dirty: false,
             last_wallet: None,
             host_wallet: None,
-            world_level: 0,
-            world: Vec::new(),
-            world_seq: 0,
-            reports: Vec::new(),
-            last_report: None,
-            world_seen: Vec::new(),
-            world_apply: Vec::new(),
-            npcs_in: HashMap::new(),
+            world: WorldSync::new(),
         }
     }
 
@@ -277,9 +248,7 @@ impl Session {
 
     /// Host: the game applied `id`'s spends up to `upto`; the next wallet send acks them.
     pub fn confirm_spends(&mut self, id: u8, upto: u32) {
-        let e = self.published.entry(id).or_insert(0);
-        if upto > *e {
-            *e = upto;
+        if self.spent.confirm(id, upto) {
             self.wallet_dirty = true;
         }
     }
@@ -298,103 +267,31 @@ impl Session {
 
     /// 0 outside a level; a change resets all world state.
     pub fn set_world_level(&mut self, level: u32) {
-        if self.world_level == level {
-            return;
-        }
-        self.world_level = level;
-        self.reset_world();
-    }
-
-    fn reset_world(&mut self) {
-        self.world.clear();
-        self.world_seq = 0;
-        self.reports.clear();
-        self.world_seen.clear();
-        self.world_apply.clear();
-        self.npcs_in.clear();
-        for p in &mut self.peers {
-            p.world_acked = 0;
-            p.world_sent = 0;
-            p.last_world = None;
-        }
+        self.world.set_level(level);
     }
 
     /// A local world event. Host: listed. Client: reported until listed. True if new.
     pub fn world_local(&mut self, level: u32, event: &str, name: &str) -> bool {
-        if level == 0 || level != self.world_level || !world::valid_entry(event, name) {
-            return false;
-        }
-        let known = |l: &[(String, String)]| l.iter().any(|(e, n)| e == event && n == name);
-        if self.is_host() {
-            self.world_add(event, name).is_some()
-        } else if known(&self.world_seen) || known(&self.reports) || self.reports.len() >= MAX_REPORTS {
-            false
-        } else {
-            self.reports.push((event.to_string(), name.to_string()));
-            self.last_report = None;
-            true
-        }
-    }
-
-    /// The new seq; None if already listed or full.
-    fn world_add(&mut self, event: &str, name: &str) -> Option<u32> {
-        if self.world_level == 0 || self.world.len() >= world::MAX_LIST || self.world.iter().any(|(_, e, n)| e == event && n == name) {
-            return None;
-        }
-        let seq = self.world.last().map_or(0, |e| e.0) + 1;
-        self.world.push((seq, event.to_string(), name.to_string()));
-        Some(seq)
+        let host = self.is_host();
+        self.world.local(host, level, event, name)
     }
 
     /// As (level, event, name).
     pub fn take_world_apply(&mut self) -> Vec<(u32, String, String)> {
-        std::mem::take(&mut self.world_apply)
+        self.world.take_apply()
     }
 
-    /// Takes entries strictly in seq order, then acks the highest contiguous seq.
-    fn on_world(&mut self, from: SocketAddr, level: u32, mut entries: Vec<(u32, String, String)>) {
-        if level == 0 || level != self.world_level {
-            return;
-        }
-        entries.sort_by_key(|e| e.0);
-        for (seq, event, name) in entries {
-            if seq != self.world_seq.wrapping_add(1) || self.world_seen.len() >= world::MAX_LIST {
-                continue;
-            }
-            self.world_seq = seq;
-            self.reports.retain(|(e, n)| !(*e == event && *n == name));
-            self.world_apply.push((level, event.clone(), name.clone()));
-            self.world_seen.push((event, name));
-        }
-        self.send(from, &Msg::WorldAck { level, seq: self.world_seq });
-    }
-
-    /// New entries go out at once; unacked ones are resent every `WORLD_US`.
     fn send_world(&mut self, now: u64) {
-        let latest = self.world.last().map_or(0, |e| e.0);
-        for i in 0..self.peers.len() {
-            let p = &mut self.peers[i];
-            p.world_sent = p.world_sent.max(p.world_acked);
-            let from = if latest > p.world_sent {
-                p.world_sent
-            } else if latest > p.world_acked && p.last_world.is_none_or(|t| now.saturating_sub(t) >= WORLD_US) {
-                p.world_acked
-            } else {
-                continue;
-            };
-            let entries: Vec<_> = self.world.iter().filter(|e| e.0 > from).take(proto::MAX_WORLD).cloned().collect();
-            let Some(last) = entries.last().map(|e| e.0) else { continue };
-            let p = &mut self.peers[i];
-            p.world_sent = p.world_sent.max(last);
-            p.last_world = Some(now);
-            let addr = p.addr;
-            self.send(addr, &Msg::World { level: self.world_level, entries });
+        let peers: Vec<SocketAddr> = self.peers.iter().map(|p| p.addr).collect();
+        let level = self.world.level();
+        for (addr, entries) in self.world.due_world(now, &peers) {
+            self.send(addr, &Msg::World { level, entries });
         }
     }
 
     /// Unreliable: the caller resends whatever is still moving.
     pub fn set_npcs(&mut self, level: u32, entries: &[(u32, [f32; 3], f32)]) {
-        if !self.is_host() || level == 0 || level != self.world_level {
+        if !self.is_host() || level == 0 || level != self.world.level() {
             return;
         }
         for chunk in entries.chunks(proto::MAX_NPCS) {
@@ -406,44 +303,21 @@ impl Session {
         }
     }
 
-    fn on_npcs(&mut self, level: u32, entries: Vec<(u32, [f32; 3], f32)>) {
-        if level == 0 || level != self.world_level {
-            return;
-        }
-        for (hash, pos, yaw) in entries {
-            if self.npcs_in.len() < MAX_NPCS_IN || self.npcs_in.contains_key(&hash) {
-                self.npcs_in.insert(hash, (pos, yaw));
-            }
-        }
-    }
-
     pub fn take_npcs(&mut self) -> Vec<(u32, [f32; 3], f32)> {
-        self.npcs_in.drain().map(|(h, (p, y))| (h, p, y)).collect()
-    }
-
-    fn on_world_report(&mut self, level: u32, event: String, name: String) {
-        if level == 0 || level != self.world_level || !world::valid_entry(&event, &name) {
-            return;
-        }
-        if self.world_add(&event, &name).is_some() {
-            self.world_apply.push((level, event, name));
-        }
+        self.world.take_npcs()
     }
 
     fn send_reports(&mut self, host: SocketAddr, now: u64) {
-        if self.reports.is_empty() || !Self::due(&mut self.last_report, now, WORLD_US) {
-            return;
-        }
-        let level = self.world_level;
-        for (event, refname) in self.reports.clone() {
+        let Some(reports) = self.world.due_reports(now) else { return };
+        let level = self.world.level();
+        for (event, refname) in reports {
             self.send(host, &Msg::WorldReport { level, event, refname });
         }
     }
 
     fn send_wallet_to(&mut self, i: usize) {
         let (addr, id) = (self.peers[i].addr, self.peers[i].id);
-        let acked = self.published.get(&id).copied().unwrap_or(0);
-        let m = Msg::Wallet { values: self.wallet.clone(), acked };
+        let m = Msg::Wallet { values: self.wallet.clone(), acked: self.spent.applied(id) };
         self.send(addr, &m);
     }
 
@@ -579,8 +453,8 @@ impl Session {
                 }
             }
             Msg::Bye { id: b } if b == id => self.drop_client(i),
-            Msg::WorldAck { level, seq } if level == self.world_level => self.peers[i].world_acked = self.peers[i].world_acked.max(seq),
-            Msg::WorldReport { level, event, refname } => self.on_world_report(level, event, refname),
+            Msg::WorldAck { level, seq } => self.world.on_ack(from, level, seq),
+            Msg::WorldReport { level, event, refname } => self.world.on_report(level, event, refname),
             Msg::SaveRequest { have } => self.serve_save(i, &have, now),
             Msg::LevelRequest { name } if !name.is_empty() && proto::valid_level(&name) => self.events.push(Event::LevelRequested { id, name }),
             Msg::Spend { spends } => {
@@ -613,7 +487,7 @@ impl Session {
         let Some(id) = (1..MAX_PLAYERS as u8).find(|i| self.peers.iter().all(|p| p.id != *i)) else {
             return self.send(from, &Msg::Refuse { reason: proto::REFUSE_FULL });
         };
-        self.peers.push(Peer { addr: from, id, last_seen: now, save: None, save_read: false, last_save_serve: None, world_acked: 0, world_sent: 0, last_world: None });
+        self.peers.push(Peer { addr: from, id, last_seen: now, save: None, save_read: false, last_save_serve: None });
         self.roster.push((id, name.clone()));
         self.roster.sort_by_key(|(i, _)| *i);
         self.send(from, &Msg::Welcome { id });
@@ -647,12 +521,13 @@ impl Session {
     }
 
     fn drop_client(&mut self, index: usize) {
-        let id = self.peers.remove(index).id;
+        let peer = self.peers.remove(index);
+        let id = peer.id;
         self.roster.retain(|(i, _)| *i != id);
         self.states.remove(&id);
         self.rtt.remove(&id);
         self.spent.forget(id);
-        self.published.remove(&id);
+        self.world.forget_peer(peer.addr);
         self.events.push(Event::PeerLeft { id });
         self.broadcast_roster();
     }
@@ -688,7 +563,7 @@ impl Session {
             Msg::Welcome { id } if self.link == Link::Connecting => {
                 self.link = Link::Connected;
                 self.local_id = Some(id);
-                self.peers.push(Peer { addr: from, id: 0, last_seen: now, save: None, save_read: false, last_save_serve: None, world_acked: 0, world_sent: 0, last_world: None });
+                self.peers.push(Peer { addr: from, id: 0, last_seen: now, save: None, save_read: false, last_save_serve: None });
                 self.events.push(Event::Connected { id });
             }
             Msg::Refuse { reason } if self.link == Link::Connecting => {
@@ -705,8 +580,12 @@ impl Session {
             Msg::Bye { id: 0 } => self.host_lost(),
             Msg::Level { name } if proto::valid_level(&name) => self.host_level = Some(name),
             Msg::Wallet { values, acked } => self.host_wallet = Some((values, acked)),
-            Msg::World { level, entries } => self.on_world(from, level, entries),
-            Msg::Npcs { level, entries } => self.on_npcs(level, entries),
+            Msg::World { level, entries } => {
+                if let Some(seq) = self.world.on_world(level, entries) {
+                    self.send(from, &Msg::WorldAck { level, seq });
+                }
+            }
+            Msg::Npcs { level, entries } => self.world.on_npcs(level, entries),
             Msg::SaveInfo { total, crc } if self.want_save && !self.save_done => {
                 if total == 0 {
                     self.save_done = true;
@@ -761,7 +640,7 @@ impl Session {
         self.rtt.clear();
         self.host_level = None;
         self.host_wallet = None;
-        self.reset_world();
+        self.world.reset();
         self.last_hello = None;
         self.last_ping = None;
         self.rx = None;
@@ -1708,9 +1587,9 @@ mod tests {
         for n in 0..100 {
             c.world_local(L, EV, &format!("Crate_{n}"));
         }
-        assert_eq!(c.reports.len(), MAX_REPORTS);
+        assert_eq!(c.world.report_count(), super::super::world_sync::MAX_REPORTS);
         c.set_world_level(L + 1);
-        assert!(c.reports.is_empty());
+        assert_eq!(c.world.report_count(), 0);
         assert!(!c.world_local(L, EV, "Crate_1")); // not the local level any more
     }
 }

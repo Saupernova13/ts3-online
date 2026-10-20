@@ -102,7 +102,9 @@ pub fn patch_bytes(p: &Patch, module_base: u64, buffer: u64, resolve: Resolver) 
             Ok(b)
         }
         Op::Bytes(new) => {
-            assert_eq!(new.len(), p.orig.len(), "patch {}: length", p.id);
+            if new.len() != p.orig.len() {
+                return Err(format!("patch {}: new and orig differ in length", p.id));
+            }
             Ok(new.clone())
         }
         Op::RipReloc { len, disp_pos, target_off } => {

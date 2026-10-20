@@ -273,3 +273,14 @@ town.
   that wait `respawn.rs` fills the point from the player's own last checkpoint, else the partner's
   position. In game (T21, Train Rescue, two runs): down at 664.9 s, point given at 667.5 s,
   `FinishedRespawn` the same frame; before, no respawn in 90 s.
+
+- 2026-10-20, partners ride Bullseye (protocol 15): in Train Rescue each copy's own player rides the
+  level's horse, mounted at the level start before partners are bound, so a partner stood on foot
+  and was snapped to its owner again and again. The owner now sends `flags::RIDING`; a partner whose
+  owner rides gets a Bullseye made the way the game's summon makes one and is mounted on it, and
+  while both ride the horse and the partner are placed on the owner every frame (the summoned horse
+  ignores its rider's stick). The avatar's interface getter takes a type id the decompiler hid; the
+  state machine calls failed silently until it was passed. The game's own second-player recipe
+  (`CreateJessieRidingBullseye`) left the partner on foot. In game (T22): a horse spawned for the
+  partner on both copies within 0.1 s of the bind, drift 0.0 m while riding, the partner shown on a
+  horse in Train Rescue and in Toy Box. New dev commands: `states`, `request`, `horse`, `autoride`.

@@ -1,4 +1,5 @@
 //! Bookkeeping for one remote player's local partner: slot, class and the owner states it follows. Pure.
+use super::ride::Ride;
 use super::steer::velocity_xz;
 use crate::log;
 use crate::net::proto::State;
@@ -51,6 +52,7 @@ pub(super) struct Partner {
     pub(super) last_target_log_us: u64,
     /// owner gone or elsewhere: the avatar idles until it returns or the level ends
     pub(super) parked: bool,
+    pub(super) ride: Ride,
 }
 
 #[derive(Default)]
@@ -85,6 +87,7 @@ impl Partner {
         Partner {
             slot,
             parked: false,
+            ride: Ride::default(),
             avatar: 0,
             actor_id: 0,
             class: 0,

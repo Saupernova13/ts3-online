@@ -2,6 +2,7 @@
 //! XInput pad fed from the network, so the game's own co-op code runs unchanged (FINDINGS 9).
 mod level;
 mod partner;
+mod ride;
 mod steer;
 mod view;
 
@@ -53,12 +54,32 @@ static LOAD_COMPLETE: AtomicBool = AtomicBool::new(false);
 /// When slot 0 last went from empty to an avatar; cleared by a level switch.
 static AVATAR_SINCE: Mutex<Option<Instant>> = Mutex::new(None);
 static LOADED: AtomicBool = AtomicBool::new(false);
+static LOCAL_RIDING: AtomicBool = AtomicBool::new(false);
+static AUTO_RIDE: AtomicBool = AtomicBool::new(true);
 
 /// `net_steer`, `net_steer_x`, `net_steer_y`.
 pub fn set_steer(on: bool, x: i32, y: i32) {
     STEER.store(on, Ordering::Relaxed);
     STEER_X.store(x, Ordering::Relaxed);
     STEER_Y.store(y, Ordering::Relaxed);
+}
+
+/// Dev command `autoride`: whether partners follow their owner's riding.
+pub fn set_auto_ride(on: bool) {
+    AUTO_RIDE.store(on, Ordering::Relaxed);
+}
+
+/// Dev command `horse`: spawns a Bullseye at a slot's avatar and mounts it; the horse's id or 0.
+pub unsafe fn dev_horse(slot: u64) -> u64 {
+    let avatar = slot_avatar(global(MGR_PTR), slot);
+    if avatar == 0 {
+        return 0;
+    }
+    let horse = ride::summon(avatar);
+    if horse != 0 {
+        ride::mount(avatar, horse);
+    }
+    horse
 }
 
 pub fn set_stick_sign(sign: i32) {
@@ -190,7 +211,11 @@ unsafe fn publish_local(mgr: u64, p0: u64, level: u32, own_class: Option<usize>,
     let (pos, yaw) = actor::pose(p0);
     let controls = actor::controls_enabled(p0);
     let cam = view_heading(mgr, 0).unwrap_or(0.0);
-    let state_flags = carry_flags(p0, true) | extra_flags | if controls { 0 } else { flags::CONTROLS_OFF };
+    let riding = ride::riding(p0);
+    if LOCAL_RIDING.swap(riding, Ordering::Relaxed) != riding {
+        log!("coop: local player riding {riding}");
+    }
+    let state_flags = carry_flags(p0, true) | extra_flags | if controls { 0 } else { flags::CONTROLS_OFF } | if riding { flags::RIDING } else { 0 };
     let mut players: Vec<(u64, u8)> = partners.iter().filter(|(_, p)| p.avatar != 0).map(|(id, p)| (p.actor_id, *id)).collect();
     if let Some(me) = net::local_id() {
         players.push((actor::id(p0), me));
@@ -259,6 +284,9 @@ unsafe fn drive(f: &Frame, id: u8, p: &mut Partner, st: State, used: &[usize]) {
             p.last_face_us = now;
             actor::set_rotation(p.avatar, st.yaw);
         }
+        if AUTO_RIDE.load(Ordering::Relaxed) {
+            follow_ride(id, p, st.flags & flags::RIDING != 0, now);
+        }
         let local = carry_flags(p.avatar, false);
         let owner = st.flags & (flags::CARRYING | flags::CARRIED);
         if p.carry.check(local, owner, now) {
@@ -273,6 +301,28 @@ unsafe fn drive(f: &Frame, id: u8, p: &mut Partner, st: State, used: &[usize]) {
         }
     } else {
         correct(p, id, st, now, delta, mag);
+    }
+}
+
+/// Mounts the partner when its owner rides and it does not.
+unsafe fn follow_ride(id: u8, p: &mut Partner, owner_riding: bool, now: u64) {
+    let alive = p.ride.horse != 0 && registry_get(p.ride.horse) != 0;
+    match p.ride.step(owner_riding, ride::riding(p.avatar), alive, now) {
+        ride::Step::Idle => {}
+        ride::Step::Mount => {
+            log!("coop: player {id} rides; mounting its partner on horse {:#x} again", p.ride.horse);
+            ride::mount(p.avatar, p.ride.horse);
+        }
+        ride::Step::Summon => {
+            p.ride.horse = ride::summon(p.avatar);
+            if p.ride.horse == 0 {
+                log!("coop: player {id} rides; spawning a horse for its partner failed");
+                return;
+            }
+            log!("coop: player {id} rides; spawned horse {:#x} for its partner", p.ride.horse);
+            ride::mount(p.avatar, p.ride.horse);
+        }
+        ride::Step::GiveUp => log!("coop: player {id} rides; its partner could not be mounted, it stays on foot"),
     }
 }
 
@@ -327,7 +377,8 @@ unsafe fn bind(mgr: u64, id: u8, p: &mut Partner, st: &State, own_class: Option<
         log!("coop: spawn for player {id} failed");
         return;
     }
-    bind_joining_avatar(avatar, 0, 0);
+    let (level_info, start) = join_start();
+    bind_joining_avatar(avatar, level_info, start);
     match SLOTS.iter().copied().find(|s| slot_avatar(mgr, *s as u64) == avatar) {
         Some(actual) => {
             if actual != slot {
@@ -347,6 +398,28 @@ unsafe fn bind(mgr: u64, id: u8, p: &mut Partner, st: &State, own_class: Option<
     }
 }
 
+/// What the join menu hands the bind (`0x140104190`): player 1's level region and the name of the
+/// `StartPosition_P2_<region>` locator, so a ride level puts the partner on its mount (auto-drive).
+/// The game string is leaked: the bind keeps no reference, and binds are rare.
+unsafe fn join_start() -> (u64, u64) {
+    let region = player_region(global(STREAMING), 0);
+    let info = if region == 0 { 0 } else { rd_u64(region) };
+    let name = if info == 0 { 0 } else { rd_u64(info + LEVEL_INFO_NAME) };
+    if name == 0 {
+        log!("coop: no level region for player 1; the partner is bound without the level's start (no auto-drive)");
+        return (0, 0);
+    }
+    let region_name = std::ffi::CStr::from_ptr(name as *const c_char).to_string_lossy();
+    let Ok(locator) = std::ffi::CString::new(format!("StartPosition_P2_{region_name}")) else { return (info, 0) };
+    let alloc = match global(STRING_ALLOC) {
+        0 => string_alloc_create(),
+        a => a,
+    };
+    let start: &'static mut u64 = Box::leak(Box::new(0));
+    string_new(start, locator.as_ptr(), alloc);
+    (info, start as *mut u64 as u64)
+}
+
 /// Leaves the avatar idle: removing one mid-level drops the player count and can crash (FINDINGS 10).
 fn park(id: u8, p: &mut Partner, why: &str) {
     pad::set_remote_pad(p.slot, None);
@@ -364,6 +437,15 @@ unsafe fn correct(p: &mut Partner, id: u8, st: &State, now: u64, delta: f32, mag
     if now.saturating_sub(p.last_drift_us) >= LOG_US {
         p.last_drift_us = now;
         log!("coop: player {id} slot {} drift {:.1} m, cam delta {:.1} deg, steer {:.2}", p.slot, dist(cur, st.pos), delta.to_degrees(), mag);
+    }
+    // a summoned horse does not answer its rider's stick, nor carry its rider when placed: both
+    // are placed on the owner every frame (a rider's position is its horse's)
+    let owner_riding = st.flags & flags::RIDING != 0;
+    let horse = if owner_riding && p.ride.horse != 0 && ride::riding(p.avatar) { registry_get(p.ride.horse) } else { 0 };
+    if horse != 0 {
+        actor::place_pose(horse, st.pos, st.yaw);
+        actor::place_pose(p.avatar, st.pos, st.yaw);
+        return;
     }
     if dist2(cur, st.pos) <= SNAP_DIST * SNAP_DIST {
         return;

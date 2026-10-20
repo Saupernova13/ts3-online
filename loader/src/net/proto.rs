@@ -6,7 +6,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 14;
+pub const VERSION: u16 = 15;
 pub const TAG_LEN: usize = 16;
 /// Zero bytes after a `Probe`'s build, so a probe is never shorter than its reply.
 pub const PROBE_PAD: usize = 40;
@@ -75,6 +75,8 @@ pub mod flags {
     pub const CONTROLS_OFF: u32 = 1 << 10;
     /// the copy has switched to a play level and not finished loading it (with its intro movie)
     pub const LOADING: u32 = 1 << 11;
+    /// the owner rides Bullseye (the game's `Riding` state)
+    pub const RIDING: u32 = 1 << 12;
 }
 
 /// One player's state, sent by its owner.

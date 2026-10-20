@@ -148,6 +148,40 @@ game_fn!(audio_state, 0x1_4047_6800, fn() -> u64);
 game_fn!(audio_state_pause, 0x1_4027_0640, fn(state: u64) -> ());
 game_fn!(audio_state_resume, 0x1_4027_53a0, fn(state: u64) -> ());
 
+// the level region a player (0 or 1) is streamed in, or 0; the level info is its first field and
+// the region name a `char*` at `+0x10` of that
+game_fn!(player_region, 0x1_405b_c790, fn(streaming: u64, player: u32) -> u64);
+pub const LEVEL_INFO_NAME: u64 = 0x10;
+/// The default allocator of game strings (`0x1409bb6d8`, created on first use by `0x1402215c0`).
+pub const STRING_ALLOC: u64 = 0x1_409b_b6d8;
+game_fn!(string_alloc_create, 0x1_4022_15c0, fn() -> u64);
+// builds a reference-counted game string from a C string into `out`
+game_fn!(string_new, 0x1_4002_3fb0, fn(out: *mut u64, s: *const c_char, alloc: u64) -> u64);
+
+/// The property string the Bullseye summon spawns with (`0x140220db0`, also `0x1400ee9b0`).
+pub const BULLSEYE_PROPS: u64 = 0x1_4078_f520;
+// spawns any actor from a property set (the summon's spawner; `deferred` 0 instantiates now).
+game_fn!(spawn_actor, 0x1_4055_4a80, fn(props: *mut u64, pos: *const f32, yaw: f32, deferred: u8, flag: u8) -> u64);
+// an actor's blackboard `idx` (0: the one rider properties such as `mountActor` live on).
+game_fn!(blackboard, 0x1_4056_1ae0, fn(actor: u64, idx: u32) -> u64);
+game_fn!(blackboard_set, 0x1_4054_c420, fn(bb: u64, name: *const c_char, value: u64) -> ());
+/// Interface type ids, numbered on first use from one counter (`DAT_140b2a448`); an actor's
+/// `vt+0x48(id)` returns its interface of that type.
+const TYPE_COUNTER: u64 = 0x1_40b2_a448;
+/// The state machine interface (`ForceRide` trigger `0x14016c390`, summon `0x140220db0`).
+pub const TYPE_STATE_MACHINE: u64 = 0x1_40b2_a44c;
+
+/// The id stored at `slot`, numbered now if it has none yet, as the game does inline.
+pub unsafe fn type_id(slot: u64) -> u32 {
+    let at = va(slot);
+    if rd_u32(at) == 0 {
+        let next = rd_u32(va(TYPE_COUNTER)) + 1;
+        std::ptr::write_unaligned(va(TYPE_COUNTER) as *mut u32, next);
+        std::ptr::write_unaligned(at as *mut u32, next);
+    }
+    rd_u32(at)
+}
+
 /// Two-player respawn points (FINDINGS 10): per player, where it respawns when down.
 pub const RESPAWN_POINTS: u64 = 0x1_40b2_fdf8;
 

@@ -21,6 +21,14 @@ pub enum Cmd {
     Log(String),
     /// the level start hold's pause
     Pause(bool),
+    /// log both state tests of a slot's avatar for each name
+    States { slot: u64, names: Vec<String> },
+    /// request a state on a slot's avatar
+    Request { slot: u64, name: String },
+    /// spawn a Bullseye at a slot's avatar and mount it
+    Horse { slot: u64 },
+    /// partners follow their owner's riding (on by default)
+    AutoRide(bool),
 }
 
 pub fn enable(copy: u32) {
@@ -75,6 +83,26 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
             "off" => Ok(Cmd::Pause(false)),
             _ => Err("pause needs on or off".into()),
         },
+        "states" => {
+            let mut w = rest.split_whitespace();
+            let slot = w.next().and_then(|s| s.parse().ok()).ok_or("states needs a slot")?;
+            let names: Vec<String> = w.map(String::from).collect();
+            if names.is_empty() {
+                return Err("states needs state names".into());
+            }
+            Ok(Cmd::States { slot, names })
+        }
+        "request" => {
+            let (slot, name) = split_arg(rest);
+            let slot = slot.parse().map_err(|_| "request needs a slot")?;
+            Ok(Cmd::Request { slot, name: name.ok_or("request needs a state name")?.into() })
+        }
+        "horse" => Ok(Cmd::Horse { slot: rest.parse().map_err(|_| "horse needs a slot")? }),
+        "autoride" => match rest {
+            "on" => Ok(Cmd::AutoRide(true)),
+            "off" => Ok(Cmd::AutoRide(false)),
+            _ => Err("autoride needs on or off".into()),
+        },
         "" => Err("empty line".into()),
         v => Err(format!("unknown command {v:?}")),
     }
@@ -118,6 +146,22 @@ unsafe fn run(cmd: &Cmd) {
         Cmd::Pause(on) => {
             log!("dev: pause {on}");
             crate::hold::pause(*on);
+        }
+        Cmd::States { slot, names } => {
+            let avatar = slot_avatar(global(MGR_PTR), *slot);
+            for n in names {
+                let tests = crate::actor::state_tests(avatar, format!("{n}\0").as_bytes());
+                log!("dev: slot {slot} avatar {avatar:#x} state {n}: {tests:?}");
+            }
+        }
+        Cmd::Request { slot, name } => {
+            let avatar = slot_avatar(global(MGR_PTR), *slot);
+            log!("dev: slot {slot} request {name}: {}", crate::actor::request_state(avatar, format!("{name}\0").as_bytes()));
+        }
+        Cmd::Horse { slot } => log!("dev: slot {slot} horse {:#x}", crate::coop::dev_horse(*slot)),
+        Cmd::AutoRide(on) => {
+            log!("dev: autoride {on}");
+            crate::coop::set_auto_ride(*on);
         }
     }
 }
@@ -166,6 +210,11 @@ mod tests {
         assert_eq!(parse("log"), Ok(Cmd::Log(String::new())));
         assert_eq!(parse("pause on"), Ok(Cmd::Pause(true)));
         assert!(parse("pause").is_err());
+        assert_eq!(parse("states 1 Riding BullseyeAutoRide"), Ok(Cmd::States { slot: 1, names: vec!["Riding".into(), "BullseyeAutoRide".into()] }));
+        assert_eq!(parse("request 0 BullseyeForceRide"), Ok(Cmd::Request { slot: 0, name: "BullseyeForceRide".into() }));
+        assert_eq!(parse("horse 1"), Ok(Cmd::Horse { slot: 1 }));
+        assert_eq!(parse("autoride off"), Ok(Cmd::AutoRide(false)));
+        assert!(parse("horse x").is_err());
     }
 
     #[test]

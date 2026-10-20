@@ -1,5 +1,6 @@
 //! Pick-up targets as identities every copy can resolve. A partner here would pick up whatever is
 //! nearest here, so its candidate is pointed at what its owner picked, or at nothing (FINDINGS 10).
+use crate::net::proto::flags::{TARGET_MASK as MASK, TARGET_SHIFT as SHIFT};
 use crate::net::proto::level_hash;
 use std::collections::HashMap;
 
@@ -10,8 +11,6 @@ pub const TARGET_PLAYER: u32 = 1;
 pub const TARGET_NAMED: u32 = 2;
 /// unnameable (such as a runtime spawn): partners pick up nothing
 pub const TARGET_OTHER: u32 = 3;
-const SHIFT: u32 = 8;
-const MASK: u32 = 3 << SHIFT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
@@ -103,9 +102,9 @@ pub use live::*;
 #[cfg(windows)]
 mod live {
     use super::*;
+    use crate::actor;
     use crate::game::*;
     use crate::log;
-    use std::ffi::{c_char, CStr};
     use std::sync::Mutex;
     use std::time::Instant;
 
@@ -113,8 +112,6 @@ mod live {
     const CARRY: u64 = 0x208;
     const STATE: u64 = 0x278;
     const CANDIDATE: u64 = 0x280;
-    const ACTOR_ID: u64 = 0x38;
-    const ACTOR_REF: u64 = 0x150;
     /// Minimum interval between index rebuilds on a miss.
     const REBUILD_MS: u128 = 1000;
 
@@ -130,11 +127,6 @@ mod live {
         find_component(avatar, b"PlayerPerception\0".as_ptr() as u64)
     }
 
-    unsafe fn refname(actor: u64) -> Option<String> {
-        let p = rd_u64(actor + ACTOR_REF);
-        (p != 0).then(|| CStr::from_ptr(p as *const c_char).to_string_lossy().into_owned())
-    }
-
     /// Every (reference name, actor id, actor pointer) in the actor manager's three lists.
     pub unsafe fn named_actor_ptrs() -> Vec<(String, u64, u64)> {
         let mgr = global(ACTOR_MGR);
@@ -148,8 +140,8 @@ mod live {
             while n != 0 && guard < 20_000 {
                 let a = rd_u64(n + 8);
                 if a != 0 {
-                    if let Some(r) = refname(a) {
-                        out.push((r, rd_u64(a + ACTOR_ID), a));
+                    if let Some(r) = actor::refname(a) {
+                        out.push((r, actor::id(a), a));
                     }
                 }
                 n = rd_u64(n + 0x30);
@@ -189,7 +181,7 @@ mod live {
             return Target::None;
         }
         let actor = registry_get(id);
-        let name = if actor != 0 { refname(actor) } else { None };
+        let name = if actor != 0 { actor::refname(actor) } else { None };
         let unique = name.as_deref().is_some_and(|n| !n.is_empty() && named(level, level_hash(n)) == id);
         identify(id, players, name.as_deref(), unique)
     }

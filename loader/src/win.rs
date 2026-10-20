@@ -165,6 +165,11 @@ impl ProcMem {
     }
 }
 
+/// The game build id from the main module's headers; None if they cannot be read.
+pub fn build_id() -> Option<u64> {
+    crate::pe::identity(&ProcMem.read_headers(main_module_base())).ok().map(|id| id.build_id())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

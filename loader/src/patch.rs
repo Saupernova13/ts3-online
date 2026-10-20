@@ -1,6 +1,6 @@
 //! Pure patch logic: verify everything, compute every write, then apply.
 use crate::doc::{HookMode, Op, Patch};
-use crate::hex;
+use crate::{hex, pe};
 
 /// A real process, or a byte vector in tests.
 pub trait Mem {
@@ -183,19 +183,11 @@ pub fn apply(
 
 /// Checks the main module's PE headers against the expected build.
 pub fn check_identity(headers: &[u8], time_date_stamp: u32, size_of_image: u32) -> Result<(), String> {
-    let u32_at = |o: usize| headers.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
-    if headers.get(0..2) != Some(b"MZ") {
-        return Err("no MZ header".into());
-    }
-    let nt = u32_at(0x3c).ok_or("short headers")? as usize;
-    if headers.get(nt..nt + 4) != Some(b"PE\0\0") {
-        return Err("no PE signature".into());
-    }
-    let ts = u32_at(nt + 8).ok_or("short headers")?; // FileHeader.TimeDateStamp
-    let size = u32_at(nt + 24 + 56).ok_or("short headers")?; // OptionalHeader.SizeOfImage
-    if ts != time_date_stamp || size != size_of_image {
+    let id = pe::identity(headers)?;
+    if id.time_date_stamp != time_date_stamp || id.size_of_image != size_of_image {
         return Err(format!(
-            "game build mismatch: timestamp {ts:#x} (want {time_date_stamp:#x}), size {size:#x} (want {size_of_image:#x})"
+            "game build mismatch: timestamp {:#x} (want {time_date_stamp:#x}), size {:#x} (want {size_of_image:#x})",
+            id.time_date_stamp, id.size_of_image
         ));
     }
     Ok(())
@@ -413,12 +405,7 @@ pub mod tests {
 
     #[test]
     fn identity() {
-        let mut h = vec![0u8; 0x200];
-        h[0..2].copy_from_slice(b"MZ");
-        h[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
-        h[0x80..0x84].copy_from_slice(b"PE\0\0");
-        h[0x88..0x8c].copy_from_slice(&0x6abf29b6u32.to_le_bytes());
-        h[0x80 + 80..0x80 + 84].copy_from_slice(&0xbdc000u32.to_le_bytes());
+        let h = crate::pe::tests::sample_headers();
         assert!(check_identity(&h, 0x6abf29b6, 0xbdc000).is_ok());
         assert!(check_identity(&h, 0x6abf29b7, 0xbdc000).is_err());
         assert!(check_identity(&h, 0x6abf29b6, 0xbdc001).is_err());

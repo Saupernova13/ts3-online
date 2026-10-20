@@ -67,8 +67,7 @@ struct Picked {
 
 /// Returns at once; the net session starts when the player chooses.
 pub fn start(init: Init) {
-    let headers = crate::win::ProcMem.read_headers(crate::win::main_module_base());
-    let Some(build) = net::build_id(&headers) else {
+    let Some(build) = crate::win::build_id() else {
         log!("menu: cannot read the PE headers; skipping the menu");
         return net::start(&Net::Auto, init.opts);
     };
@@ -99,13 +98,13 @@ fn run(init: Init, build: u64) {
             Some(a.clone())
         }
     };
-    let changes = model::ini_changes(&opts.name, &opts.key, &last, &picked.name, &picked.key, joined.as_deref());
+    let changes = model::ini_changes(&opts.name, opts.key.as_str(), &last, &picked.name, &picked.key, joined.as_deref());
     if let (false, Some(path)) = (changes.is_empty(), &ini) {
         save_settings(path, &changes);
     }
     let mode = model::to_net(&picked.choice, opts.port);
     opts.name = picked.name;
-    opts.key = NetKey::new(&picked.key).as_str().to_string();
+    opts.key = NetKey::new(&picked.key);
     net::start(&mode, opts);
     net::set_menu_open(false);
 }

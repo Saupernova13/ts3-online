@@ -1,24 +1,37 @@
-//! Rust replacements for game code with a hardcoded player index (FINDINGS 5a).
+//! Game-code replacements and detours: player-index fixes (FINDINGS 5a-5f), the frame tick (9),
+//! event-post detours (10). `table` is the one list the patch document's hook names resolve against.
 use crate::game::*;
-use crate::log;
+use crate::{actor, log};
 use std::ffi::{c_char, CStr};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+struct Hook {
+    name: &'static str,
+    func: u64,
+    /// detours only: where the loader stores the trampoline that runs the original
+    original: Option<&'static AtomicU64>,
+}
+
+fn table() -> [Hook; 11] {
+    let f = |p: *const ()| p as u64;
+    [
+        Hook { name: "bind_joining_avatar", func: f(bind_joining_avatar as *const ()), original: None },
+        Hook { name: "join_cancel", func: f(join_cancel as *const ()), original: None },
+        Hook { name: "join_request", func: f(join_request as *const ()), original: None },
+        Hook { name: "find_avatar_by_class", func: f(find_avatar_by_class as *const ()), original: None },
+        Hook { name: "refresh_player_controls", func: f(refresh_player_controls as *const ()), original: None },
+        Hook { name: "reset_player_slots", func: f(reset_player_slots as *const ()), original: None },
+        Hook { name: "level_player_setup", func: f(level_player_setup as *const ()), original: None },
+        Hook { name: "frame_tick", func: f(frame_tick as *const ()), original: None },
+        Hook { name: "post_broadcast", func: f(post_broadcast as *const ()), original: Some(&ORIG_POST_BROADCAST) },
+        Hook { name: "post_actor", func: f(post_actor as *const ()), original: Some(&ORIG_POST_ACTOR) },
+        Hook { name: "post_broadcast2", func: f(post_broadcast2 as *const ()), original: Some(&ORIG_POST_BROADCAST2) },
+    ]
+}
+
+/// Address of the Rust function behind a hook name.
 pub fn resolve(name: &str) -> Option<u64> {
-    Some(match name {
-        "bind_joining_avatar" => bind_joining_avatar as *const () as u64,
-        "join_cancel" => join_cancel as *const () as u64,
-        "join_request" => join_request as *const () as u64,
-        "find_avatar_by_class" => find_avatar_by_class as *const () as u64,
-        "refresh_player_controls" => refresh_player_controls as *const () as u64,
-        "reset_player_slots" => reset_player_slots as *const () as u64,
-        "level_player_setup" => level_player_setup as *const () as u64,
-        "frame_tick" => frame_tick as *const () as u64,
-        "post_broadcast" => post_broadcast as *const () as u64,
-        "post_actor" => post_actor as *const () as u64,
-        "post_broadcast2" => post_broadcast2 as *const () as u64,
-        _ => return None,
-    })
+    table().iter().find(|h| h.name == name).map(|h| h.func)
 }
 
 /// The joining player: first pad-assigned 1..=3 without an avatar, else 1.
@@ -89,18 +102,17 @@ static ORIG_POST_ACTOR: AtomicU64 = AtomicU64::new(0);
 static ORIG_POST_BROADCAST2: AtomicU64 = AtomicU64::new(0);
 
 fn original_slot(name: &str) -> Option<&'static AtomicU64> {
-    Some(match name {
-        "post_broadcast" => &ORIG_POST_BROADCAST,
-        "post_actor" => &ORIG_POST_ACTOR,
-        "post_broadcast2" => &ORIG_POST_BROADCAST2,
-        _ => return None,
-    })
+    table().iter().find(|h| h.name == name).and_then(|h| h.original)
 }
 
-/// Called by the loader before the detour is applied.
-pub fn set_original(name: &str, trampoline: u64) {
-    if let Some(s) = original_slot(name) {
-        s.store(trampoline, Ordering::Release);
+/// Called by the loader before the detour is applied; false if `name` is not a detour.
+pub fn set_original(name: &str, trampoline: u64) -> bool {
+    match original_slot(name) {
+        Some(s) => {
+            s.store(trampoline, Ordering::Release);
+            true
+        }
+        None => false,
     }
 }
 
@@ -160,14 +172,6 @@ pub unsafe fn call_post_actor(events: u64, name: u64, a: u64, b: u64, actor: u64
     original("post_actor").map(|o| std::mem::transmute::<u64, Post5>(o)(events, name, a, b, actor))
 }
 
-unsafe fn actor_id(actor: u64) -> u64 {
-    if actor != 0 {
-        rd_u64(actor + 0x38)
-    } else {
-        0
-    }
-}
-
 /// Replaces 0x1400e2490: bind the joining avatar to the joining player's slot.
 pub unsafe extern "system" fn bind_joining_avatar(avatar: u64, level_info: u64, start: u64) {
     let idx = joining_index();
@@ -175,14 +179,14 @@ pub unsafe extern "system" fn bind_joining_avatar(avatar: u64, level_info: u64, 
     log!("hook bind_joining_avatar avatar={avatar:#x} level_info={level_info:#x} start={start:#x} idx={idx}");
     ensure_player_setup(mgr, idx);
     assign_avatar(mgr, idx, avatar);
-    ev5(global(EVENTS), va(0x1_4077_1540), 0, 0, actor_id(avatar)); // "DeactivateGlow"
+    ev5(global(EVENTS), va(0x1_4077_1540), 0, 0, actor::id(avatar)); // "DeactivateGlow"
 
-    // the original does not null-check player 1's avatar
+    // like the original, player 1's avatar is not null-checked
     let p1 = rd_u64(mgr + SLOT_AVATAR_BASE);
-    let hb = rd_u64(p1 + 0x408);
+    let hb = rd_u64(p1 + actor::AVATAR_FLAGS);
     let mut avatar = avatar;
     if flagtest(global(FLAGS), hb, hash(0xd5)) != 0 {
-        ev4(global(EVENTS), va(0x1_4078_dd28), rd_u64(avatar + 0x38), 0); // "JoiningPlayer1Avatar"
+        ev4(global(EVENTS), va(0x1_4078_dd28), actor::id(avatar), 0); // "JoiningPlayer1Avatar"
         avatar = slot_avatar(mgr, idx as u64);
     }
 
@@ -192,7 +196,7 @@ pub unsafe extern "system" fn bind_joining_avatar(avatar: u64, level_info: u64, 
         let c = lvltest(global(FLAGS), level_info, hash(0x1f8));
         if (a | b | c) != 0 {
             autodrive(global(RIDES), idx, avatar, start);
-            ev5(global(EVENTS), va(0x1_4078_dd40), va(0x1_4076_b2e8), 0, actor_id(avatar)); // "AvatarAutoDrive"
+            ev5(global(EVENTS), va(0x1_4078_dd40), va(0x1_4076_b2e8), 0, actor::id(avatar)); // "AvatarAutoDrive"
         }
         if idx == 1 {
             streaming(global(STREAMING), 1, level_info, 0); // only tracks players 0/1
@@ -238,7 +242,7 @@ pub unsafe extern "system" fn join_request(pad: u32) {
     }
     let mgr = global(MGR_PTR);
     let p1 = rd_u64(mgr + SLOT_AVATAR_BASE);
-    let blocked = if p1 != 0 { flagtest(global(FLAGS), rd_u64(p1 + 0x408), hash(0xd1)) } else { 0 };
+    let blocked = if p1 != 0 { flagtest(global(FLAGS), rd_u64(p1 + actor::AVATAR_FLAGS), hash(0xd1)) } else { 0 };
     if can_join(mgr) == 0 || blocked != 0 {
         log!("hook join_request pad={pad} refused (can_join/blocked={blocked})");
         post_event(va(0x1_4078_dbb0), 0); // "PlayerJoinDisallowed"
@@ -265,6 +269,7 @@ pub unsafe extern "system" fn join_request(pad: u32) {
 }
 
 /// Replaces 0x1405bae40 (avatar by class); calls from the pick handler skip player-owned avatars.
+/// `ret` is the caller's return address, which only the `entry_caller` thunk passes (in R8).
 pub unsafe extern "system" fn find_avatar_by_class(mgr: u64, class: u64, ret: u64) -> u64 {
     let pick = va(0x1_4010_4190);
     let from_pick = ret >= pick && ret < pick + 0x577;
@@ -274,10 +279,10 @@ pub unsafe extern "system" fn find_avatar_by_class(mgr: u64, class: u64, ret: u6
         if a == 0 || (rd_u32(a + 0x10) & mask) != want {
             continue;
         }
-        let cls = prop_string(a + 0x2e0, va(0x1_4075_d1e4), 0); // "class"
+        let cls = prop_string(a + actor::PROPS, va(0x1_4075_d1e4), 0); // "class"
         if stricmp(cls as *const c_char, class as *const c_char) == 0 {
-            if from_pick && rd_i32(a + 0x484) != -1 {
-                log!("hook find_avatar_by_class skip owned avatar {a:#x} (player {})", rd_i32(a + 0x484));
+            if from_pick && rd_i32(a + actor::PLAYER_INDEX) != -1 {
+                log!("hook find_avatar_by_class skip owned avatar {a:#x} (player {})", rd_i32(a + actor::PLAYER_INDEX));
                 continue;
             }
             if from_pick {
@@ -316,9 +321,9 @@ pub unsafe extern "system" fn refresh_player_controls(mgr: u64) {
             continue;
         }
         let enabled = rd_u64(mgr + SLOT_INDEX_BASE + i * SLOT_STRIDE + 0x50) == 0 && global_clear;
-        if rd_u8(avatar + 0x428) != enabled as u8 {
+        if actor::controls_enabled(avatar) != enabled {
             vcall_u8(avatar, 0x148, enabled as u8);
-            log!("hook refresh_player_controls slot {i} controls -> {enabled} (now {})", rd_u8(avatar + 0x428));
+            log!("hook refresh_player_controls slot {i} controls -> {enabled} (now {})", actor::controls_enabled(avatar));
         }
     }
 }

@@ -63,6 +63,18 @@ pub struct Pad {
 
 pub const CLASS_UNKNOWN: u8 = 255;
 
+/// `State.flags` layout; every bit is allocated here.
+pub mod flags {
+    /// the local avatar carries someone
+    pub const CARRYING: u32 = 1;
+    pub const CARRIED: u32 = 2;
+    /// kind of `State.target` (`target::Target`)
+    pub const TARGET_SHIFT: u32 = 8;
+    pub const TARGET_MASK: u32 = 3 << TARGET_SHIFT;
+    /// a tutorial, shop or menu has the owner's pad
+    pub const CONTROLS_OFF: u32 = 1 << 10;
+}
+
 /// One player's state, sent by its owner.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct State {
@@ -78,7 +90,7 @@ pub struct State {
     pub cam: f32,
     pub pad: Pad,
     pub flags: u32,
-    /// pick-up or carry target; its kind is in `flags` (`coop::TARGET_*`)
+    /// pick-up or carry target; its kind is in `flags` (`flags::TARGET_MASK`, `target::Target`)
     pub target: u32,
     /// latest thrown object while in flight (`seq` 0: none)
     pub proj: Proj,

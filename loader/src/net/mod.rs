@@ -5,7 +5,7 @@ pub mod save;
 pub mod session;
 pub mod sim;
 
-use crate::config::{Net, Sim};
+use crate::config::{Net, NetKey, Sim};
 use crate::perf::{self, Traffic};
 use crate::{copy, log};
 use proto::State;
@@ -124,16 +124,6 @@ pub fn wait_decision(timeout: Duration) -> Decision {
 
 pub fn describe() -> String {
     SHARED.lock().map(|g| format!("role {:?}, save {:?}", g.role, g.save)).unwrap_or_default()
-}
-
-/// Build id from the main module's PE headers: `TimeDateStamp << 32 | SizeOfImage`.
-pub fn build_id(headers: &[u8]) -> Option<u64> {
-    let u32_at = |o: usize| headers.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
-    let nt = u32_at(0x3c)? as usize;
-    if headers.get(0..2) != Some(b"MZ") || headers.get(nt..nt + 4) != Some(b"PE\0\0") {
-        return None;
-    }
-    Some((u32_at(nt + 8)? as u64) << 32 | u32_at(nt + 24 + 56)? as u64)
 }
 
 pub fn active() -> bool {
@@ -262,14 +252,12 @@ pub struct Options {
     pub port: u16,
     /// `net_peers` for `net=auto`
     pub peers: Vec<String>,
-    /// `net_key` password; empty for none
-    pub key: String,
+    pub key: NetKey,
 }
 
 #[cfg(windows)]
 pub fn start(net: &Net, opts: Options) {
-    let headers = crate::win::ProcMem.read_headers(crate::win::main_module_base());
-    let Some(build) = build_id(&headers) else {
+    let Some(build) = crate::win::build_id() else {
         set_role(Role::Off);
         return log!("net: cannot read the PE headers; not starting");
     };
@@ -340,15 +328,15 @@ pub fn host_save_path(app_data: &str, local_app_data: &str, copy: u32) -> PathBu
     copy::savedata_dir(&copy::normal_root(app_data, local_app_data, copy)).join("Saved Game")
 }
 
-fn client_session(build: u64, name: &str, host: SocketAddr, key: &str) -> Session {
+fn client_session(build: u64, name: &str, host: SocketAddr, key: &NetKey) -> Session {
     let mut s = Session::client(build, name, host);
-    s.set_key(key.as_bytes());
+    s.set_key(key.as_str().as_bytes());
     s
 }
 
-fn host_session(build: u64, name: &str, copy: u32, key: &str) -> Session {
+fn host_session(build: u64, name: &str, copy: u32, key: &NetKey) -> Session {
     let mut s = Session::host(build, name);
-    s.set_key(key.as_bytes());
+    s.set_key(key.as_str().as_bytes());
     let path = host_save_path(&std::env::var("APPDATA").unwrap_or_default(), &std::env::var("LOCALAPPDATA").unwrap_or_default(), copy);
     s.set_save_source(move || std::fs::read(&path).ok());
     s
@@ -404,7 +392,7 @@ pub struct Auto {
     own: (Ipv4Addr, u16),
     build: u64,
     name: String,
-    key: String,
+    key: NetKey,
 }
 
 fn port_taken(e: &std::io::Error) -> bool {
@@ -631,21 +619,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_id_reads_pe_fields() {
-        let mut h = vec![0u8; 0x1000];
-        h[0..2].copy_from_slice(b"MZ");
-        h[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
-        h[0x80..0x84].copy_from_slice(b"PE\0\0");
-        h[0x88..0x8c].copy_from_slice(&0x6abf29b6u32.to_le_bytes());
-        h[0x80 + 80..0x80 + 84].copy_from_slice(&0xbdc000u32.to_le_bytes());
-        assert_eq!(build_id(&h), Some(0x6abf29b6_00bdc000));
-        assert_eq!(build_id(&h[..0x40]), None);
-        assert_eq!(build_id(&[]), None);
-        h[0] = 0;
-        assert_eq!(build_id(&h), None);
-    }
-
-    #[test]
     fn host_and_two_clients_over_loopback() {
         let bind = || {
             let s = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -710,7 +683,7 @@ mod tests {
     }
 
     fn opts(copy: u32) -> Options {
-        Options { name: format!("p{copy}"), sim: None, copy, port: 0, peers: Vec::new(), key: String::new() }
+        Options { name: format!("p{copy}"), sim: None, copy, port: 0, peers: Vec::new(), key: NetKey::default() }
     }
 
     #[test]

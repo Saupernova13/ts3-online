@@ -140,7 +140,7 @@ mod live {
     use crate::game::*;
     use crate::patch::Mem;
     use crate::win::ProcMem;
-    use crate::{hooks, log, net};
+    use crate::{actor, hooks, log, net};
     use std::ffi::CString;
     use std::sync::{Mutex, OnceLock};
     use std::time::Instant;
@@ -157,11 +157,7 @@ mod live {
         applied: u32,
     }
 
-    /// Offsets in an actor: id, reference name pointer.
-    const ACTOR_ID: u64 = 0x38;
-    const ACTOR_REF: u64 = 0x150;
-
-    /// Compared in place, stopping at the first differing byte.
+    /// `name` may not be a C string: compared byte by byte, never past a mismatch.
     unsafe fn synced_index(name: u64) -> Option<usize> {
         if name < 0x1_0000 {
             return None;
@@ -171,7 +167,7 @@ mod live {
 
     /// Reads without faulting.
     fn read_ref(actor: u64) -> Option<String> {
-        let ptr = u64::from_le_bytes(ProcMem.read(actor + ACTOR_REF, 8)?.try_into().ok()?);
+        let ptr = u64::from_le_bytes(ProcMem.read(actor + actor::REF, 8)?.try_into().ok()?);
         if ptr < 0x1_0000 {
             return None;
         }
@@ -216,8 +212,7 @@ mod live {
         if event == "ExploderDestroy" {
             return explode(actor);
         }
-        let id = rd_u64(actor + ACTOR_ID);
-        hooks::call_post_actor(global(EVENTS), ev, 0, 0, id).is_some()
+        hooks::call_post_actor(global(EVENTS), ev, 0, 0, actor::id(actor)).is_some()
     }
 
     /// `MExploder+0xdc`: bit 0 exploded, bit 1 break requested; `Explode` (0x140656710) breaks when

@@ -1,4 +1,6 @@
 //! ts3online: a `dinput8.dll` proxy that patches Toy Story 3 in memory before its CRT initializers run.
+#[cfg(windows)]
+pub mod actor;
 pub mod config;
 pub mod copy;
 pub mod doc;
@@ -17,11 +19,13 @@ pub mod iat;
 pub mod menu;
 pub mod menu_model;
 pub mod log;
+pub mod math;
 pub mod net;
 pub mod npc;
 #[cfg(windows)]
 pub mod pad;
 pub mod patch;
+pub mod pe;
 pub mod perf;
 pub mod projectile;
 #[cfg(windows)]
@@ -157,7 +161,7 @@ mod entry {
             window::start(rect);
         }
         if let Some(mode) = &cfg.net {
-            let opts = net::Options { name: cfg.name.clone(), sim: cfg.net_sim, copy: n, port: cfg.net_port, peers: cfg.net_peers.clone(), key: cfg.net_key.as_str().to_string() };
+            let opts = net::Options { name: cfg.name.clone(), sim: cfg.net_sim, copy: n, port: cfg.net_port, peers: cfg.net_peers.clone(), key: cfg.net_key.clone() };
             if *mode == config::Net::Menu {
                 menu::start(menu::Init { ini: ini_path, opts, last: cfg.menu_last.clone() });
             } else {
@@ -253,7 +257,9 @@ mod entry {
                 }
                 let at = page + (i * SLOT) as u64;
                 win::fill(at, &bytes);
-                hooks::set_original(name, at);
+                if !hooks::set_original(name, at) {
+                    return log!("detour {name} has no trampoline slot in hooks::table; nothing applied");
+                }
                 log!("trampoline for {name} at {at:#x}");
             }
         }

@@ -1,5 +1,6 @@
 //! NPC sync (H6c): the host streams the transforms of named actors that move (`Msg::Npcs`, unreliable);
 //! clients find them by reference-name hash (FINDINGS 10) and follow, smoothed.
+use crate::math::{ang_delta, dist};
 use std::collections::{HashMap, HashSet};
 
 /// (reference-name hash, position, yaw)
@@ -20,21 +21,6 @@ pub const MAX_PER_SAMPLE: usize = 480;
 pub const FOLLOW_LERP: f32 = 0.3;
 /// Farther than this (m) from the host's position, a client snaps instead of gliding.
 pub const SNAP_DIST: f32 = 3.0;
-
-fn dist(a: [f32; 3], b: [f32; 3]) -> f32 {
-    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
-}
-
-/// Shortest signed angle from `from` to `to`, in -pi..=pi.
-fn ang_delta(from: f32, to: f32) -> f32 {
-    let tau = std::f32::consts::TAU;
-    let d = (to - from).rem_euclid(tau);
-    if d > std::f32::consts::PI {
-        d - tau
-    } else {
-        d
-    }
-}
 
 fn plausible(pos: [f32; 3], yaw: f32) -> bool {
     pos.iter().all(|v| v.is_finite() && v.abs() <= 1.0e6) && yaw.is_finite()
@@ -160,7 +146,7 @@ pub use live::update;
 #[cfg(windows)]
 mod live {
     use super::*;
-    use crate::coop::{place_pose, yaw_from_quat};
+    use crate::actor::{self, place_pose};
     use crate::game::*;
     use crate::net::proto::level_hash;
     use crate::target::{named, named_actor_ptrs, RefIndex};
@@ -169,7 +155,7 @@ mod live {
     use std::time::{Duration, Instant};
 
     const LOG_EVERY: Duration = Duration::from_secs(10);
-    /// `ActorCarried+0x18`: the carrier's actor id, 0 when not carried.
+    /// `ActorCarried+0x18`: nonzero while carried (see `coop::carry_flags`).
     const CARRIER: u64 = 0x18;
 
     #[derive(Default)]
@@ -181,10 +167,6 @@ mod live {
     }
 
     static LIVE: Mutex<Option<Live>> = Mutex::new(None);
-
-    unsafe fn pose(actor: u64) -> ([f32; 3], f32) {
-        ([rd_f32(actor + 0x80), rd_f32(actor + 0x84), rd_f32(actor + 0x88)], yaw_from_quat(rd_f32(actor + 0x94), rd_f32(actor + 0x9c)))
-    }
 
     unsafe fn carried(actor: u64) -> bool {
         let comp = find_component(actor, c"ActorCarried".as_ptr() as u64);
@@ -223,7 +205,7 @@ mod live {
                     continue;
                 }
                 applied += 1;
-                let (cur_pos, cur_yaw) = pose(actor);
+                let (cur_pos, cur_yaw) = actor::pose(actor);
                 let (new_pos, new_yaw) = if cur_pos.iter().all(|v| v.is_finite()) { (smooth_pos(cur_pos, pos), smooth_yaw(cur_yaw, yaw)) } else { (pos, yaw) };
                 if dist(cur_pos, new_pos) > 1.0e-4 || ang_delta(cur_yaw, new_yaw).abs() > 1.0e-3 {
                     place_pose(actor, new_pos, new_yaw);
@@ -248,7 +230,7 @@ mod live {
             .filter_map(|(n, id, actor)| {
                 let hash = level_hash(n);
                 (index.get(hash) == Some(*id)).then(|| {
-                    let (pos, yaw) = pose(*actor);
+                    let (pos, yaw) = actor::pose(*actor);
                     (hash, pos, yaw)
                 })
             })

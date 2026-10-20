@@ -55,6 +55,50 @@ pub unsafe fn controls_enabled(avatar: u64) -> bool {
     rd_u8(avatar + CONTROLS_ON) != 0
 }
 
+/// `vt+0x48(type id)`: the actor's interface of a type (`game::type_id`), or 0.
+const INTERFACE_VT: u64 = 0x48;
+// state machine interface: `vt+0x60(name)` and `vt+0x18(name)` test a state, `vt+0x8(name, 0)` requests one
+const IN_STATE_VT: u64 = 0x60;
+const HAS_STATE_VT: u64 = 0x18;
+const REQUEST_STATE_VT: u64 = 0x8;
+
+pub unsafe fn interface(actor: u64, type_slot: u64) -> u64 {
+    let f: extern "system" fn(u64, u32) -> u64 = std::mem::transmute(rd_u64(rd_u64(actor) + INTERFACE_VT) as usize);
+    f(actor, type_id(type_slot))
+}
+
+unsafe fn state_machine(actor: u64) -> u64 {
+    interface(actor, TYPE_STATE_MACHINE)
+}
+
+/// Both state tests the game makes, as (`vt+0x60`, `vt+0x18`); `name` is NUL-terminated.
+pub unsafe fn state_tests(actor: u64, name: &[u8]) -> (bool, bool) {
+    let sm = state_machine(actor);
+    if sm == 0 {
+        return (false, false);
+    }
+    let a: extern "system" fn(u64, *const c_char) -> u8 = std::mem::transmute(rd_u64(rd_u64(sm) + IN_STATE_VT) as usize);
+    let b: extern "system" fn(u64, *const c_char) -> u8 = std::mem::transmute(rd_u64(rd_u64(sm) + HAS_STATE_VT) as usize);
+    (a(sm, name.as_ptr() as *const c_char) != 0, b(sm, name.as_ptr() as *const c_char) != 0)
+}
+
+/// `name` is NUL-terminated.
+pub unsafe fn in_state(actor: u64, name: &[u8]) -> bool {
+    let (a, b) = state_tests(actor, name);
+    a || b
+}
+
+/// `name` is NUL-terminated; false when the actor has no state machine.
+pub unsafe fn request_state(actor: u64, name: &[u8]) -> bool {
+    let sm = state_machine(actor);
+    if sm == 0 {
+        return false;
+    }
+    let f: extern "system" fn(u64, *const c_char, u64) = std::mem::transmute(rd_u64(rd_u64(sm) + REQUEST_STATE_VT) as usize);
+    f(sm, name.as_ptr() as *const c_char, 0);
+    true
+}
+
 /// Rotation only: node refresh, matrix from the yaw quaternion, setter, node `vt+0x8`.
 pub unsafe fn set_rotation(actor: u64, yaw: f32) {
     let node = actor + NODE;

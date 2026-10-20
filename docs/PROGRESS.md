@@ -266,3 +266,10 @@ town.
   opening line by line. A posted `Pause` with no argument crashes the game (FINDINGS 10). Open: a
   partner does not ride (Bullseye) on the other copy; a player downed while its partner stands idle
   can wait on a black screen.
+
+- 2026-10-20, respawn with a remote partner (#31): the game respawns a downed player in two-player
+  story mode at the checkpoint its partner last reached and waits until there is one; a remote
+  partner's stand-in reaches none on this copy, so the downed player waited for good. After 2 s of
+  that wait `respawn.rs` fills the point from the player's own last checkpoint, else the partner's
+  position. In game (T21, Train Rescue, two runs): down at 664.9 s, point given at 667.5 s,
+  `FinishedRespawn` the same frame; before, no respawn in 90 s.

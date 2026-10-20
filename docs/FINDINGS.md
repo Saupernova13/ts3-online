@@ -588,7 +588,29 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   with its health bar for minutes; the pause menu did not open. `Respawn` (component, handlers
   `ManDown` `0x140657ce0`, `RespawnAvatar` `0x140658f10`) sets its down flag and a
   `RespawnControlLock` on `ManDown`; a menu screen named `SCN_multiplayerRespawn_wait` exists.
-  [unk] What ends the wait in two-player story mode.
+- **[obs] What ends the wait (2026-10-20, `queries/137`-`140`).** The `Respawn` component
+  (`0x14064a820`, `0x188` bytes) runs a state machine in its update `0x140645280`, state at `+0x18`:
+  `ManDown` sets 1 and the down flag `+0x20`; 1 goes to 3; 3 waits `+0x2c` ms of game time, then
+  goes to 4 (the player has a pad: the `Respawn` screen fades in) or 6; 4 waits for the fade, then 6.
+  State 6 sets `+0x1e` (waiting) and, when the two-player respawn is on (`[0x140b2fdf8]+8`) and two
+  players are in, looks at the other slot's `Respawn`: if that one waits too, both go to 5 (respawn
+  at the last checkpoint start, `+0x30`, posting `StartingRespawn`); else, once the point stored for
+  this player is valid and the partner is not down (`+0x20`), it goes to 7: respawn at that point
+  (`RespawningActorDied`, `PlayerSpawning`, `FinishedRespawn`, back to 0). Otherwise it waits
+  forever. With one player, or the two-player respawn off, 6 goes straight to 5.
+- **[obs] Respawn points (`queries/139`-`140`).** `[0x140b2fdf8]` holds one point per player: valid
+  flag `+9`, position `+0xc`, 3x3 rotation `+0x1c` for the point player 0 set, and `+0x40`, `+0x44`,
+  `+0x54` for player 1's. A player respawns at the point its partner set: `0x140632fe0(points, 0)`
+  reads `+0x40` and `0x1406176e0` its position. The setter `0x14060fc10(points, player, pos, rot,
+  pull, distance)` is called by a checkpoint script node (`0x14016bec0`, cleared by `0x14016c7a0`);
+  with `pull` set and the other player farther than `distance` from the new point, it respawns the
+  other player there (`0x14066b060`). `0x140632ac0` clears both at a level start.
+- **[obs] A remote partner reaches no checkpoint (2026-10-20, in game).** On a copy, the stand-in of
+  a remote partner is placed from network data and never triggered a checkpoint node, so the point
+  for the local player stayed invalid and a downed local player waited in state 6 with
+  `ShowRespawnTip` and no `FinishedRespawn` (90 s in the run of T20). Filling player 0's point
+  (`+0x40` from the `+9` block, or the partner's position with an identity rotation) after 2 s of
+  state 6 respawned the player within a frame (`FinishedRespawn`), twice in two runs.
 - **[obs] Removing an avatar mid-level can crash later (2026-10-19, in game).** In `wt_stuntpark`, with
   2 players, removing the partner (`assign_avatar(slot, 0)` + `remove_avatar`) dropped the player
   count to 1 and the copy crashed about 4 s later (c0000005 at `0x1401bdc5e`). The faulting function

@@ -173,6 +173,13 @@ coordinates. Two other ways to pause failed in testing: the raw clock override (
 the frame delta but the scripted opening kept running and shot the held player down, and a posted
 `Pause` of kind 4 changed nothing.
 
+**Respawn with a remote partner.** In two-player story mode a downed player respawns at the
+checkpoint its partner last reached, and waits until there is one (FINDINGS 10). A remote
+partner's stand-in is placed from network data and may never trigger a checkpoint on this copy, so
+the local player could wait for the rest of the level. When the local player has waited 2 s for a
+point that is not there, `respawn.rs` writes one: the checkpoint the local player itself last
+reached, else where the partner stands. The game then respawns the player as it would have.
+
 **Wallets (H6a).** The host owns the two HUD counters, `Stat_GOLD_COLLECTED` and
 `Stat_IMAGINATION_POINTS_COLLECTED` (`wallet::WALLETS`). It sends `Wallet { values, acked }` to each
 client when a value changes and once a second; the client writes the values into its stats table (the

@@ -289,7 +289,7 @@ pub(super) unsafe fn show(opts: &net::Options, last: &str, build: u64) -> Option
     label("Name", 14);
     let name = child(hwnd, "EDIT", &opts.name, edit_style, WS_EX_CLIENTEDGE, (110, 14, 274, 24), ID_NAME);
     label("Password", 46);
-    let key = child(hwnd, "EDIT", &opts.key, edit_style | ES_PASSWORD as u32, WS_EX_CLIENTEDGE, (110, 46, 274, 24), ID_KEY);
+    let key = child(hwnd, "EDIT", opts.key.as_str(), edit_style | ES_PASSWORD as u32, WS_EX_CLIENTEDGE, (110, 46, 274, 24), ID_KEY);
     child(hwnd, "STATIC", "Games found", SS_LEFT as u32, 0, (16, 84, 368, 18), 0);
     let list = child(hwnd, "LISTBOX", "", tab | WS_VSCROLL | WS_BORDER | (LBS_NOTIFY | LBS_NOINTEGRALHEIGHT) as u32, WS_EX_CLIENTEDGE, (16, 104, 368, 124), ID_LIST);
     label("Address", 240);

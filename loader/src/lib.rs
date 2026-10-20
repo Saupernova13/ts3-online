@@ -38,6 +38,10 @@ mod window;
 #[cfg(windows)]
 mod win;
 
+/// Read by `install.ps1 -Update` to tell which release is installed.
+#[used]
+static VERSION_MARK: &str = concat!("ts3online-version=", env!("CARGO_PKG_VERSION"), ";");
+
 #[cfg(windows)]
 mod entry {
     use crate::{config, coop, copy, devcmd, doc, evlog, game, hooks, log, menu, net, pad, patch, saves, watch, win, window};

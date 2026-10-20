@@ -214,3 +214,13 @@ town.
   it into their own ball's rigid body. In game (T17): the host's throw matched on the client within
   a few centimetres through two bounces (1.5 m off by 3 s before); the client's throw was followed
   on the host along the same path, about 0.3 m behind at full speed.
+
+- 2026-10-20, player access (release 1.1.0, protocol 12): Join in the connect window now checks the
+  host before leaving the window (a `Probe` plus a password `Check` the host answers under its key)
+  and names the problem: no answer, wrong password, another ts3-online version or game build, not
+  hosting, full. Hosts of another version are listed as such (their protocol refusal is read across
+  versions), and a host no longer answers another version's refusal, which looped between two
+  hosts. The window shows this PC's Tailscale and LAN addresses and the release. `Update.cmd`
+  (`install.ps1 -Update`) installs the latest GitHub release over our DLL, read from a new
+  `ts3online-version=` marker. PLAYING.md now opens with a quick start and has Update and
+  Troubleshooting sections. Verified in game (T18), including against a real 1.0.0 host.

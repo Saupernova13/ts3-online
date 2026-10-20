@@ -6,7 +6,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 11;
+pub const VERSION: u16 = 12;
 /// Length of the authentication tag that ends every datagram.
 pub const TAG_LEN: usize = 16;
 /// Zero bytes after a `Probe`'s build, so a probe is never shorter than the reply it provokes.
@@ -51,6 +51,8 @@ const T_WORLD: u8 = 18;
 const T_WORLD_ACK: u8 = 19;
 const T_WORLD_REPORT: u8 = 20;
 const T_NPCS: u8 = 21;
+const T_CHECK: u8 = 22;
+const T_CHECK_REPLY: u8 = 23;
 
 /// Controller state in the XINPUT_GAMEPAD layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -158,6 +160,10 @@ pub enum Msg {
     /// Host to clients, unreliable (latest wins): transforms of moving named actors of `level` as
     /// (reference-name hash, position, yaw).
     Npcs { level: u32, entries: Vec<(u32, [f32; 3], f32)> },
+    /// Connect menu to host, tagged with the menu's password: "would my password get me in?" A host
+    /// answers `CheckReply` with the same nonce, or `Refuse` with `REFUSE_KEY` when the tag fails.
+    Check { nonce: u64 },
+    CheckReply { nonce: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,9 +223,21 @@ fn mac(key: &[u8]) -> Hmac<Sha256> {
     Hmac::<Sha256>::new_from_slice(key).unwrap_or_else(|_| unreachable!())
 }
 
-/// Whether `bytes` is a `Hello` frame (for answering a wrong key).
-pub fn is_hello(bytes: &[u8]) -> bool {
-    bytes.get(6) == Some(&T_HELLO)
+/// Whether `bytes` is a `Hello` or `Check` frame (the two a wrong key is answered for).
+pub fn asks_key(bytes: &[u8]) -> bool {
+    matches!(bytes.get(6), Some(&T_HELLO | &T_CHECK))
+}
+
+/// The sender's protocol version when `bytes` is another version's refusal of ours for a protocol
+/// mismatch (magic, version, type and reason sit at the same offsets in every version).
+pub fn refused_version(bytes: &[u8]) -> Option<u16> {
+    let v = u16::from_le_bytes([*bytes.get(4)?, *bytes.get(5)?]);
+    (is_refuse(bytes) && v != VERSION && bytes.get(7) == Some(&REFUSE_PROTOCOL)).then_some(v)
+}
+
+/// Whether `bytes` is a `Refuse` frame, of any version (its type byte has not moved).
+pub fn is_refuse(bytes: &[u8]) -> bool {
+    bytes.get(..4) == Some(MAGIC.as_slice()) && bytes.get(6) == Some(&T_REFUSE)
 }
 
 /// `msg` as a datagram tagged with `key` (the empty key for the public message types).
@@ -361,6 +379,14 @@ pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
                 }
             }
         }
+        Msg::Check { nonce } => {
+            o.push(T_CHECK);
+            o.extend_from_slice(&nonce.to_le_bytes());
+        }
+        Msg::CheckReply { nonce } => {
+            o.push(T_CHECK_REPLY);
+            o.extend_from_slice(&nonce.to_le_bytes());
+        }
     }
     let mut m = mac(if public(o[6]) { &[] } else { key });
     m.update(&o);
@@ -434,7 +460,7 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
         return Err(DecodeError::Version(version));
     }
     let kind = *bytes.get(6).ok_or(Malformed)?;
-    if !(T_HELLO..=T_NPCS).contains(&kind) || bytes.len() < 7 + TAG_LEN {
+    if !(T_HELLO..=T_CHECK_REPLY).contains(&kind) || bytes.len() < 7 + TAG_LEN {
         return Err(Malformed);
     }
     let (signed, tag) = bytes.split_at(bytes.len() - TAG_LEN);
@@ -556,6 +582,8 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
                 }
                 Msg::Npcs { level, entries }
             }
+            T_CHECK => Msg::Check { nonce: r.u64()? },
+            T_CHECK_REPLY => Msg::CheckReply { nonce: r.u64()? },
             _ => return None,
         })
     };
@@ -628,7 +656,24 @@ mod tests {
             Msg::WorldReport { level: 77, event: "ExploderDestroy".into(), refname: "EXP_Crate_40".into() },
             Msg::Npcs { level: 77, entries: vec![(1, [1.0, -2.5, 3.0], 0.5), (u32::MAX, [0.0; 3], -3.1)] },
             Msg::Npcs { level: 0, entries: Vec::new() },
+            Msg::Check { nonce: 0x0123_4567_89ab_cdef },
+            Msg::CheckReply { nonce: u64::MAX },
         ]
+    }
+
+    #[test]
+    fn another_versions_protocol_refusal_is_recognised() {
+        let mut b = enc(&Msg::Refuse { reason: REFUSE_PROTOCOL });
+        assert_eq!(refused_version(&b), None, "our own version");
+        b[4] = 6;
+        b[5] = 0;
+        assert_eq!(refused_version(&b), Some(6));
+        b[7] = REFUSE_KEY;
+        assert_eq!(refused_version(&b), None);
+        assert_eq!(refused_version(b"TS3O"), None);
+        let mut hello = enc(&Msg::Hello { build: 1, name: "a".into() });
+        hello[4] = 6;
+        assert!(!is_refuse(&hello) && asks_key(&hello) && asks_key(&enc(&Msg::Check { nonce: 1 })));
     }
 
     #[test]

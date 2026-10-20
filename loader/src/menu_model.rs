@@ -1,13 +1,17 @@
 //! The connect menu without the window: the table of games found, the list text, what a choice
 //! means, and the ini rewrite. Pure, so it is tested on every platform.
 use crate::config::Net;
-use crate::net::proto::{clamp_name, Msg};
-use std::net::SocketAddr;
+use crate::net::proto::{clamp_name, Msg, VERSION};
+use std::net::{Ipv4Addr, SocketAddr};
 
 /// A game not heard from for this long leaves the list.
 pub const EXPIRE_MS: u64 = 4000;
 /// Players a host takes.
 pub const MAX_PLAYERS: u8 = 4;
+/// How long Join waits for the host to answer before saying so.
+pub const CHECK_MS: u64 = 3000;
+/// Join resends its probe and check this often while waiting.
+pub const CHECK_RESEND_MS: u64 = 500;
 
 /// A host that answered a probe.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +21,8 @@ pub struct Game {
     pub players: u8,
     pub locked: bool,
     pub last_ms: u64,
+    /// the host's protocol version when it is not ours (it refused our probe)
+    pub version: Option<u16>,
 }
 
 /// The games found, keyed by the address they answered from.
@@ -28,8 +34,16 @@ pub struct Table {
 impl Table {
     /// Records (or refreshes) the game at `addr`.
     pub fn heard(&mut self, addr: SocketAddr, name: &str, players: u8, locked: bool, now_ms: u64) {
-        let game = Game { addr, name: name.to_string(), players, locked, last_ms: now_ms };
-        match self.games.iter_mut().find(|g| g.addr == addr) {
+        self.put(Game { addr, name: name.to_string(), players, locked, last_ms: now_ms, version: None });
+    }
+
+    /// Records a host at `addr` that runs protocol `version`, not ours.
+    pub fn heard_version(&mut self, addr: SocketAddr, version: u16, now_ms: u64) {
+        self.put(Game { addr, name: String::new(), players: 0, locked: false, last_ms: now_ms, version: Some(version) });
+    }
+
+    fn put(&mut self, game: Game) {
+        match self.games.iter_mut().find(|g| g.addr == game.addr) {
             Some(g) => *g = game,
             None => self.games.push(game),
         }
@@ -55,8 +69,11 @@ impl Table {
     }
 }
 
-/// `name  players/4  ip:port`, plus `  [password]` and `  [full]`.
+/// `name  players/4  ip:port`, plus `  [password]` and `  [full]`; a host of another version shows its address only.
 pub fn format_line(g: &Game) -> String {
+    if g.version.is_some() {
+        return format!("{}  [other ts3-online version]", g.addr);
+    }
     let mut s = format!("{}  {}/{}  {}", g.name, g.players, MAX_PLAYERS, g.addr);
     if g.locked {
         s.push_str("  [password]");
@@ -75,12 +92,88 @@ pub fn host_info(msg: &Msg, build: u64) -> Option<(String, u8, bool)> {
     }
 }
 
+/// What to tell the player about a host that runs protocol `theirs`.
+pub fn version_text(theirs: u16) -> String {
+    let who = if theirs < VERSION { "The host has an older ts3-online than you" } else { "You have an older ts3-online than the host" };
+    format!("{who}. Both players need the same release: run Update.cmd, or download the latest from the GitHub releases page.")
+}
+
+/// `This PC: <tailnet> (Tailscale), <lan> (LAN)`, with `:port` when it is not the default.
+pub fn own_line(tailnet: Option<Ipv4Addr>, lan: Option<Ipv4Addr>, port: u16) -> String {
+    let p = if port == crate::config::DEFAULT_PORT { String::new() } else { format!(":{port}") };
+    let mut parts = Vec::new();
+    if let Some(t) = tailnet {
+        parts.push(format!("{t}{p} (Tailscale)"));
+    }
+    if let Some(l) = lan.filter(|l| Some(*l) != tailnet && !l.is_loopback() && !l.is_unspecified()) {
+        parts.push(format!("{l}{p} (LAN)"));
+    }
+    if parts.is_empty() {
+        return "This PC: no network address found".into();
+    }
+    format!("This PC: {}", parts.join(", "))
+}
+
 /// The status line for `n` games found.
 pub fn status_text(n: usize) -> String {
     match n {
         0 => "Looking for games on your tailnet and LAN...".into(),
         1 => "Found 1 game".into(),
         n => format!("Found {n} games"),
+    }
+}
+
+/// What Join learned from the host so far.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Check {
+    pub started_ms: u64,
+    /// (build, host, players) from its probe reply
+    pub reply: Option<(u64, bool, u8)>,
+    /// it answered our `Check`: the password matches
+    pub key_ok: bool,
+    /// it refused our `Check`: the password does not match
+    pub key_refused: bool,
+    /// it refused us for running another protocol version
+    pub version: Option<u16>,
+}
+
+/// What Join does next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    Wait,
+    Join,
+    /// stay in the menu and show this
+    Fail(String),
+}
+
+impl Check {
+    pub fn verdict(&self, now_ms: u64, build: u64, addr: &str) -> Verdict {
+        if let Some(v) = self.version {
+            return Verdict::Fail(version_text(v));
+        }
+        if self.key_refused {
+            return Verdict::Fail("Wrong password for this game. Type the host's password in the Password box.".into());
+        }
+        if let Some((b, host, players)) = self.reply {
+            if b != build {
+                return Verdict::Fail("That PC runs another build of Toy Story 3: both players need the current Steam version.".into());
+            }
+            if !host {
+                return Verdict::Fail(format!("{addr} is running the game but not hosting. Ask them to click Host."));
+            }
+            if players >= MAX_PLAYERS {
+                return Verdict::Fail("This game is full.".into());
+            }
+            if self.key_ok {
+                return Verdict::Join;
+            }
+        }
+        if now_ms.saturating_sub(self.started_ms) < CHECK_MS {
+            return Verdict::Wait;
+        }
+        Verdict::Fail(format!(
+            "No answer from {addr}. Is the host's game open, with both PCs online in Tailscale (or on one LAN)? Join again to keep trying."
+        ))
     }
 }
 
@@ -235,11 +328,46 @@ mod tests {
 
     #[test]
     fn line_text_marks_password_and_full() {
-        let g = |players, locked| Game { addr: addr("100.64.0.7:27777"), name: "Woody".into(), players, locked, last_ms: 0 };
+        let g = |players, locked| Game { addr: addr("100.64.0.7:27777"), name: "Woody".into(), players, locked, last_ms: 0, version: None };
         assert_eq!(format_line(&g(1, false)), "Woody  1/4  100.64.0.7:27777");
         assert_eq!(format_line(&g(2, true)), "Woody  2/4  100.64.0.7:27777  [password]");
         assert_eq!(format_line(&g(4, false)), "Woody  4/4  100.64.0.7:27777  [full]");
         assert_eq!(format_line(&g(4, true)), "Woody  4/4  100.64.0.7:27777  [password]  [full]");
+        let mut t = Table::default();
+        t.heard_version(addr("100.64.0.8:27777"), 6, 0);
+        assert_eq!(t.lines()[0].1, "100.64.0.8:27777  [other ts3-online version]");
+    }
+
+    #[test]
+    fn own_addresses() {
+        let ts = Some(Ipv4Addr::new(100, 64, 0, 7));
+        let lan = Some(Ipv4Addr::new(192, 168, 0, 5));
+        assert_eq!(own_line(ts, lan, 27777), "This PC: 100.64.0.7 (Tailscale), 192.168.0.5 (LAN)");
+        assert_eq!(own_line(None, lan, 4000), "This PC: 192.168.0.5:4000 (LAN)");
+        assert_eq!(own_line(ts, ts, 27777), "This PC: 100.64.0.7 (Tailscale)");
+        assert_eq!(own_line(None, Some(Ipv4Addr::LOCALHOST), 27777), "This PC: no network address found");
+    }
+
+    #[test]
+    fn join_checks_the_host_before_leaving_the_menu() {
+        const B: u64 = 9;
+        let v = |c: &Check, now| c.verdict(now, B, "h:1");
+        let mut c = Check { started_ms: 1000, ..Check::default() };
+        assert_eq!(v(&c, 1000), Verdict::Wait);
+        assert!(matches!(v(&c, 1000 + CHECK_MS), Verdict::Fail(t) if t.starts_with("No answer from h:1")));
+        c.reply = Some((B, true, 1));
+        assert_eq!(v(&c, 1500), Verdict::Wait, "the password is not confirmed yet");
+        assert!(matches!(v(&c, 1000 + CHECK_MS), Verdict::Fail(_)));
+        c.key_ok = true;
+        assert_eq!(v(&c, 1500), Verdict::Join);
+        let fail = |c: Check, needle: &str| assert!(matches!(c.verdict(0, B, "h:1"), Verdict::Fail(t) if t.contains(needle)), "{needle}");
+        let ok = Check { reply: Some((B, true, 1)), key_ok: true, ..Check::default() };
+        fail(Check { key_refused: true, ..ok.clone() }, "Wrong password");
+        fail(Check { reply: Some((B + 1, true, 1)), ..ok.clone() }, "another build");
+        fail(Check { reply: Some((B, false, 0)), ..ok.clone() }, "not hosting");
+        fail(Check { reply: Some((B, true, 4)), ..ok.clone() }, "full");
+        fail(Check { version: Some(VERSION - 1), ..Check::default() }, "The host has an older");
+        fail(Check { version: Some(VERSION + 1), ..Check::default() }, "You have an older");
     }
 
     #[test]

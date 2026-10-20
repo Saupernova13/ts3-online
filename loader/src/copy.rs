@@ -21,7 +21,7 @@ pub fn save_root(local_app_data: &str, n: u32) -> PathBuf {
     PathBuf::from(local_app_data).join("ts3online").join(format!("copy{n}"))
 }
 
-/// `<local app data>	s3online\session`: the app data root a client uses to play the host save.
+/// `<local app data>\ts3online\session`: the app data root a client uses to play the host save.
 pub fn session_root(local_app_data: &str) -> PathBuf {
     PathBuf::from(local_app_data).join("ts3online").join("session")
 }

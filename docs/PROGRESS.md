@@ -234,3 +234,14 @@ town.
   same hat, passed the mission and ended with the same gold (1580); a menu open only on the host
   left its Woody still on the client. Townspeople pick-up confirmed on both copies. Toy Box
   buildings found as `LOT_*` actors named `BL_*`; the catalog flow is mapped by name only.
+
+- 2026-10-20, review and cleanup (no game run): comments across the repo cut by a third. A
+  six-agent review of `main` found no crash reachable from the network, and these open items:
+  world events stop syncing for the rest of a level once one side resets (`session.rs`
+  `WorldAck` uses `max`), a recorded `Hello`/`Spend` can be replayed past `net_key`, a failed
+  patch run still starts net and the save redirect, the save path garbles non-ASCII user names
+  (`saves::ansi_path`), `net=host`/`client` bind and resolve inside DllMain, and panics leave no
+  log line. Structure pass (PR 28, behaviour unchanged): shared `actor`, `math`, `pe` and
+  `proto::flags`; one `hooks::table`; `install.rs` for the patch pipeline; `net/` split into
+  `role`, `runner`, `auto`, `world_sync`; `coop/` and `menu/` split into pure and Win32/game
+  halves; `NetKey` carried through `net::Options`.

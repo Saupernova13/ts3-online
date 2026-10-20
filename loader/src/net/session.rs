@@ -521,11 +521,15 @@ impl Session {
                 self.send(from, &m);
             }
             Ok(Msg::ProbeReply { build, host, players, name, .. }) => self.events.push(Event::Discovered { from, build, host, players, name }),
+            Ok(Msg::Check { nonce }) if self.is_host() => self.send(from, &Msg::CheckReply { nonce }),
+            Ok(Msg::Check { .. } | Msg::CheckReply { .. }) => {}
             Ok(msg) if self.is_host() => self.host_msg(from, msg, now_us),
             Ok(msg) => self.client_msg(from, msg, now_us),
             // never answer a refusal: two hosts of different versions would refuse each other forever
             Err(DecodeError::Version(_)) if self.is_host() && !proto::is_refuse(bytes) => self.send(from, &Msg::Refuse { reason: proto::REFUSE_PROTOCOL }),
-            Err(DecodeError::BadKey) if self.is_host() && proto::is_hello(bytes) => self.send(from, &Msg::Refuse { reason: proto::REFUSE_KEY }),
+            // the host runs another version: ends the attempt like any refusal
+            Err(DecodeError::Version(_)) if !self.is_host() && proto::refused_version(bytes).is_some() => self.client_msg(from, Msg::Refuse { reason: proto::REFUSE_PROTOCOL }, now_us),
+            Err(DecodeError::BadKey) if self.is_host() && proto::asks_key(bytes) => self.send(from, &Msg::Refuse { reason: proto::REFUSE_KEY }),
             Err(_) => {}
         }
     }
@@ -1395,6 +1399,37 @@ mod tests {
         assert_eq!(host.roster().len(), 2);
         assert!(host.drain_outgoing().is_empty());
         assert!(host.drain_events().is_empty());
+    }
+
+    #[test]
+    fn a_check_is_answered_only_with_the_hosts_key() {
+        let mut host = Session::host(BUILD, "h");
+        host.set_key(b"secret");
+        host.handle(addr(9), &proto::encode(&Msg::Check { nonce: 7 }, b"secret"), 0);
+        let out = host.drain_outgoing();
+        assert_eq!(proto::decode(&out[0].1, b"secret"), Ok(Msg::CheckReply { nonce: 7 }));
+        for wrong in [&b"nope"[..], &b""[..]] {
+            host.handle(addr(9), &proto::encode(&Msg::Check { nonce: 7 }, wrong), 0);
+            assert_eq!(msgs(&mut host), vec![(addr(9), Msg::Refuse { reason: proto::REFUSE_KEY })]);
+        }
+        assert_eq!(host.roster().len(), 1, "a check takes no slot");
+        let mut c = Session::client(BUILD, "bob", addr(H));
+        c.handle(addr(9), &encode(&Msg::Check { nonce: 7 }), 0);
+        assert!(c.drain_outgoing().is_empty(), "only a host answers");
+    }
+
+    #[test]
+    fn another_versions_refusal_ends_the_attempt() {
+        let mut c = Session::client(BUILD, "bob", addr(H));
+        c.tick(0);
+        c.drain_outgoing();
+        let mut refuse = encode(&Msg::Refuse { reason: proto::REFUSE_PROTOCOL });
+        refuse[4] = 6;
+        refuse[5] = 0;
+        c.handle(addr(9), &refuse, 0);
+        assert!(c.drain_events().is_empty(), "not from the host");
+        c.handle(addr(H), &refuse, 0);
+        assert_eq!(c.drain_events(), vec![Event::Refused { reason: proto::REFUSE_PROTOCOL }]);
     }
 
     #[test]

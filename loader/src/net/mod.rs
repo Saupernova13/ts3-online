@@ -621,6 +621,7 @@ fn log_event(e: &Event, now_ms: u64, rtt_logged: &mut HashMap<u8, u64>) {
     match e {
         Event::Connected { id } => log!("net: connected as player {id}"),
         Event::Refused { reason } if *reason == proto::REFUSE_KEY => log!("net: refused: the host needs the same net_key (password)"),
+        Event::Refused { reason } if *reason == proto::REFUSE_PROTOCOL => log!("net: refused: the host runs another ts3-online version; both players need the same release (Update.cmd)"),
         Event::Refused { reason } => log!("net: refused by the host (reason {reason})"),
         Event::HostLost => log!("net: host lost; retrying"),
         Event::PeerJoined { id, name } => log!("net: player {id} {name:?} joined"),

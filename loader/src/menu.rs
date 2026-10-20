@@ -1,9 +1,9 @@
 //! The connect menu (`net=menu`): a small Win32 window on its own thread that lists the games found
 //! on the tailnet and LAN and lets the player join one or host. The choice starts the net session.
 //! The logic lives in `menu_model`; this file is the window, the discovery socket and the glue.
-use crate::config::Net;
-use crate::menu_model::{self as model, Choice, Table};
-use crate::net::proto::{self, Msg};
+use crate::config::{Net, NetKey};
+use crate::menu_model::{self as model, Choice, Table, Verdict};
+use crate::net::proto::{self, DecodeError, Msg};
 use crate::net::{self, discover};
 use crate::win::wide;
 use crate::log;
@@ -30,7 +30,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_CAPTION, WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_TOPMOST, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 
-const TITLE: &str = "Toy Story 3 Online";
+const TITLE: &str = concat!("Toy Story 3 Online ", env!("CARGO_PKG_VERSION"));
 pub const CLASS: &str = "Ts3OnlineConnectMenu";
 const TIMER_ID: usize = 1;
 const TIMER_MS: u32 = 250;
@@ -48,7 +48,9 @@ const ID_ADDR: i32 = 104;
 const ID_JOIN: i32 = 105;
 const ID_HOST: i32 = 106;
 const CLIENT_W: i32 = 400;
-const CLIENT_H: i32 = 352;
+const CLIENT_H: i32 = 400;
+/// Where the "This PC" line looks for the LAN address (nothing is sent there).
+const ROUTE_PROBE: ([u8; 4], u16) = ([8, 8, 8, 8], 53);
 
 /// What `menu::start` needs from `attach`.
 pub struct Init {
@@ -105,7 +107,7 @@ fn run(init: Init, build: u64) {
     }
     let mode = model::to_net(&picked.choice, opts.port);
     opts.name = picked.name;
-    opts.key = picked.key;
+    opts.key = NetKey::new(&picked.key).as_str().to_string();
     net::start(&mode, opts);
     net::set_menu_open(false);
 }
@@ -146,12 +148,33 @@ struct App {
     status: String,
     /// a message the player must see (kept until the next action)
     notice: Option<String>,
+    /// this PC's addresses as the "This PC" line, found by the background thread
+    own: Arc<Mutex<Option<String>>>,
+    own_shown: Option<String>,
+    /// the Join being checked
+    pending: Option<Pending>,
+    /// a game that did not answer: joining it again goes ahead without the check
+    retry: Option<String>,
+}
+
+/// A Join waiting for the host's answers.
+struct Pending {
+    choice: Choice,
+    text: String,
+    addr: SocketAddr,
+    key: String,
+    nonce: u64,
+    next_send: u64,
+    check: model::Check,
 }
 
 /// What a timer tick wants the window to change.
 struct Update {
     lines: Option<Vec<(SocketAddr, String)>>,
     status: Option<String>,
+    own: Option<String>,
+    /// the checked Join may go ahead
+    join: Option<Choice>,
 }
 
 impl App {
@@ -173,6 +196,10 @@ impl App {
             shown: Vec::new(),
             status: String::new(),
             notice: None,
+            own: Arc::default(),
+            own_shown: None,
+            pending: None,
+            retry: None,
         })
     }
 
@@ -181,15 +208,66 @@ impl App {
         // an ICMP "port unreachable" from a dead target shows up as a receive error on Windows: skip those
         for _ in 0..64 {
             match self.sock.recv_from(&mut buf) {
-                Ok((n, from)) => {
-                    if let Ok(msg) = proto::decode(&buf[..n], &[]) {
-                        if let Some((name, players, locked)) = model::host_info(&msg, self.build) {
-                            self.table.heard(from, &name, players, locked, now);
-                        }
-                    }
-                }
+                Ok((n, from)) => self.heard(from, &buf[..n], now),
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                 Err(_) => continue,
+            }
+        }
+    }
+
+    fn heard(&mut self, from: SocketAddr, bytes: &[u8], now: u64) {
+        let key = self.pending.as_ref().map_or(String::new(), |p| p.key.clone());
+        let checking = self.pending.as_mut().filter(|p| p.addr == from);
+        match proto::decode(bytes, key.as_bytes()) {
+            Ok(msg) => {
+                if let Some((name, players, locked)) = model::host_info(&msg, self.build) {
+                    self.table.heard(from, &name, players, locked, now);
+                }
+                let Some(p) = checking else { return };
+                match msg {
+                    Msg::ProbeReply { build, host, players, .. } => p.check.reply = Some((build, host, players)),
+                    Msg::CheckReply { nonce } if nonce == p.nonce => p.check.key_ok = true,
+                    Msg::Refuse { reason } if reason == proto::REFUSE_KEY => p.check.key_refused = true,
+                    _ => {}
+                }
+            }
+            Err(DecodeError::Version(_)) => {
+                if let Some(v) = proto::refused_version(bytes) {
+                    self.table.heard_version(from, v, now);
+                    if let Some(p) = checking {
+                        p.check.version = Some(v);
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    /// Starts checking a Join of `choice` (whose address is `text`) with password `key`.
+    fn check(&mut self, choice: Choice, text: String, addr: SocketAddr, key: &str) {
+        let now = self.began.elapsed().as_millis() as u64;
+        let nonce = (self.began.elapsed().as_nanos() as u64) ^ (u64::from(std::process::id()) << 32);
+        let key = NetKey::new(key).as_str().to_string();
+        self.pending = Some(Pending { choice, text, addr, key, nonce, next_send: now, check: model::Check { started_ms: now, ..model::Check::default() } });
+    }
+
+    /// Sends the pending check when due and decides it.
+    fn poll_check(&mut self, now: u64) -> Option<Choice> {
+        let p = self.pending.as_mut()?;
+        if now >= p.next_send {
+            p.next_send = now + model::CHECK_RESEND_MS;
+            let _ = self.sock.send_to(&proto::encode(&Msg::Probe { build: self.build }, &[]), p.addr);
+            let _ = self.sock.send_to(&proto::encode(&Msg::Check { nonce: p.nonce }, p.key.as_bytes()), p.addr);
+        }
+        match p.check.verdict(now, self.build, &p.text) {
+            Verdict::Wait => None,
+            Verdict::Join => self.pending.take().map(|p| p.choice),
+            Verdict::Fail(text) => {
+                let p = self.pending.take()?;
+                let silent = p.check.reply.is_none() && p.check.version.is_none() && !p.check.key_refused;
+                self.retry = silent.then_some(p.text);
+                self.notice = Some(text);
+                None
             }
         }
     }
@@ -210,13 +288,18 @@ impl App {
         if self.busy.swap(true, Ordering::AcqRel) {
             return;
         }
-        let (extra, busy, peers, port) = (self.extra.clone(), self.busy.clone(), self.peers.clone(), self.port);
+        let (extra, busy, own, peers, port) = (self.extra.clone(), self.busy.clone(), self.own.clone(), self.peers.clone(), self.port);
         let spawned = std::thread::Builder::new().name("ts3online-menu-tailnet".into()).spawn({
             let (extra, busy) = (extra.clone(), busy.clone());
             move || {
                 let mut found: Vec<SocketAddr> = peers.iter().filter_map(|p| discover::resolve_v4(p, port)).collect();
-                if let Some(t) = discover::tailscale_status().and_then(|j| discover::parse_tailscale(&j)) {
+                let tailnet = discover::tailscale_status().and_then(|j| discover::parse_tailscale(&j));
+                if let Some(t) = &tailnet {
                     found.extend(t.peers.iter().map(|ip| SocketAddr::from((*ip, port))));
+                }
+                let lan = discover::local_ip_towards(SocketAddr::from(ROUTE_PROBE));
+                if let Ok(mut g) = own.lock() {
+                    *g = Some(model::own_line(tailnet.and_then(|t| t.own), lan, port));
                 }
                 if let Ok(mut g) = extra.lock() {
                     *g = found;
@@ -244,6 +327,11 @@ impl App {
                 let _ = self.sock.send_to(&bytes, t);
             }
         }
+        let join = self.poll_check(now);
+        let own = self.own.lock().ok().and_then(|g| g.clone()).filter(|o| self.own_shown.as_ref() != Some(o));
+        if own.is_some() {
+            self.own_shown = own.clone();
+        }
         let lines = self.table.lines();
         let lines = (lines != self.shown).then(|| {
             self.shown = lines.clone();
@@ -254,7 +342,7 @@ impl App {
             self.status = status.clone();
             status
         });
-        Update { lines, status }
+        Update { lines, status, own, join }
     }
 }
 
@@ -268,10 +356,11 @@ struct Ui {
     addr: HWND,
     join: HWND,
     host: HWND,
+    own: HWND,
     status: HWND,
 }
 
-const NO_UI: Ui = Ui { name: null_mut(), key: null_mut(), list: null_mut(), addr: null_mut(), join: null_mut(), host: null_mut(), status: null_mut() };
+const NO_UI: Ui = Ui { name: null_mut(), key: null_mut(), list: null_mut(), addr: null_mut(), join: null_mut(), host: null_mut(), own: null_mut(), status: null_mut() };
 
 thread_local! {
     static UI: Cell<Ui> = const { Cell::new(NO_UI) };
@@ -309,7 +398,7 @@ fn port() -> u16 {
     APP.with(|a| a.borrow().as_ref().map_or(0, |a| a.port))
 }
 
-fn on_timer() {
+fn on_timer(hwnd: HWND) {
     let keep = selected();
     let Some(update) = APP.with(|a| a.borrow_mut().as_mut().map(App::poll)) else { return };
     let ui = UI.with(Cell::get);
@@ -324,6 +413,12 @@ fn on_timer() {
     }
     if let Some(s) = update.status {
         set_text(ui.status, &s);
+    }
+    if let Some(s) = update.own {
+        set_text(ui.own, &s);
+    }
+    if let Some(choice) = update.join {
+        finish(hwnd, choice);
     }
 }
 
@@ -341,6 +436,7 @@ fn clear_notice() {
     APP.with(|a| {
         if let Some(a) = a.borrow_mut().as_mut() {
             a.notice = None;
+            a.pending = None;
         }
     });
 }
@@ -351,7 +447,8 @@ fn finish(hwnd: HWND, choice: Choice) {
     unsafe { DestroyWindow(hwnd) };
 }
 
-/// Joins `choice` unless it needs a password that was not typed.
+/// Checks that the host of `choice` answers and takes our password, then joins it (from the
+/// timer). A game that did not answer last time is joined at once.
 fn try_join(hwnd: HWND, choice: Choice) {
     clear_notice();
     let key = text_of(UI.with(Cell::get).key);
@@ -359,7 +456,22 @@ fn try_join(hwnd: HWND, choice: Choice) {
     if blocked {
         return notice("This game needs a password");
     }
-    finish(hwnd, choice);
+    let Choice::Join(text) = &choice else { return finish(hwnd, choice) };
+    let text = text.clone();
+    let retry = APP.with(|a| a.borrow_mut().as_mut().is_some_and(|a| a.retry.take().as_ref() == Some(&text)));
+    if retry {
+        return finish(hwnd, choice);
+    }
+    let addr = text.rsplit_once(':').and_then(|(h, p)| discover::resolve_v4(h, p.parse().ok()?));
+    let Some(addr) = addr else {
+        return notice(&format!("Cannot find {text}. Check the address."));
+    };
+    notice(&format!("Checking {text}..."));
+    APP.with(|a| {
+        if let Some(a) = a.borrow_mut().as_mut() {
+            a.check(choice, text, addr, &key);
+        }
+    });
 }
 
 fn click_join(hwnd: HWND) {
@@ -388,7 +500,7 @@ fn on_enter(hwnd: HWND, focus: HWND) {
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_TIMER => {
-            on_timer();
+            on_timer(hwnd);
             0
         }
         WM_COMMAND => {
@@ -491,7 +603,8 @@ unsafe fn show(opts: &net::Options, last: &str, build: u64) -> Option<Picked> {
     let addr = child(hwnd, "EDIT", last, edit_style, WS_EX_CLIENTEDGE, (110, 240, 274, 24), ID_ADDR);
     let join = child(hwnd, "BUTTON", "Join", tab | BS_PUSHBUTTON as u32, 0, (16, 280, 176, 30), ID_JOIN);
     let host = child(hwnd, "BUTTON", "Host", tab | BS_PUSHBUTTON as u32, 0, (208, 280, 176, 30), ID_HOST);
-    let status = child(hwnd, "STATIC", "", SS_LEFT as u32, 0, (16, 322, 368, 20), 0);
+    let own = child(hwnd, "STATIC", "This PC: ...", SS_LEFT as u32, 0, (16, 320, 368, 18), 0);
+    let status = child(hwnd, "STATIC", "", SS_LEFT as u32, 0, (16, 344, 368, 48), 0);
     SendMessageW(name, EM_SETLIMITTEXT, proto::MAX_NAME, 0);
     SendMessageW(key, EM_SETLIMITTEXT, crate::config::MAX_KEY, 0);
     SendMessageW(addr, EM_SETLIMITTEXT, 128, 0);
@@ -508,9 +621,9 @@ unsafe fn show(opts: &net::Options, last: &str, build: u64) -> Option<Picked> {
         c = GetWindow(c, GW_HWNDNEXT);
     }
 
-    UI.with(|u| u.set(Ui { name, key, list, addr, join, host, status }));
+    UI.with(|u| u.set(Ui { name, key, list, addr, join, host, own, status }));
     APP.with(|a| *a.borrow_mut() = Some(app));
-    on_timer(); // first probes and the status line before the window shows
+    on_timer(hwnd); // first probes and the status line before the window shows
     ShowWindow(hwnd, SW_SHOW);
     SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
     BringWindowToTop(hwnd);

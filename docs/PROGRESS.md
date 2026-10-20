@@ -224,3 +224,13 @@ town.
   (`install.ps1 -Update`) installs the latest GitHub release over our DLL, read from a new
   `ts3online-version=` marker. PLAYING.md now opens with a quick start and has Update and
   Troubleshooting sections. Verified in game (T18), including against a real 1.0.0 host.
+
+- 2026-10-20, partner screens (protocol 13): a full Toy Box mission in two copies. The host picked
+  up the alien and threw him into the hat shop; the client's copy of the host's Woody stayed frozen
+  in the throw tutorial, because the owner sent a neutral pad whenever its controls were off. The
+  owner now sends its real pad with a controls-off flag, and a copy applies it to a partner whose
+  controls are off too (the same tutorial or shop screen) and keeps a free partner still otherwise.
+  In game (T19): both copies threw, showed the same hat screen moving in step, gave the alien the
+  same hat, passed the mission and ended with the same gold (1580); a menu open only on the host
+  left its Woody still on the client. Townspeople pick-up confirmed on both copies. Toy Box
+  buildings found as `LOT_*` actors named `BL_*`; the catalog flow is mapped by name only.

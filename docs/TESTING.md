@@ -187,6 +187,22 @@ no pad input is needed.
    one in place and start copy 2. It lists `<address>  [other ts3-online version]`; Join says "The
    host has an older ts3-online than you...".
 
+## T19: a mission through a thrown townsperson (passed 2026-10-20, host side)
+
+Start as for T11 on a save with "Give an Alien a Hat" active (back up the host save first: a
+completed mission is saved). `work/scratch/goto.py <pid> <pad> <refname part | x,z> [stop m]` walks a
+copy's player there by short stick pushes; Toy Box town waypoints from the start: `9.6,-1`, `0,6`,
+`-18,6`, then `InitialLGM` (the alien, `TownpersonLOC_InitialLGM_166`).
+
+1. Host: X next to the alien. Both logs: `CARRY_START` on the alien; both screens show the throw
+   tutorial.
+2. Host: walk to `-27.3,6.2` (in front of the hat shop) and press RT. Expect `StartThrow` and
+   `ActorEnteredBuilding` on both copies and the HATS screen on both.
+3. Host: RIGHT, RIGHT, A. Both screens move together; both logs show `BlockheadCustomized` on the
+   alien and `CHALLENGE_PASS_MESSAGE`; after the reward both wallets read the same (1080 -> 1580).
+4. Host: open the missions menu (BACK) and push the stick: the host's Woody on the client stays put.
+5. Put the host save back.
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

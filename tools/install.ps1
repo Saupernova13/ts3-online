@@ -14,7 +14,8 @@
 .NOTES
   DLL source: next to this script (release zip), else loader\target\release.
   Set -GameDir (or TS3_DIR) if Steam's library list cannot be read.
-  Writes only dinput8.dll and ts3online.ini, and touches the DLL only when it is ours.
+  In the game folder it writes only dinput8.dll (when ours) and ts3online.ini; -Setup also backs
+  up saves under Documents, and -Update refreshes the scripts in this folder.
 #>
 [CmdletBinding()]
 param(

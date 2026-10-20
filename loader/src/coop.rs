@@ -411,7 +411,8 @@ fn note_switch() {
     }
 }
 
-/// Runs on every `SwitchLevel` post, before the game handles it.
+/// Runs on each `SwitchLevel` the game posts through the detour (not our own `call_broadcast` posts),
+/// before the game handles it.
 pub fn on_local_switch(name: &str) {
     note_switch();
     if net::is_client() && is_play_level(name) {

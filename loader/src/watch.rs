@@ -74,6 +74,59 @@ impl Tracker {
     }
 }
 
+#[cfg(windows)]
+pub use live::{spawn, Ctx};
+
+#[cfg(windows)]
+mod live {
+    use super::{eval, show, Tracker, Val};
+    use crate::doc::Watch;
+    use crate::{log, win};
+    use std::ffi::c_void;
+    use windows_sys::Win32::System::Threading::{CreateThread, Sleep};
+
+    pub struct Ctx {
+        pub module_base: u64,
+        /// where the player manager was relocated to; the `mgr` watch must agree
+        pub buffer: u64,
+        pub interval_ms: u32,
+        pub watch: Vec<Watch>,
+    }
+
+    /// Raw CreateThread, as this runs from DllMain.
+    pub fn spawn(ctx: Ctx) {
+        let raw = Box::into_raw(Box::new(ctx));
+        let h = unsafe { CreateThread(std::ptr::null(), 0, Some(thread), raw.cast(), 0, std::ptr::null_mut()) };
+        if h.is_null() {
+            drop(unsafe { Box::from_raw(raw) });
+            log!("could not start the watcher thread");
+        }
+    }
+
+    unsafe extern "system" fn thread(param: *mut c_void) -> u32 {
+        let ctx = Box::from_raw(param.cast::<Ctx>());
+        let mem = win::ProcMem;
+        let mut tracker = Tracker::default();
+        let mut mgr_checked = false;
+        log!("watcher started ({} entries, every {} ms)", ctx.watch.len(), ctx.interval_ms);
+        loop {
+            let now = eval(&mem, ctx.module_base, &ctx.watch);
+            for (name, old, new) in tracker.update(&now) {
+                log!("watch {name} {} -> {}", show(old), show(new));
+            }
+            if !mgr_checked {
+                if let Some((_, Some(Val::Ptr(p)))) = now.iter().find(|(n, _)| n == "mgr") {
+                    if *p != 0 {
+                        mgr_checked = true;
+                        log!("mgr relocated: {}", if *p == ctx.buffer { "OK" } else { "MISMATCH" });
+                    }
+                }
+            }
+            Sleep(ctx.interval_ms);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

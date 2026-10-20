@@ -1,5 +1,7 @@
 //! `ts3online.ini`: `key=value` lines, `#` comments; `[copyN]` sections apply to copy N only.
+use crate::log;
 use crate::net::proto::clamp_name;
+use std::path::{Path, PathBuf};
 
 /// `net = host[:PORT] | client:ADDR[:PORT] | auto | menu`; a missing port means `net_port`.
 /// A client address is resolved when the session starts.
@@ -99,6 +101,24 @@ fn parse_bool(v: &str) -> Option<bool> {
         "1" | "true" | "yes" | "on" => Some(true),
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
+    }
+}
+
+/// The ini beside the exe, else under `%LOCALAPPDATA%\ts3online`; defaults when neither reads.
+/// Also returns the path read, for the connect menu to write back to.
+pub fn load(exe_dir: &Path, local_app_data: Option<&Path>, copy: u32) -> (Config, Option<PathBuf>) {
+    let beside = exe_dir.join("ts3online.ini");
+    let fallback = local_app_data.map(|l| l.join("ts3online").join("ts3online.ini"));
+    let found = [Some(beside), fallback].into_iter().flatten().find_map(|p| std::fs::read_to_string(&p).ok().map(|t| (p, t)));
+    match found {
+        Some((p, t)) => {
+            log!("config file: {}", p.display());
+            (parse(&t, copy), Some(p))
+        }
+        None => {
+            log!("no ts3online.ini found; using defaults");
+            (Config::default(), None)
+        }
     }
 }
 

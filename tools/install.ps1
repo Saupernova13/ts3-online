@@ -9,6 +9,7 @@
   powershell -ExecutionPolicy Bypass -File install.ps1 -Name Alice -Password "our secret"
   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
   powershell -ExecutionPolicy Bypass -File install.ps1 -Setup     (what Setup.cmd runs)
+  powershell -ExecutionPolicy Bypass -File install.ps1 -Update    (what Update.cmd runs)
 
 .NOTES
   The DLL is taken from next to this script (release zip), else from loader\target\release.
@@ -27,12 +28,15 @@ param(
     # guided install: back up the saves, check Tailscale, offer the firewall rule
     [switch]$Setup,
     # only add the firewall rule (Setup relaunches itself elevated with this)
-    [switch]$FirewallOnly
+    [switch]$FirewallOnly,
+    # download the latest release from GitHub and install its DLL (and refresh these scripts)
+    [switch]$Update
 )
 $ErrorActionPreference = 'Stop'
 $Game = 'Toy Story 3 Complete Edition'
 $Exe = "$Game.exe"
 $RuleName = 'ts3-online (UDP)'
+$Repo = 'Saupernova13/ts3-online'
 
 function Find-GameDir {
     $steam = (Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamPath
@@ -57,6 +61,50 @@ function Test-OurDll([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
     $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($Path))
     return $text.Contains('DirectInput8Create') -and $text.Contains('ts3online')
+}
+
+# The release a DLL of ours was built as (from its "ts3online-version=X.Y.Z;" marker), else $null.
+function Get-DllVersion([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($Path))
+    if ($text -match 'ts3online-version=(\d+\.\d+\.\d+);') { return $Matches[1] }
+    return $null
+}
+
+# Installs the latest GitHub release over our DLL, and refreshes the scripts next to this one.
+function Update-Loader {
+    if ((Test-Path -LiteralPath $dll) -and -not (Test-OurDll $dll)) { throw "$dll is not ours (another mod?). Move it away first." }
+    $installed = Get-DllVersion $dll
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $headers = @{ 'User-Agent' = 'ts3-online-update' }
+    $rel = Invoke-RestMethod -UseBasicParsing -Headers $headers -Uri "https://api.github.com/repos/$Repo/releases/latest"
+    $latest = ([string]$rel.tag_name).TrimStart('v')
+    $shown = if ($installed) { $installed } elseif (Test-Path -LiteralPath $dll) { 'an older release' } else { 'nothing' }
+    Write-Host "Installed: $shown. Latest release: $latest."
+    if ($installed -and ([version]$installed -ge [version]$latest)) { Write-Host 'Already up to date.'; return }
+    if (Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq $Game }) { throw 'Close Toy Story 3 first, then run Update again.' }
+    $asset = @($rel.assets) | Where-Object { $_.name -eq 'ts3-online.zip' } | Select-Object -First 1
+    if (-not $asset) { throw "Release $latest has no ts3-online.zip." }
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('ts3-online-update-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $tmp | Out-Null
+    try {
+        $zip = Join-Path $tmp 'ts3-online.zip'
+        Write-Host "Downloading $($asset.browser_download_url)"
+        Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $asset.browser_download_url -OutFile $zip
+        Expand-Archive -LiteralPath $zip -DestinationPath $tmp
+        $new = Join-Path $tmp 'ts3-online'
+        if (-not (Test-OurDll (Join-Path $new 'dinput8.dll'))) { throw 'The download does not contain the ts3-online dinput8.dll.' }
+        Copy-Item -LiteralPath (Join-Path $new 'dinput8.dll') -Destination $dll -Force
+        Write-Host "Installed ts3-online $latest. Your ts3online.ini and saves are unchanged."
+        # a source checkout keeps its own scripts
+        if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot '..\loader\Cargo.toml'))) {
+            Copy-Item -Path (Join-Path $new '*') -Destination $PSScriptRoot -Recurse -Force
+            Write-Host "Updated the files in $PSScriptRoot."
+        }
+    } finally {
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (-not (Test-Path -LiteralPath $ini)) { Write-Host 'No ts3online.ini yet: run Setup.cmd to finish setting up.' }
 }
 
 function Find-SourceDll {
@@ -107,6 +155,7 @@ function Show-Tailscale {
     if ($st -and $st.BackendState -eq 'Running') {
         $peers = @($st.Peer.PSObject.Properties | Where-Object { $_.Value.Online }).Count
         Write-Host ("Tailscale: connected as {0} ({1}), {2} other device(s) online." -f $st.Self.HostName, ($st.Self.TailscaleIPs | Select-Object -First 1), $peers)
+        if ($peers -eq 0) { Write-Host '  No other device is online: your friend must join your tailnet, or you share this PC with them (see README).' }
     } else {
         Write-Host 'Tailscale: installed but not connected. Open Tailscale and sign in.'
     }
@@ -117,6 +166,11 @@ $dll = Join-Path $GameDir 'dinput8.dll'
 $ini = Join-Path $GameDir 'ts3online.ini'
 $exePath = Join-Path $GameDir $Exe
 Write-Host "Game folder: $GameDir"
+
+if ($Update) {
+    Update-Loader
+    return
+}
 
 if ($FirewallOnly) {
     Add-FirewallRule $exePath

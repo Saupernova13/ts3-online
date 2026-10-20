@@ -25,7 +25,8 @@ your own install.
 | Online co-op: each player on their own PC, partners run, jump, carry and throw each other | working (tested with 2 copies) |
 | Online: find the host on a tailnet with no addresses, play the host's save | working |
 | Online: follow each other between levels | working |
-| Online: shared enemies, gold and missions | not yet (each PC runs its own world) |
+| Online: shared gold, breakable crates, townspeople positions, thrown objects, pick-up targets | working (tested with 2 copies) |
+| Online: shared enemies and mission state | not yet (each PC runs its own world) |
 | Streaming each quarter to a remote player (fallback) | designed, not built ([PLAN, phase 6](docs/PLAN.md)) |
 
 Tested in Toy Box with four virtual Xbox 360 pads. Story levels have not been played with 4
@@ -183,6 +184,20 @@ tools/           Ghidra runner, PE helpers, classifiers, patch generator and cat
 work/            Ghidra project, query output, test evidence (gitignored)
 ```
 
+### Loader source map
+
+Each module has one job; pure logic is tested on any platform, game and Win32 glue sits in
+`#[cfg(windows)]` modules.
+
+| Area | Modules |
+|---|---|
+| Entry and patching | `lib.rs` (DllMain, startup order), `install.rs` (the patch pipeline), `doc.rs` (patch document), `patch.rs` (byte generation, verify, apply), `hooks.rs` (Rust replacements and detours, one name table), `iat.rs`, `win.rs`, `pe.rs` |
+| Game memory | `game.rs` (functions and globals by address), `actor.rs` (actor layout, pose reads and writes), `math.rs` |
+| Networking | `net/mod.rs` (game-thread facade), `net/session.rs` (sans-IO host/client state machine), `net/world_sync.rs`, `net/proto.rs` (wire format, `flags`), `net/runner.rs` (socket thread), `net/auto.rs` (discovery and merging), `net/role.rs`, `net/save.rs`, `net/discover.rs`, `net/sim.rs` |
+| Sync features | `coop/` (partners: `steer`, `partner`, `level`, `view`), `wallet.rs`, `world.rs`, `npc.rs`, `projectile.rs`, `target.rs`; each is a pure state machine with a `mod live` glue at the bottom |
+| Local features | `pad.rs` (XInput hooks and virtual pads), `saves.rs` (save folder redirect), `copy.rs`, `menu/` (connect window: `app` logic, `window` Win32), `window.rs`, `config.rs` |
+| Diagnostics | `log.rs`, `perf.rs`, `watch.rs`, `evlog.rs`, `devcmd.rs` |
+
 ## Contributing
 
 Issues and pull requests are welcome, especially world-sync work for the netcode, HUD
@@ -193,6 +208,8 @@ screens for players 3/4, and story-level testing.
 - Add patches and hooks to `data/patches-manual.json` and run `tools/gen_patches.py`; it rewrites
   `loader/patches.json` and `docs/PATCHES.md`.
 - Never commit game files (exe, DLLs, assets) or full decompiler output.
+- Follow the code standards in [CLAUDE.md](CLAUDE.md): one responsibility per module, one owner
+  per fact, errors in the log, refactors separate from behaviour changes, short comments.
 
 ## Legal
 

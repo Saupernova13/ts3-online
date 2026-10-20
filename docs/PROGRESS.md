@@ -245,3 +245,10 @@ town.
   `proto::flags`; one `hooks::table`; `install.rs` for the patch pipeline; `net/` split into
   `role`, `runner`, `auto`, `world_sync`; `coop/` and `menu/` split into pure and Win32/game
   halves; `NetKey` carried through `net::Options`.
+- 2026-10-20, fixes from the review (not run in game; unit-tested in CI): world events re-converge
+  after a one-sided restart (a client acks its position on entering a level, a lower ack or a
+  repeated `Hello` rewinds the host's cursor, a host `Level` change restarts the client's list);
+  a failed patch run no longer starts pads, net or the connect menu, and a panic is written to the
+  log before the abort; the save folder redirect converts the path to the ANSI code page and falls
+  back to the 8.3 short name, and logs why when it cannot redirect instead of silently sharing the
+  real folder. Code standards recorded in `CLAUDE.md`.

@@ -23,6 +23,7 @@ pub mod npc;
 pub mod pad;
 pub mod patch;
 pub mod perf;
+pub mod projectile;
 #[cfg(windows)]
 pub mod coop;
 #[cfg(windows)]

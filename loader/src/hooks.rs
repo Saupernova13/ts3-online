@@ -138,6 +138,7 @@ pub unsafe extern "system" fn post_broadcast(events: u64, name: u64, a: u64, b: 
 pub unsafe extern "system" fn post_actor(events: u64, name: u64, a: u64, b: u64, actor: u64) -> u8 {
     crate::evlog::record(name, a, b, Some(actor));
     crate::world::on_post(name, a, b, actor);
+    crate::projectile::on_post(name, b, actor);
     match original("post_actor") {
         Some(o) => std::mem::transmute::<u64, Post5>(o)(events, name, a, b, actor),
         None => 0,

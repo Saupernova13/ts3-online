@@ -4,6 +4,7 @@ use crate::game::*;
 use crate::hooks::bind_joining_avatar;
 use crate::{hooks, log};
 use crate::net::proto::{level_hash, Pad, State, CLASS_UNKNOWN};
+use crate::projectile;
 use crate::target::{self, Target};
 use crate::{net, pad};
 use std::collections::HashMap;
@@ -530,6 +531,9 @@ pub unsafe fn update() {
     }
     let (flags, target_value) = target.encode(flags);
     net::set_local_target(target_value);
+    let partner_ids: Vec<(u64, u8)> = players.iter().copied().filter(|(_, id)| Some(*id) != net::local_id()).collect();
+    let slot_ids: Vec<u64> = (0..4).map(|i| slot_avatar(mgr, i)).filter(|a| *a != 0).map(|a| rd_u64(a + 0x38)).collect();
+    net::set_local_proj(projectile::update(rd_u64(p0 + 0x38), &partner_ids, &slot_ids));
     net::set_local_state(level, own_class.map_or(CLASS_UNKNOWN, |c| c as u8), pos, yaw, cam, pad_out, flags);
 
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;
@@ -600,6 +604,7 @@ pub unsafe fn update() {
             }
         }
         if p.avatar != 0 {
+            projectile::follow(id, st.proj);
             let want = Target::decode(st.flags, st.target);
             if want != p.target {
                 p.target = want;

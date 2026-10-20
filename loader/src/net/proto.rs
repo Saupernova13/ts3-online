@@ -6,7 +6,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 10;
+pub const VERSION: u16 = 11;
 /// Length of the authentication tag that ends every datagram.
 pub const TAG_LEN: usize = 16;
 /// Zero bytes after a `Probe`'s build, so a probe is never shorter than the reply it provokes.
@@ -84,6 +84,17 @@ pub struct State {
     pub flags: u32,
     /// what the player would pick up or is carrying; its kind is in `flags` (`coop::TARGET_*`)
     pub target: u32,
+    /// the latest object this player threw, while it flies (`seq` 0: none)
+    pub proj: Proj,
+}
+
+/// A thrown object's physics state as its thrower's copy sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Proj {
+    /// counts the owner's throws, wrapping past 255 to 1; 0 means no object in flight
+    pub seq: u8,
+    pub pos: [f32; 3],
+    pub vel: [f32; 3],
 }
 
 /// Positions beyond this are not a real level.
@@ -91,8 +102,13 @@ const MAX_COORD: f32 = 1.0e6;
 
 /// The state's numbers are finite and in range; anything else is dropped, not stored or relayed.
 pub fn sane(s: &State) -> bool {
-    s.pos.iter().all(|v| v.is_finite() && v.abs() <= MAX_COORD) && s.yaw.is_finite() && s.cam.is_finite()
+    let coord = |v: &f32| v.is_finite() && v.abs() <= MAX_COORD;
+    let speed = |v: &f32| v.is_finite() && v.abs() <= MAX_SPEED;
+    s.pos.iter().all(coord) && s.yaw.is_finite() && s.cam.is_finite() && s.proj.pos.iter().all(coord) && s.proj.vel.iter().all(speed)
 }
+
+/// Thrown-object speeds beyond this (m/s) are not real.
+const MAX_SPEED: f32 = 1.0e3;
 
 /// Empty, or 1..=`MAX_LEVEL` bytes of `[A-Za-z0-9_]`.
 pub fn valid_level(name: &str) -> bool {
@@ -248,6 +264,10 @@ pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
             }
             o.extend_from_slice(&s.flags.to_le_bytes());
             o.extend_from_slice(&s.target.to_le_bytes());
+            o.push(s.proj.seq);
+            for v in s.proj.pos.iter().chain(&s.proj.vel) {
+                o.extend_from_slice(&v.to_le_bytes());
+            }
         }
         Msg::Bye { id } => o.extend_from_slice(&[T_BYE, *id]),
         Msg::Probe { build } => {
@@ -448,6 +468,7 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
                 pad: Pad { buttons: r.u16()?, lt: r.u8()?, rt: r.u8()?, lx: r.i16()?, ly: r.i16()?, rx: r.i16()?, ry: r.i16()? },
                 flags: r.u32()?,
                 target: r.u32()?,
+                proj: Proj { seq: r.u8()?, pos: [r.f32()?, r.f32()?, r.f32()?], vel: [r.f32()?, r.f32()?, r.f32()?] },
             }),
             T_BYE => Msg::Bye { id: r.u8()? },
             T_PROBE => {
@@ -583,6 +604,7 @@ mod tests {
                 pad: Pad { buttons: 0x3001, lt: 5, rt: 255, lx: -32768, ly: 32767, rx: -1, ry: 1234 },
                 flags: 0xdead_beef,
                 target: 0x1234_5678,
+                proj: Proj { seq: 3, pos: [1.0, 2.0, 3.0], vel: [-4.0, 0.5, 9.0] },
             }),
             Msg::Bye { id: 3 },
             Msg::Probe { build: 0x6abf29b6_00bdc000 },
@@ -801,7 +823,7 @@ b")] {
 
     #[test]
     fn wrong_key_is_bad_key_and_tampering_is_caught() {
-        let m = Msg::State(State { id: 1, seq: 1, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0 });
+        let m = Msg::State(State { id: 1, seq: 1, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Proj::default() });
         let b = encode(&m, KEY);
         assert_eq!(decode(&b, b"other"), Err(DecodeError::BadKey));
         assert_eq!(decode(&b, &[]), Err(DecodeError::BadKey));
@@ -847,9 +869,12 @@ b")] {
 
     #[test]
     fn sane_states() {
-        let ok = State { id: 1, seq: 1, level: 0, class: 0, pos: [1.0, -2.0, 1.0e6], yaw: 3.0, cam: -3.0, pad: Pad::default(), flags: 0, target: 0 };
+        let ok = State { id: 1, seq: 1, level: 0, class: 0, pos: [1.0, -2.0, 1.0e6], yaw: 3.0, cam: -3.0, pad: Pad::default(), flags: 0, target: 0, proj: Proj::default() };
         assert!(sane(&ok));
         assert!(!sane(&State { pos: [f32::NAN, 0.0, 0.0], ..ok }));
+        assert!(!sane(&State { proj: Proj { seq: 1, pos: [0.0, f32::NAN, 0.0], vel: [0.0; 3] }, ..ok }));
+        assert!(!sane(&State { proj: Proj { seq: 1, pos: [0.0; 3], vel: [0.0, 0.0, 5.0e3] }, ..ok }));
+        assert!(sane(&State { proj: Proj { seq: 1, pos: [1.0, 65.0, -3.0], vel: [11.0, -2.0, -46.0] }, ..ok }));
         assert!(!sane(&State { pos: [0.0, f32::INFINITY, 0.0], ..ok }));
         assert!(!sane(&State { pos: [0.0, 0.0, -1.0e6 - 64.0], ..ok }));
         assert!(!sane(&State { yaw: f32::NEG_INFINITY, ..ok }));

@@ -159,6 +159,13 @@ pub fn set_local_target(target: u32) {
     }
 }
 
+/// The local player's object in flight for the next outgoing state.
+pub fn set_local_proj(proj: proto::Proj) {
+    if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
+        s.set_local_proj(proj);
+    }
+}
+
 /// This copy's player id in the session.
 pub fn local_id() -> Option<u8> {
     SESSION.lock().ok().and_then(|g| g.as_ref().and_then(|s| s.local_id()))

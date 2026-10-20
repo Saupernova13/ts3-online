@@ -511,6 +511,15 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   right target even with a 110 degree pose error. `PlayerPerception_CarryBegin` (`0x140056b30`) only
   posts `StartPickup` (a=0, b=carrier) to a non-AI target: posting that alone put the target in its
   "being lifted" pose with no carrier, so a carry has to start from the carrier's own action.
+- **[obs] A thrown Pixar ball is a new physics actor (2026-10-20, in game).** With the ball tool out
+  (B, `TogglePixarBalls`), RT posts `StartThrow a=0 b=<thrower id> actor=<new id>`; the new actor is
+  `Avatar_Tools/Pixar_Ball_Physics` (no reference name) and despawns a few seconds after it lands.
+  Its `actor+0x80` stays at the spawn point; `+0xec` and `+0x100` hold per-frame copies of the
+  physics position and `+0xe0` of the velocity, and writes to them are undone the next frame. The
+  physics state is `[[actor+0x20]+0x78]`: origin at `+0x60` (and `+0xa0`), velocity at `+0x160` (and
+  `+0xb0`); raising the origin by 4 m mid-flight moved the ball and the simulation carried on from
+  there. Without sync the two copies' balls matched within 0.5 m for 2 s, then bounced apart (1.5 m
+  by 3 s).
 - **[obs] Townspeople have the same reference names on every copy (2026-10-19).** Spawned
   townspeople, cactus toys and help capsules are named after their spawner (`TownpersonSpawn
   Actor165_167`, `ENV_CactusToySpawn Actor105_164`) and those names matched on both copies; static

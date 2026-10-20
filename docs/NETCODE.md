@@ -162,6 +162,15 @@ player (by id), a uniquely named actor (the `level_hash` of its reference name) 
 partner is only looking (FINDINGS 10). A replayed X press then picks up the owner's target, and
 never a different object that only stands near the partner on this copy.
 
+**Thrown objects.** The thrower's copy owns what its player throws. `StartThrow` (thrower, thrown
+actor) is seen by the targeted-post detour on every copy: on the thrower's copy the object gets a
+seq and, for 6 s or until it despawns, its rigid-body position and velocity ride in the player's
+`State.proj`. On the other copies the partner's replayed throw spawns their own object; the first
+report of a new seq is paired with the partner's latest throw there (within 1.5 s), and from then
+on that object's rigid body takes the owner's position and velocity every frame. A body is only
+written when its origin is within 2 m of the actor's own copy of it. Thrown players are left out
+(their owner already drives them).
+
 **World events (H6b).** Actor ids differ between copies, so a one-off event on an actor is carried
 by the actor's reference name (`actor+0x150`, unique and equal in both copies for most actors;
 FINDINGS 10). Only events in `world::SYNCED` (now `ExploderDestroy`, a crate breaking) posted with

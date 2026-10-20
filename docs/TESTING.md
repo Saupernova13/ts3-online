@@ -162,6 +162,14 @@ host and `npc: client following N actors` on the client.
 `work/scratch/npcdiff.py <host pid> <client pid>` compares named actors: none should be more than
 0.5 m apart (townspeople are a few tenths of a metre behind the host).
 
+## T17: thrown objects (passed 2026-10-20)
+
+Start as for T11. Take the ball out (B), then throw it (RT) towards a wall so it bounces.
+`work/scratch/balltrace.py <pid> <s> <out.csv>` records the next spawned ball's physics position on
+one copy; run it on both copies, then throw. Expect `projectile: threw ... (seq N)` on the thrower's
+copy and `projectile: player P seq N -> ... following` on the other, and both traces within a few
+tenths of a metre through the bounces (the follower trails by the network delay).
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

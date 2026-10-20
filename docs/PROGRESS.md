@@ -207,3 +207,10 @@ town.
   one. Open: X next to a townsperson started a conversation rather than a pick-up on the host, so
   carrying townspeople is not verified; the client's AI still runs underneath the override. See
   NETCODE.md "NPCs (H6c)".
+
+- 2026-10-20, thrown objects (protocol 11): a thrown Pixar ball is a new physics actor on every
+  copy, and the copies' balls bounced apart. The thrower's copy now sends its object's rigid-body
+  position and velocity in `State.proj`; other copies pair it with their partner's throw and write
+  it into their own ball's rigid body. In game (T17): the host's throw matched on the client within
+  a few centimetres through two bounces (1.5 m off by 3 s before); the client's throw was followed
+  on the host along the same path, about 0.3 m behind at full speed.

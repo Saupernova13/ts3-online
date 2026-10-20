@@ -1,5 +1,4 @@
-# BuzzControlMapper (vtable 0x1407aff60) input path: bind controller (vt+0x48), update (vt+0x10),
-# plus vt+0x8 and vt+0x18, and the input dispatch that calls them
+# BuzzControlMapper vtable 0x1407aff60: bind vt+0x48, update vt+0x10, vt+0x8/+0x18, input dispatch
 maxlen 12000
 vt 1407aff60
 func 1401ff4a0

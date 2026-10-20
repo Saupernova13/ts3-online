@@ -1,9 +1,8 @@
-"""Heuristic stack trace from a Windows minidump: exception info plus every stack slot that
-points into the game exe or our dinput8.dll, as VAs of the analysed exe (image base 0x140000000).
+"""Heuristic stack trace from a minidump: stack slots pointing into the game exe or dinput8.dll.
 
     work/venv/Scripts/python -I tools/dump_stack.py <file.dmp> [--depth 0x4000]
 
-Stack scanning also finds stale return addresses; confirm frames in Ghidra (`func <va>`).
+Also finds stale return addresses; confirm frames in Ghidra (`func <va>`).
 """
 import argparse
 import struct
@@ -30,7 +29,7 @@ def main():
     print(f"exception {rec.ExceptionCode} at {rec.ExceptionAddress:#x} thread {exc.ThreadId:#x}")
     print(f"game base {game.baseaddress:#x}" + (f", dinput8 base {ours.baseaddress:#x} size {ours.size:#x}" if ours else ""))
 
-    # the exception stream holds the CONTEXT at the fault (the thread list has WER's own context)
+    # fault CONTEXT is in the exception stream; the thread list holds WER's own
     loc = exc.ThreadContext
     with open(a.dump, "rb") as f:
         f.seek(loc.Rva)
@@ -60,7 +59,7 @@ def main():
     if ctx:
         print("rip:", where(ctx.Rip))
     data = b""
-    while len(data) < a.depth:  # the stack may span segments; read page by page until it ends
+    while len(data) < a.depth:  # the stack may span segments: read page by page
         try:
             data += reader.read(rsp + len(data), 0x1000 - ((rsp + len(data)) & 0xfff))
         except Exception:

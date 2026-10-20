@@ -1,12 +1,12 @@
-//! `dev_cmds=1`: once a second the game thread runs the lines of `%LOCALAPPDATA%\ts3online\cmd.copyN.txt`
-//! and empties the file. For research: post game events by name and mark the log.
+//! `dev_cmds=1`: once a second the game thread runs and empties `%LOCALAPPDATA%\ts3online\cmd.copyN.txt`.
+//! For research: post game events by name and mark the log.
 use crate::game::*;
 use crate::{hooks, log};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// The copy number whose command file is polled; 0 while disabled.
+/// Copy whose command file is polled; 0 while disabled.
 static COPY: AtomicU32 = AtomicU32::new(0);
 static LAST: Mutex<Option<Instant>> = Mutex::new(None);
 const EVERY: Duration = Duration::from_secs(1);
@@ -14,10 +14,9 @@ const EVERY: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cmd {
     Event { name: String, arg: Option<String> },
-    /// like `event`, but through the game's post entry, so the loader's own detour sees it
+    /// Through the game's post entry, so the loader's own detour sees it.
     Post { name: String, arg: Option<String> },
     EventActor { name: String, actor: u64, arg: Option<String> },
-    /// a targeted post with raw `a` and `b`
     Post5 { name: String, a: u64, b: u64, actor: u64 },
     Log(String),
 }
@@ -30,11 +29,10 @@ pub fn cmd_path(local_app_data: &str, copy: u32) -> std::path::PathBuf {
     std::path::PathBuf::from(local_app_data).join("ts3online").join(format!("cmd.copy{copy}.txt"))
 }
 
-/// The game's broadcast post entry; with the hooks group applied it jumps into `hooks::post_broadcast`.
+/// The game's broadcast post entry; the hooks group detours it into `hooks::post_broadcast`.
 const POST_BROADCAST: u64 = 0x1_4049_e160;
 
-/// One command line: `event NAME [STR]`, `post NAME [STR]`, `event_actor NAME ACTORID_HEX [STR]`,
-/// `post5 NAME A_HEX B_HEX ACTORID_HEX` (raw targeted post), `log TEXT`.
+/// `event NAME [STR]`, `post NAME [STR]`, `event_actor NAME ACTOR_HEX [STR]`, `post5 NAME A_HEX B_HEX ACTOR_HEX`, `log TEXT`.
 pub fn parse(line: &str) -> Result<Cmd, String> {
     let line = line.trim();
     let (verb, rest) = line.split_once(char::is_whitespace).map_or((line, ""), |(v, r)| (v, r.trim()));
@@ -75,7 +73,6 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
     }
 }
 
-/// First word and the (trimmed, non-empty) rest.
 fn split_arg(s: &str) -> (&str, Option<&str>) {
     match s.split_once(char::is_whitespace) {
         Some((a, b)) => (a, Some(b.trim()).filter(|b| !b.is_empty())),
@@ -114,7 +111,7 @@ unsafe fn run(cmd: &Cmd) {
     }
 }
 
-/// Per-frame call on the game thread: at most once a second, runs and clears the command file.
+/// Call every frame on the game thread.
 pub unsafe fn tick() {
     let copy = COPY.load(Ordering::Relaxed);
     if copy == 0 {

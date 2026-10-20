@@ -1,13 +1,11 @@
 //! Hex parsing for the patch doc.
 
-/// Parses `0x1f` or `1f` into a u64.
 pub fn parse_u64(s: &str) -> Result<u64, String> {
     let t = s.trim();
     let t = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")).unwrap_or(t);
     u64::from_str_radix(t, 16).map_err(|_| format!("bad hex number {s:?}"))
 }
 
-/// Parses a hex byte string such as `48c705` into bytes.
 pub fn parse_bytes(s: &str) -> Result<Vec<u8>, String> {
     let t = s.trim();
     if t.len() % 2 != 0 || !t.is_ascii() {

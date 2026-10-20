@@ -1,15 +1,15 @@
-//! `ts3online.ini`: optional `key=value` lines, `#` comments. `[copy1]`..`[copy4]` sections apply to that copy only.
+//! `ts3online.ini`: `key=value` lines, `#` comments; `[copyN]` sections apply to copy N only.
 use crate::net::proto::clamp_name;
 
-/// `net = host:27777` / `net = client:host:port` / `net = auto`; a client target is resolved when
-/// the session starts. `net=host` and `net=client:ADDR` use `net_port`.
+/// `net = host[:PORT] | client:ADDR[:PORT] | auto | menu`; a missing port means `net_port`.
+/// A client address is resolved when the session starts.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Net {
     Host(u16),
     Client(String),
     /// find a host among the peers, else host (FINDINGS 10)
     Auto,
-    /// show the connect menu at start and let the player choose host or join
+    /// connect menu at start: the player picks host or join
     Menu,
 }
 
@@ -17,12 +17,12 @@ pub const DEFAULT_PORT: u16 = 27777;
 /// Longest `net_key` in bytes.
 pub const MAX_KEY: usize = 64;
 
-/// `net_key`: the shared password. Debug never shows it, so `config: {cfg:?}` stays safe to log.
+/// Shared password. Debug hides it, so the config stays safe to log.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct NetKey(String);
 
 impl NetKey {
-    /// `text` trimmed and cut to `MAX_KEY` bytes on a char boundary; empty means none.
+    /// Cut to `MAX_KEY` bytes on a char boundary; empty means none.
     pub fn new(text: &str) -> NetKey {
         let t = text.trim();
         let mut end = t.len().min(MAX_KEY);
@@ -43,7 +43,7 @@ impl std::fmt::Debug for NetKey {
     }
 }
 
-/// `net_sim = delay_ms[,jitter_ms[,loss_pct]]`: simulated link quality for outgoing datagrams.
+/// Simulated link quality for outgoing datagrams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sim {
     pub delay_ms: u32,
@@ -56,36 +56,35 @@ pub struct Config {
     pub enabled: bool,
     pub watch: bool,
     pub watch_interval_ms: u32,
-    /// optional patch groups to apply (`enable = quadrants`)
+    /// optional patch groups to apply, comma-separated
     pub enable: Vec<String>,
-    /// `window = x,y,w,h`: borderless placement of the game window
+    /// `x,y,w,h`: borderless window placement
     pub window: Option<(i32, i32, i32, i32)>,
-    /// `pad = N` (1-4): the physical XInput pad this copy's player 1 uses
+    /// 1-4: physical XInput pad of this copy's player 1
     pub pad: Option<u32>,
-    /// `net = host:PORT` or `net = client:ADDR:PORT`
     pub net: Option<Net>,
-    /// `net_stick_sign = 1|-1`: sign of the camera rotation applied to partners' sticks
+    /// 1|-1: sign of the camera rotation applied to partners' sticks
     pub net_stick_sign: i32,
-    /// `net_steer = 0|1`: closed-loop steering of partners (default on); 0 replays the rotated raw stick
+    /// closed-loop steering of partners (default on); off replays the rotated raw stick
     pub net_steer: bool,
-    /// `net_steer_x` / `net_steer_y` = 1|-1: axis signs of the steering stick
+    /// 1|-1: axis signs of the steering stick
     pub net_steer_x: i32,
     pub net_steer_y: i32,
-    /// `net_port = N`: default port of every net mode
+    /// port for net modes that name none
     pub net_port: u16,
-    /// `net_peers = a,b,c`: explicit peers for `net=auto` (replaces Tailscale discovery)
+    /// `a,b,c`: peers for `net=auto`, replacing Tailscale discovery
     pub net_peers: Vec<String>,
-    /// `log_events = 1`: log the names of posted game events
+    /// log names of posted game events
     pub log_events: bool,
-    /// `dev_cmds = 1`: run commands from `cmd.copyN.txt` (research)
+    /// run commands from `cmd.copyN.txt` (research)
     pub dev_cmds: bool,
-    /// `net_sim = delay_ms[,jitter_ms[,loss_pct]]`
+    /// `delay_ms[,jitter_ms[,loss_pct]]`
     pub net_sim: Option<Sim>,
-    /// `name = text`: shown to other players (max 32 bytes)
+    /// shown to other players (max 32 bytes)
     pub name: String,
-    /// `net_key = text`: shared password every datagram is authenticated with (max 64 bytes)
+    /// shared password that authenticates every datagram (max 64 bytes)
     pub net_key: NetKey,
-    /// `menu_last = addr`: the game the connect menu joined last, prefilled in its address box
+    /// address the connect menu last joined; prefills its address box
     pub menu_last: String,
 }
 
@@ -103,14 +102,14 @@ fn parse_bool(v: &str) -> Option<bool> {
     }
 }
 
-/// Copy number named by a section header (`[copy2]`), if it is one.
+/// N of a `[copyN]` header.
 fn section_copy(line: &str) -> Option<u32> {
     let name = line.strip_prefix('[')?.strip_suffix(']')?.trim().to_ascii_lowercase();
     name.strip_prefix("copy")?.parse().ok()
 }
 
-/// Lines before any section apply to every copy; `[copyN]` lines only to copy N, later ones win.
-/// Unknown sections, keys and unparsable values are ignored (the default stays).
+/// Lines before any section apply to every copy, `[copyN]` lines to copy N; later lines win.
+/// Unknown sections, keys and bad values are ignored.
 pub fn parse(text: &str, copy: u32) -> Config {
     let mut c = Config::default();
     let mut active = true;
@@ -215,7 +214,7 @@ pub fn parse(text: &str, copy: u32) -> Config {
         _ => {}
     }
     if c.net.is_some() {
-        // a networked copy keeps one full-screen viewport; `online` and `quadrants` patch the same site
+        // `online` replaces `quadrants`: both patch the same site
         c.enable.retain(|g| g != "quadrants");
         if !c.enable.iter().any(|g| g == "online") {
             c.enable.push("online".into());

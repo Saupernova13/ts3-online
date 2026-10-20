@@ -1,19 +1,15 @@
-//! The connect menu without the window: the table of games found, the list text, what a choice
-//! means, and the ini rewrite. Pure, so it is tested on every platform.
+//! The connect menu's logic without the window: pure, so it is tested on every platform.
 use crate::config::Net;
 use crate::net::proto::{clamp_name, Msg, VERSION};
 use std::net::{Ipv4Addr, SocketAddr};
 
 /// A game not heard from for this long leaves the list.
 pub const EXPIRE_MS: u64 = 4000;
-/// Players a host takes.
 pub const MAX_PLAYERS: u8 = 4;
-/// How long Join waits for the host to answer before saying so.
+/// How long Join waits for the host to answer.
 pub const CHECK_MS: u64 = 3000;
-/// Join resends its probe and check this often while waiting.
 pub const CHECK_RESEND_MS: u64 = 500;
 
-/// A host that answered a probe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Game {
     pub addr: SocketAddr,
@@ -21,23 +17,20 @@ pub struct Game {
     pub players: u8,
     pub locked: bool,
     pub last_ms: u64,
-    /// the host's protocol version when it is not ours (it refused our probe)
+    /// the host's protocol version, when it refused ours
     pub version: Option<u16>,
 }
 
-/// The games found, keyed by the address they answered from.
 #[derive(Debug, Default)]
 pub struct Table {
     games: Vec<Game>,
 }
 
 impl Table {
-    /// Records (or refreshes) the game at `addr`.
     pub fn heard(&mut self, addr: SocketAddr, name: &str, players: u8, locked: bool, now_ms: u64) {
         self.put(Game { addr, name: name.to_string(), players, locked, last_ms: now_ms, version: None });
     }
 
-    /// Records a host at `addr` that runs protocol `version`, not ours.
     pub fn heard_version(&mut self, addr: SocketAddr, version: u16, now_ms: u64) {
         self.put(Game { addr, name: String::new(), players: 0, locked: false, last_ms: now_ms, version: Some(version) });
     }
@@ -49,7 +42,6 @@ impl Table {
         }
     }
 
-    /// Drops the games not heard from for `EXPIRE_MS`.
     pub fn expire(&mut self, now_ms: u64) {
         self.games.retain(|g| now_ms.saturating_sub(g.last_ms) < EXPIRE_MS);
     }
@@ -58,8 +50,8 @@ impl Table {
         self.games.iter().find(|g| g.addr == addr)
     }
 
-    /// (address, text) per game, in a stable order (by address). A game on this PC also answers
-    /// from 127.0.0.1; that entry is hidden while the same game is listed at another address.
+    /// Sorted by address. A local game also answers from 127.0.0.1; that entry is hidden while the
+    /// same game is listed at another address.
     pub fn lines(&self) -> Vec<(SocketAddr, String)> {
         let twin = |g: &Game| self.games.iter().any(|o| !o.addr.ip().is_loopback() && o.addr.port() == g.addr.port() && o.name == g.name && o.players == g.players);
         let shown = self.games.iter().filter(|g| !(g.addr.ip().is_loopback() && twin(g)));
@@ -69,7 +61,6 @@ impl Table {
     }
 }
 
-/// `name  players/4  ip:port`, plus `  [password]` and `  [full]`; a host of another version shows its address only.
 pub fn format_line(g: &Game) -> String {
     if g.version.is_some() {
         return format!("{}  [other ts3-online version]", g.addr);
@@ -84,7 +75,6 @@ pub fn format_line(g: &Game) -> String {
     s
 }
 
-/// (name, players, locked) of a probe reply from a host of our build.
 pub fn host_info(msg: &Msg, build: u64) -> Option<(String, u8, bool)> {
     match msg {
         Msg::ProbeReply { build: b, host: true, players, locked, name } if *b == build => Some((name.clone(), *players, *locked)),
@@ -92,13 +82,11 @@ pub fn host_info(msg: &Msg, build: u64) -> Option<(String, u8, bool)> {
     }
 }
 
-/// What to tell the player about a host that runs protocol `theirs`.
 pub fn version_text(theirs: u16) -> String {
     let who = if theirs < VERSION { "The host has an older ts3-online than you" } else { "You have an older ts3-online than the host" };
     format!("{who}. Both players need the same release: run Update.cmd, or download the latest from the GitHub releases page.")
 }
 
-/// `This PC: <tailnet> (Tailscale), <lan> (LAN)`, with `:port` when it is not the default.
 pub fn own_line(tailnet: Option<Ipv4Addr>, lan: Option<Ipv4Addr>, port: u16) -> String {
     let p = if port == crate::config::DEFAULT_PORT { String::new() } else { format!(":{port}") };
     let mut parts = Vec::new();
@@ -114,7 +102,6 @@ pub fn own_line(tailnet: Option<Ipv4Addr>, lan: Option<Ipv4Addr>, port: u16) -> 
     format!("This PC: {}", parts.join(", "))
 }
 
-/// The status line for `n` games found.
 pub fn status_text(n: usize) -> String {
     match n {
         0 => "Looking for games on your tailnet and LAN...".into(),
@@ -129,15 +116,12 @@ pub struct Check {
     pub started_ms: u64,
     /// (build, host, players) from its probe reply
     pub reply: Option<(u64, bool, u8)>,
-    /// it answered our `Check`: the password matches
     pub key_ok: bool,
-    /// it refused our `Check`: the password does not match
     pub key_refused: bool,
-    /// it refused us for running another protocol version
+    /// the host's protocol version, when it refused ours
     pub version: Option<u16>,
 }
 
-/// What Join does next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     Wait,
@@ -177,15 +161,13 @@ impl Check {
     }
 }
 
-/// What the player chose.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Choice {
     Host,
-    /// `ip:port` (or host:port) of the game to join
+    /// `ip:port` or `host:port`
     Join(String),
 }
 
-/// The typed address with `port` appended when it names none; None when empty.
 pub fn normalize_address(text: &str, port: u16) -> Option<String> {
     let t = text.trim();
     if t.is_empty() {
@@ -205,7 +187,7 @@ pub fn enter_choice(selected: Option<SocketAddr>, typed: &str, port: u16) -> Cho
     normalize_address(typed, port).map_or(Choice::Host, Choice::Join)
 }
 
-/// The Join button: the selected game, else the typed address; None when there is neither.
+/// The Join button: like Enter, but never host.
 pub fn join_choice(selected: Option<SocketAddr>, typed: &str, port: u16) -> Option<Choice> {
     match enter_choice(selected, typed, port) {
         Choice::Host => None,
@@ -220,14 +202,12 @@ pub fn to_net(choice: &Choice, port: u16) -> Net {
     }
 }
 
-/// Joining a game that needs a password with an empty password field.
 pub fn needs_password(choice: &Choice, table: &Table, key: &str) -> bool {
     let Choice::Join(a) = choice else { return false };
     key.trim().is_empty() && a.parse::<SocketAddr>().ok().and_then(|a| table.get(a)).is_some_and(|g| g.locked)
 }
 
-/// The `key=value` lines to write back after a choice (empty: nothing to save). The password is
-/// written when it changed to something, or was set before; the last address only when joined.
+/// The `key=value` lines to save: an emptied name is not saved, an emptied password is.
 pub fn ini_changes(old_name: &str, old_key: &str, old_last: &str, name: &str, key: &str, joined: Option<&str>) -> Vec<(&'static str, String)> {
     let mut v = Vec::new();
     let name = clamp_name(name.trim()).trim();
@@ -249,9 +229,8 @@ fn is_key_line(line: &str, key: &str) -> bool {
     !t.starts_with('#') && t.split_once('=').is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case(key))
 }
 
-/// Sets `key=value` in the part of an ini before the first `[section]`: an existing line is
-/// replaced in place, a missing key is added after the last global setting line (comments and blanks above a section stay with it). Everything else
-/// (comments, sections) stays, and so do the file's line endings.
+/// Sets keys in the global part (before the first `[section]`), keeping the rest and the line
+/// endings. A new key goes after the last global setting, so comments above a section stay with it.
 pub fn update_ini(text: &str, set: &[(&str, &str)]) -> String {
     let eol = if text.contains("\r\n") || !text.contains('\n') { "\r\n" } else { "\n" };
     let trailing = text.is_empty() || text.ends_with('\n');
@@ -292,12 +271,12 @@ mod tests {
         t.heard(addr("10.0.0.3:27777"), "Bob", 2, true, 1000);
         t.expire(3999);
         assert_eq!(t.lines().len(), 2);
-        t.heard(addr("10.0.0.2:27777"), "Alice", 2, false, 3500); // refreshed, same key
+        t.heard(addr("10.0.0.2:27777"), "Alice", 2, false, 3500);
         t.expire(4000);
         let l = t.lines();
         assert_eq!(l.len(), 2);
         assert_eq!(l[0].1, "Alice  2/4  10.0.0.2:27777");
-        t.expire(5000); // Bob last heard at 1000
+        t.expire(5000);
         assert_eq!(t.lines().len(), 1);
         t.expire(7500);
         assert!(t.lines().is_empty());
@@ -445,11 +424,10 @@ mod tests {
     fn update_inserts_at_the_end_of_the_global_part() {
         let t = "net=menu\nname=a\n\n# copy two\n[copy2]\nname=b\n";
         assert_eq!(update_ini(t, &[("menu_last", "1.2.3.4:5")]), "net=menu\nname=a\nmenu_last=1.2.3.4:5\n\n# copy two\n[copy2]\nname=b\n");
-        // without sections, and without a final newline
         assert_eq!(update_ini("net=menu", &[("name", "x")]), "net=menu\r\nname=x");
         assert_eq!(update_ini("net=menu\n", &[("name", "x"), ("net_key", "k")]), "net=menu\nname=x\nnet_key=k\n");
         assert_eq!(update_ini("", &[("name", "x")]), "name=x\r\n");
-        // a key that only exists inside a section is not the global one
+        // a key only inside a section is not the global one
         assert_eq!(update_ini("net=menu\n[copy2]\nname=b\n", &[("name", "x")]), "net=menu\nname=x\n[copy2]\nname=b\n");
     }
 
@@ -459,7 +437,6 @@ mod tests {
         let out = update_ini(t, &[("name", "New"), ("menu_last", "a:1")]);
         assert_eq!(out, "# name=commented\r\nnet=menu\r\nname=New\r\nmenu_last=a:1\r\n[copy1]\r\nx=1\r\n");
         assert!(!out.replace("\r\n", "").contains('\n'));
-        // the result still parses to what was set
         let c = crate::config::parse(&out, 1);
         assert_eq!((c.name.as_str(), c.menu_last.as_str()), ("New", "a:1"));
     }

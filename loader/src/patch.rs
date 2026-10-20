@@ -2,19 +2,18 @@
 use crate::doc::{HookMode, Op, Patch};
 use crate::hex;
 
-/// Process memory as seen by the patcher (a real process, or a byte vector in tests).
+/// A real process, or a byte vector in tests.
 pub trait Mem {
     fn read(&self, addr: u64, len: usize) -> Option<Vec<u8>>;
     fn write(&mut self, addr: u64, data: &[u8]) -> Result<(), String>;
 }
 
-/// `target - (site + len)` as an i32, or None if it does not fit.
 pub fn rip_disp(target: u64, site: u64, len: usize) -> Option<i32> {
     let d = (target as i128) - (site as i128 + len as i128);
     i32::try_from(d).ok()
 }
 
-/// Copies the old object into a new-size buffer: `[0, tail_start)` keeps its offset, the rest moves up by `tail_shift`.
+/// `[0, tail_start)` keeps its offset; the rest moves up by `tail_shift`.
 pub fn remap_copy(old: &[u8], new_size: usize, tail_start: usize, tail_shift: usize) -> Result<Vec<u8>, String> {
     let mut out = vec![0u8; new_size];
     for (i, b) in old.iter().enumerate() {
@@ -25,7 +24,7 @@ pub fn remap_copy(old: &[u8], new_size: usize, tail_start: usize, tail_shift: us
     Ok(out)
 }
 
-/// Resolves a hook to the address its patch should jump or call to (for `entry_caller`, the thunk).
+/// Hook to its jump or call target; for `entry_caller`, the thunk.
 pub type Resolver<'a> = &'a dyn Fn(HookMode, &str) -> Option<u64>;
 
 /// Thunk for `entry_caller`: `mov r8,[rsp]; mov rax,imm64; jmp rax`.
@@ -36,8 +35,7 @@ pub fn thunk_bytes(target: u64) -> Vec<u8> {
     b
 }
 
-/// The trampoline of a detour: the stolen bytes, then `jmp [rip+0]` to `resume` (the first
-/// instruction after them).
+/// Detour trampoline: the stolen bytes, then `jmp [rip+0]` to `resume`, the instruction after them.
 pub fn trampoline_bytes(stolen: &[u8], resume: u64) -> Vec<u8> {
     let mut b = stolen.to_vec();
     b.extend_from_slice(&[0xff, 0x25, 0, 0, 0, 0]);
@@ -45,7 +43,7 @@ pub fn trampoline_bytes(stolen: &[u8], resume: u64) -> Vec<u8> {
     b
 }
 
-/// `mov rax,imm64` followed by `jmp rax` (entry) or `call rax` (call).
+/// `mov rax,imm64`, then `op` (`jmp rax` or `call rax`).
 fn mov_rax_then(target: u64, op: [u8; 2]) -> Vec<u8> {
     let mut b = vec![0x48, 0xb8];
     b.extend_from_slice(&target.to_le_bytes());
@@ -53,7 +51,6 @@ fn mov_rax_then(target: u64, op: [u8; 2]) -> Vec<u8> {
     b
 }
 
-/// Fills `n` bytes with multi-byte NOPs.
 fn nops(mut n: usize) -> Vec<u8> {
     const NOPS: [&[u8]; 9] = [
         &[0x90],
@@ -75,7 +72,6 @@ fn nops(mut n: usize) -> Vec<u8> {
     out
 }
 
-/// The bytes a patch writes, given the module base, relocation buffer and hook resolver.
 pub fn patch_bytes(p: &Patch, module_base: u64, buffer: u64, resolve: Resolver) -> Result<Vec<u8>, String> {
     match &p.op {
         Op::Hook { mode, name, prefix } => {
@@ -120,12 +116,12 @@ pub fn patch_bytes(p: &Patch, module_base: u64, buffer: u64, resolve: Resolver) 
     }
 }
 
-/// True if every rip_reloc patch reaches `buffer` with an i32 displacement.
+/// True if every rip_reloc reaches `buffer` with an i32 displacement.
 pub fn all_fit(patches: &[Patch], module_base: u64, buffer: u64, resolve: Resolver) -> bool {
     patches.iter().all(|p| patch_bytes(p, module_base, buffer, resolve).is_ok())
 }
 
-/// Verifies all sites against `orig`; returns one message per mismatch.
+/// One message per site that does not hold `orig`.
 pub fn verify(mem: &dyn Mem, module_base: u64, patches: &[Patch]) -> Vec<String> {
     let mut bad = Vec::new();
     for p in patches {
@@ -144,8 +140,8 @@ pub fn verify(mem: &dyn Mem, module_base: u64, patches: &[Patch]) -> Vec<String>
     bad
 }
 
-/// Verify-all-then-apply. Nothing is written unless every site matches and every write is computable.
-/// Returns applied patch count per group (in first-seen order).
+/// Writes nothing unless every site matches and every write computes. Counts are per group, in
+/// first-seen order.
 pub fn apply(
     mem: &mut dyn Mem,
     module_base: u64,
@@ -171,7 +167,7 @@ pub fn apply(
     let mut counts: Vec<(String, usize)> = Vec::new();
     for (i, (p, b)) in writes.iter().enumerate() {
         if let Err(e) = mem.write(module_base + p.rva, b) {
-            // best-effort rollback of what was already written
+            // best-effort rollback
             for (q, _) in &writes[..i] {
                 let _ = mem.write(module_base + q.rva, &q.orig);
             }

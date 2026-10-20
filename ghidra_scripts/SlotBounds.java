@@ -1,9 +1,5 @@
-// Finds instruction-level patch candidates for raising MAX_PLAYERS.
-//
-// For every `IMUL r, r, <stride>` whose result feeds a memory operand with a displacement in
-// the player-slot window within the next few instructions, prints the nearby compares against
-// small player-count immediates (1, 2, 3) together with their conditional jump and raw bytes.
-// Also lists every instruction whose displacement is one of the fields after the slot array.
+// Finds MAX_PLAYERS patch candidates: compares against 1..3 near each `IMUL r, r, <stride>` that
+// feeds a slot-window displacement, plus every access to the fields after the slot array.
 //
 // args: <outfile> [stride=0x58] [slotLo=0x198] [slotHi=0x248] [tailOffsets=0x248+0x250+0x258]
 //
@@ -20,7 +16,7 @@ public class SlotBounds extends GhidraScript {
   Listing listing;
 
   long disp(Instruction in) {
-    // largest scalar in any memory operand, used as the displacement
+    // heuristic: the largest scalar in any memory operand
     long best = -1;
     for (int op = 0; op < in.getNumOperands(); op++) {
       if ((in.getOperandType(op) & OperandType.DYNAMIC) == 0) continue;
@@ -64,7 +60,6 @@ public class SlotBounds extends GhidraScript {
       if (!in.getMnemonicString().equals("IMUL")) continue;
       Object[] last = in.getOpObjects(in.getNumOperands() - 1);
       if (last.length != 1 || !(last[0] instanceof Scalar) || ((Scalar) last[0]).getUnsignedValue() != stride) continue;
-      // does a slot-window displacement follow?
       Instruction n = in;
       long hitDisp = -1;
       for (int k = 0; k < 8 && n != null; k++) {
@@ -78,7 +73,6 @@ public class SlotBounds extends GhidraScript {
       Function f = getFunctionContaining(in.getAddress());
       List<String> lines = hits.computeIfAbsent(f, k -> new ArrayList<>());
       lines.add("  access " + in.getAddress() + " " + in + "  -> " + n.getAddress() + " " + n);
-      // scan this function only for small compares near this access
       AddressSetView body = f == null ? null : f.getBody();
       Instruction p = in;
       for (int k = 0; k < 40; k++) {

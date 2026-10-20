@@ -1,5 +1,4 @@
-//! `log_events=1`: logs the names of the events the game posts (first occurrences with their
-//! arguments, then counts every 30 s). Fed by the post detours in `hooks.rs`; off by default.
+//! `log_events=1`: logs posted game events (first few with arguments, then counts); fed by `hooks.rs` detours.
 use crate::log;
 use crate::patch::Mem;
 use crate::win::ProcMem;
@@ -29,14 +28,14 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-/// A printable C string of 1-63 characters at the start of `bytes`.
+/// Printable C string of 1-63 chars.
 pub fn parse_name(bytes: &[u8]) -> Option<String> {
     let end = bytes.iter().position(|b| *b == 0)?;
     let s = &bytes[..end];
     (!s.is_empty() && s.len() <= MAX_NAME && s.iter().all(|b| (0x20..0x7f).contains(b))).then(|| String::from_utf8_lossy(s).into_owned())
 }
 
-/// The event name at `ptr` if it can be read without faulting.
+/// Reads without faulting.
 fn read_name(ptr: u64) -> Option<String> {
     if ptr < 0x1_0000 {
         return None;
@@ -45,7 +44,6 @@ fn read_name(ptr: u64) -> Option<String> {
     ProcMem.read(ptr, MAX_NAME + 1).or_else(|| ProcMem.read(ptr, to_page_end)).and_then(|b| parse_name(&b))
 }
 
-/// Names by count in the window, highest first (ties by name), at most `n`.
 pub fn top_counts(seen: &HashMap<String, (u64, u64)>, n: usize) -> Vec<(String, u64)> {
     let mut v: Vec<(String, u64)> = seen.iter().filter(|(_, (_, w))| *w > 0).map(|(k, (_, w))| (k.clone(), *w)).collect();
     v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -65,7 +63,7 @@ fn dump(s: &mut Stats) {
     s.last_dump = Instant::now();
 }
 
-/// Records one posted event. `actor` is the target of the targeted variant.
+/// `actor` is set for targeted posts.
 pub fn record(name: u64, a: u64, b: u64, actor: Option<u64>) {
     if !enabled() {
         return;
@@ -87,7 +85,7 @@ pub fn record(name: u64, a: u64, b: u64, actor: Option<u64>) {
     }
 }
 
-/// Per-frame call: flushes the counts when the window ended even if no event arrived.
+/// Call every frame, so counts flush even when no event arrives.
 pub fn tick() {
     if !enabled() {
         return;

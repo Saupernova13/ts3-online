@@ -1,24 +1,22 @@
-//! NPC sync (H6c): the host owns the movement of named actors. It samples their transforms, works out
-//! which ones really move and streams those (`Msg::Npcs`, unreliable); a client overrides the same
-//! actors, found by reference-name hash (FINDINGS 10), with the host's positions, smoothed.
+//! NPC sync (H6c): the host streams the transforms of named actors that move (`Msg::Npcs`, unreliable);
+//! clients find them by reference-name hash (FINDINGS 10) and follow, smoothed.
 use std::collections::{HashMap, HashSet};
 
-/// One actor's transform as sent: (reference-name hash, position, yaw).
+/// (reference-name hash, position, yaw)
 pub type Npc = (u32, [f32; 3], f32);
 
-/// The host samples the actors this often.
 pub const SAMPLE_MS: u64 = 66;
-/// An actor becomes a mover once it is this far (m) from where it was first seen in the level.
+/// An actor becomes a mover once this far (m) from where it was first seen in the level.
 pub const MOVER_DIST: f32 = 0.05;
-/// A mover is sent again once it moved this far (m) since it was last sent...
+/// A mover is resent once it moved this far (m) since its last send...
 pub const SEND_DIST: f32 = 0.02;
-/// ...or turned this much (radians, 2 degrees).
+/// ...or turned this much.
 pub const SEND_YAW: f32 = 2.0 * std::f32::consts::PI / 180.0;
 /// Every mover is sent at least this often, even when still.
 pub const RESEND_MS: u64 = 1000;
 /// Most entries one sample sends; the rest wait for the next one.
 pub const MAX_PER_SAMPLE: usize = 480;
-/// A client moves this fraction of the way to the host's position each frame.
+/// Fraction of the way to the host's position a client moves each frame.
 pub const FOLLOW_LERP: f32 = 0.3;
 /// Farther than this (m) from the host's position, a client snaps instead of gliding.
 pub const SNAP_DIST: f32 = 3.0;
@@ -50,7 +48,7 @@ struct Track {
     sent: Option<([f32; 3], f32, u64)>,
 }
 
-/// Host side: which sampled actors are movers and which of those are due to be sent.
+/// Host side: which sampled actors are movers and which are due to be sent.
 #[derive(Debug, Default)]
 pub struct Tracker {
     level: u32,
@@ -58,7 +56,6 @@ pub struct Tracker {
 }
 
 impl Tracker {
-    /// Follows the play level; a change forgets everything. True when it changed.
     pub fn set_level(&mut self, level: u32) -> bool {
         if self.level == level {
             return false;
@@ -68,9 +65,7 @@ impl Tracker {
         true
     }
 
-    /// Takes one sample of every candidate actor and returns the movers due to be sent, the ones that
-    /// moved most since their last send first (a still mover's refresh comes after them), at most
-    /// `MAX_PER_SAMPLE`. Actors missing from the sample are forgotten.
+    /// Returns the due movers, biggest change first. Actors missing from `seen` are forgotten.
     pub fn sample(&mut self, now_ms: u64, seen: &[Npc]) -> Vec<Npc> {
         let alive: HashSet<u32> = seen.iter().map(|s| s.0).collect();
         self.tracks.retain(|h, _| alive.contains(h));
@@ -109,7 +104,7 @@ impl Tracker {
     }
 }
 
-/// Client side: the latest host transform per actor hash for the current level.
+/// Client side: the latest host transform per actor.
 #[derive(Debug, Default)]
 pub struct Follower {
     level: u32,
@@ -117,7 +112,6 @@ pub struct Follower {
 }
 
 impl Follower {
-    /// Follows the play level; a change forgets everything. True when it changed.
     pub fn set_level(&mut self, level: u32) -> bool {
         if self.level == level {
             return false;
@@ -127,7 +121,6 @@ impl Follower {
         true
     }
 
-    /// Newer host transforms replace older ones; implausible numbers are ignored.
     pub fn merge(&mut self, entries: impl IntoIterator<Item = Npc>) {
         for (hash, pos, yaw) in entries {
             if plausible(pos, yaw) {
@@ -149,8 +142,6 @@ impl Follower {
     }
 }
 
-/// Where a client puts an actor this frame: a `FOLLOW_LERP` step toward the host's position, or the
-/// host's position itself when it is more than `SNAP_DIST` away.
 pub fn smooth_pos(cur: [f32; 3], target: [f32; 3]) -> [f32; 3] {
     if dist(cur, target) > SNAP_DIST {
         return target;
@@ -158,7 +149,6 @@ pub fn smooth_pos(cur: [f32; 3], target: [f32; 3]) -> [f32; 3] {
     [0, 1, 2].map(|i| cur[i] + (target[i] - cur[i]) * FOLLOW_LERP)
 }
 
-/// The yaw counterpart of `smooth_pos`, along the shortest way round.
 pub fn smooth_yaw(cur: f32, target: f32) -> f32 {
     cur + ang_delta(cur, target) * FOLLOW_LERP
 }
@@ -166,7 +156,7 @@ pub fn smooth_yaw(cur: f32, target: f32) -> f32 {
 #[cfg(windows)]
 pub use live::update;
 
-/// Game-thread glue: walks the actor manager and writes actor transforms.
+/// Game-thread glue.
 #[cfg(windows)]
 mod live {
     use super::*;
@@ -201,12 +191,11 @@ mod live {
         comp != 0 && rd_u64(comp + CARRIER) != 0
     }
 
-    /// The four player slots' avatars (0 where empty).
     unsafe fn avatars(mgr: u64) -> [u64; 4] {
         [0, 1, 2, 3].map(|i| slot_avatar(mgr, i))
     }
 
-    /// Per-frame NPC sync on the game thread; `level` is the hash of the current play level (0 outside one).
+    /// Game thread, per frame; `level` is the play level hash (0 outside one).
     pub unsafe fn update(level: u32) {
         if !net::active() {
             return;
@@ -297,7 +286,7 @@ mod tests {
         for ms in (0..5000).step_by(66) {
             assert!(t.sample(ms, &[at(A, 1.0), at(B, 2.0)]).is_empty());
         }
-        // small jitter under 5 cm from the first sighting is not movement
+        // jitter under 5 cm from the first sighting is not movement
         assert!(t.sample(5000, &[at(A, 1.04)]).is_empty());
         assert_eq!(t.movers(), 0);
     }
@@ -309,7 +298,7 @@ mod tests {
         let out = t.sample(66, &[at(A, 0.06)]);
         assert_eq!(out, vec![at(A, 0.06)]);
         assert_eq!(t.movers(), 1);
-        // it stays a mover after coming back to where it started
+        // it stays a mover after returning to where it started
         assert_eq!(t.sample(132, &[at(A, 0.0)]).len(), 1);
     }
 
@@ -355,13 +344,12 @@ mod tests {
         let n = MAX_PER_SAMPLE as u32 + 20;
         let base: Vec<Npc> = (0..n).map(|i| at(i, 0.0)).collect();
         t.sample(0, &base);
-        // actor i moves 0.1 + i/1000 m: higher i moved more
         let moved: Vec<Npc> = (0..n).map(|i| at(i, 0.1 + i as f32 / 1000.0)).collect();
         let out = t.sample(66, &moved);
         assert_eq!(out.len(), MAX_PER_SAMPLE);
         assert_eq!(out[0].0, n - 1);
         assert!(out.windows(2).all(|w| w[0].0 > w[1].0));
-        // the 20 smallest were not marked sent, so they come next time
+        // the 20 deferred ones were not marked sent, so they come next
         let next = t.sample(132, &moved);
         assert_eq!(next.len(), 20);
         assert!(next.iter().all(|e| e.0 < 20));

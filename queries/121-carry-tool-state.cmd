@@ -1,4 +1,4 @@
-# Player state sync: forcing a carry (PlayerPerception) and the current tool (SelectNewTool / ToolChanged)
+# Player state sync: forcing a carry (PlayerPerception), current tool (SelectNewTool / ToolChanged)
 maxlen 5000
 func 140056b30
 str SelectNewTool

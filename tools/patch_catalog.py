@@ -2,8 +2,7 @@
 
     python -I tools/patch_catalog.py [--doc loader/patches.json] [--out docs/PATCHES.md]
 
-tools/gen_patches.py calls this after writing the patch document, so the catalogue always matches
-what the loader applies. Group descriptions and test status live in GROUPS below.
+Also run by tools/gen_patches.py. Group descriptions and test status live in GROUPS.
 """
 import argparse
 import json

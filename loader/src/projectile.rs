@@ -1,12 +1,10 @@
-//! Thrown objects: the thrower's copy owns the object's flight. A throw spawns a physics object on
-//! every copy (the partner's replayed throw does it there), and after a bounce or two they drift
-//! apart; so the owner sends its object's rigid-body position and velocity with its state, and the
-//! other copies write them into the object their partner threw (FINDINGS 10).
+//! Thrown objects: each copy spawns its own and they drift apart after a bounce, so the thrower's
+//! copy sends its object's body position and velocity and the others write them into theirs (FINDINGS 10).
 use crate::net::proto::Proj;
 
 /// An object is followed this long after its throw.
 pub const FLY_MS: u64 = 6000;
-/// A partner's throw on this copy and the owner's report of one are paired within this window.
+/// Window for pairing a partner's throw here with its owner's report.
 pub const LINK_MS: u64 = 1500;
 
 /// The local player's latest throw.
@@ -17,14 +15,13 @@ pub struct Owner {
 }
 
 impl Owner {
-    /// The local player threw `actor` at `now_ms`; returns its seq (1..=255).
+    /// Returns the throw's seq, 1..=255.
     pub fn throw(&mut self, actor: u64, now_ms: u64) -> u8 {
         self.seq = if self.seq == 255 { 1 } else { self.seq + 1 };
         self.current = Some((actor, self.seq, now_ms));
         self.seq
     }
 
-    /// The object in flight and its seq, while it is younger than `FLY_MS`.
     pub fn current(&mut self, now_ms: u64) -> Option<(u64, u8)> {
         match self.current {
             Some((a, s, t)) if now_ms.saturating_sub(t) < FLY_MS => Some((a, s)),
@@ -35,13 +32,13 @@ impl Owner {
         }
     }
 
-    /// The object is gone (despawned, or no physics body to read).
+    /// The object despawned or has no physics body.
     pub fn end(&mut self) {
         self.current = None;
     }
 }
 
-/// One partner on this copy: its latest local throw and which owner seq it was paired with.
+/// Pairs a partner's throw here with its owner's seq.
 #[derive(Debug, Default)]
 pub struct Link {
     recent: Option<(u64, u64)>,
@@ -49,13 +46,11 @@ pub struct Link {
 }
 
 impl Link {
-    /// The partner's avatar threw `actor` on this copy.
     pub fn local_throw(&mut self, actor: u64, now_ms: u64) {
         self.recent = Some((actor, now_ms));
     }
 
-    /// The local object that stands for the owner's object `seq`, pairing it with this copy's
-    /// latest throw by the partner if that was recent enough.
+    /// Local object for the owner's `seq`, paired with the partner's throw here if within `LINK_MS`.
     pub fn resolve(&mut self, seq: u8, now_ms: u64) -> Option<u64> {
         if seq == 0 {
             self.linked = None;
@@ -79,7 +74,7 @@ impl Link {
     }
 }
 
-/// The wire form of an owned object (`seq` 0: none).
+/// `seq` 0 means no object.
 pub fn proj(seq: u8, pos: [f32; 3], vel: [f32; 3]) -> Proj {
     Proj { seq, pos, vel }
 }
@@ -98,14 +93,14 @@ mod live {
     use std::sync::{Mutex, OnceLock};
     use std::time::Instant;
 
-    /// The physics body: `[[actor+0x20]+0x78]`; origin at `+0x60` (and its interpolation copy at
-    /// `+0xa0`), velocity at `+0x160` (and `+0xb0`). The actor's own `+0x100` is a per-frame copy.
+    /// Body at `[[actor+0x20]+0x78]`: origin `+0x60` (interpolation copy `+0xa0`), velocity `+0x160`
+    /// (and `+0xb0`). Actor `+0x100` is a per-frame copy of its position.
     const BODY_A: u64 = 0x20;
     const BODY_B: u64 = 0x78;
     const ORIGIN: [u64; 2] = [0x60, 0xa0];
     const VELOCITY: [u64; 2] = [0x160, 0xb0];
     const COPY: u64 = 0x100;
-    /// A body whose origin is farther than this from the actor's copy is not the one we know.
+    /// A body farther than this from the actor's copy is not the actor's.
     const SAME_PLACE: f32 = 2.0;
 
     struct State {
@@ -132,7 +127,6 @@ mod live {
         Some([f(0), f(1), f(2)])
     }
 
-    /// The actor's physics body, checked against the actor's own copy of its position.
     fn body(actor: u64) -> Option<u64> {
         let body = read_u64(read_u64(actor + BODY_A)? + BODY_B)?;
         let (origin, copy) = (read_vec(body + ORIGIN[0])?, read_vec(actor + COPY)?);
@@ -145,7 +139,7 @@ mod live {
         name >= 0x1_0000 && N.iter().enumerate().all(|(i, c)| rd_u8(name + i as u64) == *c)
     }
 
-    /// Detour hook (any thread): remembers every `StartThrow` (b = thrower, actor = thrown object).
+    /// Detour hook, any thread. `StartThrow`: `b` is the thrower, `actor` the thrown object.
     pub unsafe fn on_post(name: u64, b: u64, actor: u64) {
         if b != 0 && actor != 0 && is_start_throw(name) {
             if let Ok(mut q) = THROWS.lock() {
@@ -156,9 +150,7 @@ mod live {
         }
     }
 
-    /// Per frame on the game thread. `me` is the local avatar's actor id, `partners` maps partner
-    /// avatar actor ids to player ids, `players` lists every slot avatar id (thrown players are not
-    /// objects). Returns the local object in flight for the outgoing state.
+    /// Per frame on the game thread. A thrown player (`players`: slot avatar ids) is not an object.
     pub unsafe fn update(me: u64, partners: &[(u64, u8)], players: &[u64]) -> Proj {
         let now = now_ms();
         let Ok(mut guard) = STATE.lock() else { return Proj::default() };
@@ -187,7 +179,7 @@ mod live {
         }
     }
 
-    /// Makes this copy's object thrown by partner `id` follow the owner's report.
+    /// Writes the owner's report into the object partner `id` threw here.
     pub unsafe fn follow(id: u8, report: Proj) {
         let now = now_ms();
         let Ok(mut guard) = STATE.lock() else { return };

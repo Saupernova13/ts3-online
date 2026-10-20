@@ -1,21 +1,20 @@
-//! Shared wallets (H6a): the host's gold and imagination points are the truth; a client forwards
-//! what it spends with a sequence number until the host acknowledges it. Pickups are not sent:
-//! both worlds see them (the partner avatar follows its owner), and the host's value wins.
+//! Shared wallets (H6a): the host's gold and imagination points are authoritative; clients resend
+//! spends by seq until acked. Pickups are not sent: both worlds see them and the host's value wins.
 use std::collections::HashMap;
 
-/// The synced stats, in wire order (`Wallet.values`, `Spend` indexes).
+/// Synced stats, in wire order (`Wallet.values` and `Spend` index into it).
 pub const WALLETS: [&str; 2] = ["Stat_GOLD_COLLECTED", "Stat_IMAGINATION_POINTS_COLLECTED"];
 
-/// Largest single spend the host applies; anything bigger is dropped (but acked).
+/// Larger single spends are dropped (but acked).
 pub const MAX_SPEND: i32 = 1_000_000;
 
-/// A spend as sent: (seq, wallet index, negative delta).
+/// (seq, wallet index, negative delta).
 pub type Spend = (u32, u8, i32);
 
-/// Client side: turns local drops into pending spends and the host's value into what to show.
+/// Client side: local drops become pending spends until the host acks them.
 #[derive(Debug)]
 pub struct ClientWallet {
-    /// the last value we know the local counter holds, per wallet
+    /// last known local counter value, per wallet
     applied: Vec<Option<i32>>,
     pending: Vec<Spend>,
     next_seq: u32,
@@ -32,9 +31,8 @@ impl ClientWallet {
         ClientWallet { applied: Vec::new(), pending: Vec::new(), next_seq: 1 }
     }
 
-    /// Records drops of the local counters as spends. Increases are not sent (the host's world
-    /// sees the same pickups and its value overwrites ours) but are followed, so a later drop is
-    /// measured from the counter as it stood.
+    /// Records counter drops as spends. Increases are not sent (the host sees the same pickups) but
+    /// are tracked, so a later drop is measured from the raised counter.
     pub fn observe(&mut self, current: &[i32]) {
         if self.applied.len() < current.len() {
             self.applied.resize(current.len(), None);
@@ -48,8 +46,7 @@ impl ClientWallet {
         }
     }
 
-    /// The host's values and acknowledged seq: the values to show, which keep still-pending spends
-    /// on top of a stale host value.
+    /// Values to show: the host's values with still-unacked spends applied on top.
     pub fn on_host(&mut self, values: &[i32], acked: u32) -> Vec<i32> {
         self.pending.retain(|&(seq, _, _)| seq > acked);
         if self.applied.len() < values.len() {
@@ -70,21 +67,21 @@ impl ClientWallet {
         self.pending.clone()
     }
 
-    /// Forgets the known counter values (a level change reloads the counters); pending spends stay.
+    /// For a level change, which reloads the counters; pending spends stay.
     pub fn reset_applied(&mut self) {
         self.applied.iter_mut().for_each(|a| *a = None);
     }
 }
 
-/// Host side: which spends of each client were already applied.
+/// Host side: highest applied seq per client.
 #[derive(Debug, Default)]
 pub struct HostWallet {
     last: HashMap<u8, u32>,
 }
 
 impl HostWallet {
-    /// The (wallet index, delta) to apply for the spends of `client` not seen before, in seq order.
-    /// Only spending is forwarded: positive deltas, unknown indexes and deltas below `-MAX_SPEND` are skipped (but acked).
+    /// (wallet index, delta) of `client`'s unseen spends, in seq order. Positive deltas, unknown
+    /// indexes and deltas below `-MAX_SPEND` are skipped but acked.
     pub fn accept(&mut self, client: u8, spends: &[Spend]) -> Vec<(u8, i32)> {
         let last = self.last.entry(client).or_insert(0);
         let mut fresh: Vec<Spend> = spends.iter().copied().filter(|s| s.0 > *last).collect();
@@ -100,7 +97,6 @@ impl HostWallet {
         out
     }
 
-    /// Highest seq applied from `client`.
     pub fn acked(&self, client: u8) -> u32 {
         self.last.get(&client).copied().unwrap_or(0)
     }
@@ -113,7 +109,7 @@ impl HostWallet {
 #[cfg(windows)]
 pub use live::update;
 
-/// Game-thread glue: reads and writes the stats table.
+/// Game-thread glue to the stats table.
 #[cfg(windows)]
 mod live {
     use super::{ClientWallet, WALLETS};
@@ -123,12 +119,12 @@ mod live {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
-    /// A client resends its pending spends at most this often.
+    /// Client resend interval for pending spends.
     const SEND_EVERY: Duration = Duration::from_millis(100);
 
     struct Live {
         level: u32,
-        /// stat index per wallet, -1 when the game has no such stat
+        /// -1 when the game has no such stat
         idx: [i32; WALLETS.len()],
         client: ClientWallet,
         last_send: Option<Instant>,
@@ -145,7 +141,7 @@ mod live {
         idx
     }
 
-    /// Per-frame wallet sync on the game thread; `level` is the hash of the current play level (0 outside one).
+    /// Per frame on the game thread; `level` is the play level's hash, 0 outside one.
     pub unsafe fn update(level: u32) {
         let stats = global(STATS_PTR);
         if level == 0 || stats == 0 || !net::active() {
@@ -161,7 +157,7 @@ mod live {
         }
         let read = |idx: &[i32]| -> Vec<i32> { idx.iter().map(|&i| if i < 0 { 0 } else { rd_i32(stat_entry(stats, i) + STAT_VALUE) }).collect() };
         if !net::is_client() {
-            // apply first, then publish: the ack goes out with a value that already has the spends
+            // apply before publishing, so an ack never goes out with a value missing its spends
             for (client, deltas, upto) in net::take_spends() {
                 for (idx, delta) in deltas {
                     let i = live.idx.get(idx as usize).copied().unwrap_or(-1);

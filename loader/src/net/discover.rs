@@ -9,14 +9,13 @@ use std::time::{Duration, Instant};
 const TAILSCALE_TIMEOUT: Duration = Duration::from_secs(4);
 const PROBE_EVERY: Duration = Duration::from_millis(500);
 
-/// Our own tailnet address and the online peers' addresses from `tailscale status --json`.
+/// From `tailscale status --json`: own address and online peers.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Tailnet {
     pub own: Option<Ipv4Addr>,
     pub peers: Vec<Ipv4Addr>,
 }
 
-/// First IPv4 address in a node's `TailscaleIPs`.
 fn first_v4(node: &Value) -> Option<Ipv4Addr> {
     node.get("TailscaleIPs")?.as_array()?.iter().find_map(|a| a.as_str()?.parse::<Ipv4Addr>().ok())
 }
@@ -33,7 +32,7 @@ pub fn parse_tailscale(json: &str) -> Option<Tailnet> {
     Some(Tailnet { own, peers })
 }
 
-/// Runs `program status --json` without a window; None if it cannot start, Some(None) if it failed or timed out.
+/// None if it cannot start; Some(None) if it failed or timed out.
 fn run_tailscale(program: &std::ffi::OsStr) -> Option<Option<String>> {
     let mut cmd = Command::new(program);
     cmd.args(["status", "--json"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
@@ -63,7 +62,6 @@ fn run_tailscale(program: &std::ffi::OsStr) -> Option<Option<String>> {
     }
 }
 
-/// `tailscale status --json` from PATH, else from `%ProgramFiles%\Tailscale`.
 pub fn tailscale_status() -> Option<String> {
     let mut candidates = vec![std::ffi::OsString::from("tailscale")];
     if let Some(pf) = std::env::var_os("ProgramFiles") {
@@ -78,12 +76,11 @@ pub fn tailscale_status() -> Option<String> {
     None
 }
 
-/// First IPv4 address of a host name or address at `port`.
 pub fn resolve_v4(host: &str, port: u16) -> Option<SocketAddr> {
     (host, port).to_socket_addrs().ok()?.find(SocketAddr::is_ipv4)
 }
 
-/// Whether the larger-addressed of two hosts should join the other: `own` and `other` are (IPv4, port).
+/// Of two hosts, the higher (IPv4, port) yields and joins the other.
 pub fn should_yield(own: (Ipv4Addr, u16), other: (Ipv4Addr, u16)) -> bool {
     (u32::from(own.0), own.1) > (u32::from(other.0), other.1)
 }
@@ -105,15 +102,13 @@ pub fn send_probes(sock: &UdpSocket, peers: &[SocketAddr], build: u64) {
     }
 }
 
-/// A host that answered a probe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
     pub addr: SocketAddr,
     pub name: String,
 }
 
-/// Probes `peers` every 500 ms for `duration`; the first reply from a host with our build wins.
-/// Probes from others are answered meanwhile (we are not a host yet). Replies from `own` are ignored.
+/// The first host with our build wins; probes from others are answered as a non-host meanwhile.
 pub fn find_host(sock: &UdpSocket, peers: &[SocketAddr], build: u64, name: &str, own: SocketAddr, duration: Duration) -> Option<Found> {
     let start = Instant::now();
     let mut next = Duration::ZERO;
@@ -142,7 +137,7 @@ pub fn find_host(sock: &UdpSocket, peers: &[SocketAddr], build: u64, name: &str,
 mod tests {
     use super::*;
 
-    /// Trimmed from a real `tailscale status --json`: Self, an online and an offline peer, IPv6 first/only entries.
+    /// Trimmed from a real `tailscale status --json`.
     const SAMPLE: &str = r#"{
       "Version": "1.78.1",
       "BackendState": "Running",

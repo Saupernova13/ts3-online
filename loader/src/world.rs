@@ -1,10 +1,8 @@
 //! World events (H6b): whitelisted actor events (a crate breaking) are replayed in the other copies
-//! by the actor's reference name, because actor ids differ between copies (FINDINGS 10). The host
-//! keeps the authoritative list for its level (`net::session`); this module holds the names, the
-//! validation, the pure apply/retry state and the game-thread glue.
+//! by reference name, since actor ids differ between copies (FINDINGS 10). The host's list lives in `net::session`.
 use std::collections::HashSet;
 
-/// Events that are replicated, and only when posted with a=0 and b=0. Add more once verified in game.
+/// Replicated only when posted with a=0 and b=0. Add more only once verified in game.
 pub const SYNCED: &[&str] = &["ExploderDestroy"];
 
 /// Longest reference name on the wire.
@@ -18,43 +16,35 @@ pub const GIVE_UP_MS: u64 = 10_000;
 /// Replays wait this long after the local player appears in the level.
 pub const SETTLE_MS: u64 = 3_000;
 
-/// Most captured events waiting for the game thread.
 const MAX_CAPTURED: usize = 256;
 
-/// `event` is on the whitelist.
 pub fn synced(event: &str) -> bool {
     SYNCED.contains(&event)
 }
 
-/// 1..=`MAX_REF` bytes of `[A-Za-z0-9_:/.-]`.
 pub fn valid_ref(name: &str) -> bool {
     !name.is_empty() && name.len() <= MAX_REF && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b':' | b'/' | b'.' | b'-'))
 }
 
-/// A whitelisted event on an actor with a valid reference name.
 pub fn valid_entry(event: &str, name: &str) -> bool {
     synced(event) && valid_ref(name)
 }
 
-/// The reference name at the start of `bytes` (NUL-terminated), if it is a valid one.
 pub fn parse_ref(bytes: &[u8]) -> Option<String> {
     let end = bytes.iter().position(|b| *b == 0)?;
     std::str::from_utf8(&bytes[..end]).ok().filter(|s| valid_ref(s)).map(String::from)
 }
 
-/// Whether the `n`th occurrence of a repeating log line should be written: the first few, then every 25th.
 pub fn log_nth(n: u32) -> bool {
     n < 30 || n.is_multiple_of(25)
 }
 
-/// Queues a captured (event, reference name), without duplicates and up to a cap.
 fn push_capture(q: &mut Vec<(String, String)>, event: &str, name: &str) {
     if q.len() < MAX_CAPTURED && !q.iter().any(|(e, n)| e == event && n == name) {
         q.push((event.to_string(), name.to_string()));
     }
 }
 
-/// What happened to a pending entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Applied(String, String),
@@ -68,18 +58,17 @@ struct Pending {
     since: u64,
 }
 
-/// Which entries the local game already has, and which are still waiting for their actor to exist.
+/// Entries the local game already has, and those waiting for their actor to exist.
 #[derive(Debug, Default)]
 pub struct Applier {
     level: u32,
     applied: HashSet<(String, String)>,
     pending: Vec<Pending>,
-    /// when replays may start: `SETTLE_MS` after the local player appeared (None while loading)
+    /// when replays may start (None while loading)
     ready_at: Option<u64>,
 }
 
 impl Applier {
-    /// Follows the local play level; a change forgets everything. True when it changed.
     pub fn set_level(&mut self, level: u32) -> bool {
         if self.level == level {
             return false;
@@ -91,8 +80,8 @@ impl Applier {
         true
     }
 
-    /// Whether the local player is in the level. Replays wait until it has been for `SETTLE_MS`:
-    /// the level name changes when the switch is posted, and a post during the load is lost.
+    /// Replays wait `SETTLE_MS` after the player appears: the level name changes when the switch is
+    /// posted, and a post during the load is lost.
     pub fn set_ready(&mut self, ready: bool, now_ms: u64) {
         match (ready, self.ready_at) {
             (false, _) => self.ready_at = None,
@@ -101,13 +90,11 @@ impl Applier {
         }
     }
 
-    /// The local game has this event already (it produced it, or it was replayed).
     pub fn mark_applied(&mut self, event: &str, name: &str) {
         self.pending.retain(|p| !(p.event == event && p.name == name));
         self.applied.insert((event.to_string(), name.to_string()));
     }
 
-    /// Queues an entry of `level` for replay; false when it is for another level, already applied or already queued.
     pub fn enqueue(&mut self, level: u32, event: &str, name: &str, now_ms: u64) -> bool {
         if level == 0 || level != self.level || !valid_entry(event, name) {
             return false;
@@ -119,8 +106,7 @@ impl Applier {
         true
     }
 
-    /// Tries every queued entry with `try_apply(event, name)` (true when the game took it). Entries whose
-    /// actor stays missing past `GIVE_UP_MS` are dropped and counted as applied, so they are never retried.
+    /// Entries still missing after `GIVE_UP_MS` count as applied, so they are never retried.
     pub fn process(&mut self, now_ms: u64, mut try_apply: impl FnMut(&str, &str) -> bool) -> Vec<Outcome> {
         let mut out = Vec::new();
         let Some(ready) = self.ready_at.filter(|t| now_ms >= *t) else { return out };
@@ -161,7 +147,7 @@ mod live {
 
     static CAPTURED: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
     static LIVE: Mutex<Option<Live>> = Mutex::new(None);
-    /// leaked C strings of `SYNCED`, made once so a replay never allocates for the game
+    /// leaked C strings of `SYNCED`, so a replay never allocates
     static EVENT_CSTRS: OnceLock<Vec<u64>> = OnceLock::new();
     static START: OnceLock<Instant> = OnceLock::new();
 
@@ -175,7 +161,7 @@ mod live {
     const ACTOR_ID: u64 = 0x38;
     const ACTOR_REF: u64 = 0x150;
 
-    /// The event name at `name` is `SYNCED[i]`: compared in place, stopping at the first differing byte.
+    /// Compared in place, stopping at the first differing byte.
     unsafe fn synced_index(name: u64) -> Option<usize> {
         if name < 0x1_0000 {
             return None;
@@ -183,7 +169,7 @@ mod live {
         SYNCED.iter().position(|s| s.bytes().enumerate().all(|(i, c)| rd_u8(name + i as u64) == c) && rd_u8(name + s.len() as u64) == 0)
     }
 
-    /// The reference name of `actor`, read without faulting.
+    /// Reads without faulting.
     fn read_ref(actor: u64) -> Option<String> {
         let ptr = u64::from_le_bytes(ProcMem.read(actor + ACTOR_REF, 8)?.try_into().ok()?);
         if ptr < 0x1_0000 {
@@ -193,7 +179,7 @@ mod live {
         ProcMem.read(ptr, MAX_REF + 1).or_else(|| ProcMem.read(ptr, to_page_end.min(MAX_REF + 1))).and_then(|b| parse_ref(&b))
     }
 
-    /// Detour hook, any thread: remembers a whitelisted event (a=0, b=0) on an actor with a usable reference name.
+    /// Detour hook, any thread.
     pub unsafe fn on_post(name: u64, a: u64, b: u64, actor_id: u64) {
         if a != 0 || b != 0 || actor_id == 0 {
             return;
@@ -218,7 +204,6 @@ mod live {
         EVENT_CSTRS.get_or_init(|| SYNCED.iter().map(|s| leak_cstr(s)).collect()).get(i).copied()
     }
 
-    /// Posts `event` to the local actor named `name`; false when it does not exist (yet).
     unsafe fn apply_one(event: &str, name: &str) -> bool {
         let (mgr, Some(ev), Ok(cname)) = (global(ACTOR_MGR), event_cstr(event), CString::new(name)) else { return false };
         if mgr == 0 {
@@ -235,12 +220,12 @@ mod live {
         hooks::call_post_actor(global(EVENTS), ev, 0, 0, id).is_some()
     }
 
-    /// `MExploder+0xdc`: bit 0 exploded, bit 1 break requested (the `Explode` handler at 0x140656710
-    /// runs the break when the two read 2, FINDINGS 10).
+    /// `MExploder+0xdc`: bit 0 exploded, bit 1 break requested; `Explode` (0x140656710) breaks when
+    /// they read 2 (FINDINGS 10).
     const EXPLODER_FLAGS: u64 = 0xdc;
 
-    /// Breaks the actor's exploder the way its `Explode` handler does (the `ExploderDestroy` post is
-    /// only the notice that follows). True once it is broken, also when it already was.
+    /// Breaks the exploder as `Explode` does; the `ExploderDestroy` post is only the notice that
+    /// follows. True once broken, also when it already was.
     unsafe fn explode(actor: u64) -> bool {
         let comp = component(actor, c"MExploder".as_ptr());
         if comp < 0x1_0000 {
@@ -254,7 +239,7 @@ mod live {
         rd_u8(comp + EXPLODER_FLAGS) & 1 != 0
     }
 
-    /// Per-frame world sync on the game thread; `level` is the hash of the current play level (0 outside one).
+    /// Game thread, per frame; `level` is the play level hash (0 outside one).
     pub unsafe fn update(level: u32) {
         if !net::active() {
             return;
@@ -370,7 +355,7 @@ mod tests {
         a.set_ready(true, 60_000);
         assert!(a.process(60_000 + SETTLE_MS - 1, |_, _| true).is_empty());
         a.set_ready(true, 61_000); // staying ready does not restart the wait
-        // the give-up clock starts when replays may start, not when the entry arrived
+        // the give-up clock starts when replays may, not when the entry arrived
         assert!(a.process(60_000 + SETTLE_MS, |_, _| false).is_empty());
         assert_eq!(a.process(60_000 + SETTLE_MS + 1, |_, _| true).len(), 1);
         a.set_ready(false, 70_000);

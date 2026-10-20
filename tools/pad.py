@@ -5,15 +5,14 @@
     work/venv/Scripts/python tools/pad.py --pads 4 --follow cmds.txt
         keeps the pads connected and runs lines as they are appended to cmds.txt; `quit` ends it
 
-The pads exist until the script ends. Script lines (pad numbers are 1-based, in creation order):
+Pads exist until the script ends. Script lines (pads are 1-based, in creation order):
     wait <ms>
     press <pad> <BUTTON> [ms=120]        tap a button (A B X Y START BACK LB RB LS RS UP DOWN LEFT RIGHT GUIDE)
     hold <pad> <BUTTON> on|off
     stick <pad> L|R <x> <y> [ms]         x/y in -1..1; with ms the stick returns to centre afterwards
     trigger <pad> L|R <0..1>
     # comment
-Note: ViGEmBus is required (already installed here). Installing vgamepad with pip launches the
-ViGEmBus setup; cancel it if ViGEmBus is already present.
+Needs ViGEmBus; `pip install vgamepad` launches its setup, cancel that if it is already installed.
 """
 import argparse
 import sys

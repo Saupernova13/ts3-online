@@ -1,5 +1,4 @@
-# Host/client feasibility: single-instance mutex, window class + WndProc (focus handling),
-# Steam relaunch, and the actor set-transform used by the placing handler
+# Host/client feasibility: instance mutex, WndProc focus, Steam relaunch, actor set-transform
 maxlen 7000
 symonly CreateMutexA
 symonly RegisterClassA

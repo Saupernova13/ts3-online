@@ -17,7 +17,6 @@ impl Rng {
         self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
     }
 
-    /// Uniform in `0..n` (0 when `n` is 0).
     pub fn below(&mut self, n: u64) -> u64 {
         if n == 0 {
             0
@@ -48,7 +47,6 @@ impl SimQueue {
         self.held.push((now_us + delay, to, bytes));
     }
 
-    /// Datagrams whose time has come, in release order.
     pub fn due(&mut self, now_us: u64) -> Vec<(SocketAddr, Vec<u8>)> {
         let mut out: Vec<(u64, SocketAddr, Vec<u8>)> = Vec::new();
         let mut i = 0;

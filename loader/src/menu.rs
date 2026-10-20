@@ -1,6 +1,5 @@
-//! The connect menu (`net=menu`): a small Win32 window on its own thread that lists the games found
-//! on the tailnet and LAN and lets the player join one or host. The choice starts the net session.
-//! The logic lives in `menu_model`; this file is the window, the discovery socket and the glue.
+//! The connect menu (`net=menu`): a Win32 window on its own thread to join a game or host.
+//! The logic lives in `menu_model`.
 use crate::config::{Net, NetKey};
 use crate::menu_model::{self as model, Choice, Table, Verdict};
 use crate::net::proto::{self, DecodeError, Msg};
@@ -49,15 +48,14 @@ const ID_JOIN: i32 = 105;
 const ID_HOST: i32 = 106;
 const CLIENT_W: i32 = 400;
 const CLIENT_H: i32 = 400;
-/// Where the "This PC" line looks for the LAN address (nothing is sent there).
+/// Route target for finding the LAN address; nothing is sent there.
 const ROUTE_PROBE: ([u8; 4], u16) = ([8, 8, 8, 8], 53);
 
-/// What `menu::start` needs from `attach`.
 pub struct Init {
-    /// the ini the config came from, to save the choices into
+    /// the config's ini, where the choices are saved
     pub ini: Option<PathBuf>,
     pub opts: net::Options,
-    /// `menu_last` and the config's own values, to see what changed
+    /// the ini's `menu_last`
     pub last: String,
 }
 
@@ -67,7 +65,7 @@ struct Picked {
     key: String,
 }
 
-/// Opens the menu on its own thread and returns at once. The net session starts when the player chooses.
+/// Returns at once; the net session starts when the player chooses.
 pub fn start(init: Init) {
     let headers = crate::win::ProcMem.read_headers(crate::win::main_module_base());
     let Some(build) = net::build_id(&headers) else {
@@ -130,30 +128,29 @@ fn save_settings(path: &std::path::Path, changes: &[(&'static str, String)]) {
 
 // ---- discovery ----
 
-/// Everything the timer needs; no window calls in here.
+/// Timer state; no window calls in here.
 struct App {
     sock: UdpSocket,
     build: u64,
     port: u16,
     peers: Vec<String>,
     table: Table,
-    /// tailnet peers and `net_peers` resolved by the background thread
+    /// tailnet peers and `net_peers`, resolved by the background thread
     extra: Arc<Mutex<Vec<SocketAddr>>>,
     busy: Arc<AtomicBool>,
     began: Instant,
     next_probe: u64,
     next_tailnet: u64,
-    /// the list as shown, to leave the listbox alone when nothing changed
+    /// the list as shown, so an unchanged list leaves the listbox alone
     shown: Vec<(SocketAddr, String)>,
     status: String,
-    /// a message the player must see (kept until the next action)
+    /// shown instead of the status until the next action
     notice: Option<String>,
-    /// this PC's addresses as the "This PC" line, found by the background thread
+    /// the "This PC" line, from the background thread
     own: Arc<Mutex<Option<String>>>,
     own_shown: Option<String>,
-    /// the Join being checked
     pending: Option<Pending>,
-    /// a game that did not answer: joining it again goes ahead without the check
+    /// a game that did not answer; joining it again skips the check
     retry: Option<String>,
 }
 
@@ -205,7 +202,7 @@ impl App {
 
     fn drain(&mut self, now: u64) {
         let mut buf = [0u8; 1500];
-        // an ICMP "port unreachable" from a dead target shows up as a receive error on Windows: skip those
+        // Windows reports ICMP port unreachable from a dead target as a receive error: skip it
         for _ in 0..64 {
             match self.sock.recv_from(&mut buf) {
                 Ok((n, from)) => self.heard(from, &buf[..n], now),
@@ -243,7 +240,6 @@ impl App {
         }
     }
 
-    /// Starts checking a Join of `choice` (whose address is `text`) with password `key`.
     fn check(&mut self, choice: Choice, text: String, addr: SocketAddr, key: &str) {
         let now = self.began.elapsed().as_millis() as u64;
         let nonce = (self.began.elapsed().as_nanos() as u64) ^ (u64::from(std::process::id()) << 32);
@@ -251,7 +247,6 @@ impl App {
         self.pending = Some(Pending { choice, text, addr, key, nonce, next_send: now, check: model::Check { started_ms: now, ..model::Check::default() } });
     }
 
-    /// Sends the pending check when due and decides it.
     fn poll_check(&mut self, now: u64) -> Option<Choice> {
         let p = self.pending.as_mut()?;
         if now >= p.next_send {
@@ -384,7 +379,6 @@ fn set_text(h: HWND, s: &str) {
     unsafe { SetWindowTextW(h, wide(OsStr::new(s)).as_ptr()) };
 }
 
-/// The address of the selected list entry, if any.
 fn selected() -> Option<SocketAddr> {
     let list = UI.with(Cell::get).list;
     let i = unsafe { SendMessageW(list, LB_GETCURSEL, 0, 0) };
@@ -447,8 +441,8 @@ fn finish(hwnd: HWND, choice: Choice) {
     unsafe { DestroyWindow(hwnd) };
 }
 
-/// Checks that the host of `choice` answers and takes our password, then joins it (from the
-/// timer). A game that did not answer last time is joined at once.
+/// Joins once the host answers and takes the password (decided in the timer); a game that did not
+/// answer last time is joined at once.
 fn try_join(hwnd: HWND, choice: Choice) {
     clear_notice();
     let key = text_of(UI.with(Cell::get).key);
@@ -482,7 +476,6 @@ fn click_join(hwnd: HWND) {
     }
 }
 
-/// Enter pressed with `focus` (the control that had it) focused.
 fn on_enter(hwnd: HWND, focus: HWND) {
     let ui = UI.with(Cell::get);
     if focus == ui.host {
@@ -550,7 +543,6 @@ unsafe fn child(parent: HWND, class: &str, text: &str, style: u32, ex: u32, rect
     )
 }
 
-/// Creates the window, runs its message loop until the player chooses, returns the choice.
 unsafe fn show(opts: &net::Options, last: &str, build: u64) -> Option<Picked> {
     let app = match App::new(opts, build) {
         Ok(a) => a,
@@ -609,7 +601,6 @@ unsafe fn show(opts: &net::Options, last: &str, build: u64) -> Option<Picked> {
     SendMessageW(key, EM_SETLIMITTEXT, crate::config::MAX_KEY, 0);
     SendMessageW(addr, EM_SETLIMITTEXT, 128, 0);
 
-    // Segoe UI on every control; the stock GUI font if it is missing
     let mut font: HGDIOBJ = CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, wide(OsStr::new("Segoe UI")).as_ptr());
     let own_font = !font.is_null();
     if !own_font {
@@ -623,7 +614,7 @@ unsafe fn show(opts: &net::Options, last: &str, build: u64) -> Option<Picked> {
 
     UI.with(|u| u.set(Ui { name, key, list, addr, join, host, own, status }));
     APP.with(|a| *a.borrow_mut() = Some(app));
-    on_timer(hwnd); // first probes and the status line before the window shows
+    on_timer(hwnd); // first probes and status before the window shows
     ShowWindow(hwnd, SW_SHOW);
     SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
     BringWindowToTop(hwnd);

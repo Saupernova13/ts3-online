@@ -2,8 +2,7 @@
 
     python -I tools/scan_player_mgr.py work/out/pm_dump.c [--slot-base 0x198 --slot-size 0x58 --slots 2]
 
-Prints an offset histogram, every function touching the slot array or the fields after it,
-indexed slot accesses (idx * slot-size) and nearby `< 2` style bounds that may be MAX_PLAYERS.
+Prints an offset histogram, slot and tail accesses, and candidate MAX_PLAYERS bounds.
 """
 import argparse
 import re

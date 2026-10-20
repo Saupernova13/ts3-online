@@ -199,7 +199,6 @@ mod entry {
             return log!("{} mismatches; nothing applied", bad.len());
         }
 
-        // every hook name must resolve, else nothing is applied
         let mut unknown = false;
         for p in &doc.patches {
             if let doc::Op::Hook { name, .. } = &p.op {
@@ -214,7 +213,6 @@ mod entry {
         }
         game::set_module_base(base);
 
-        // thunks for entry_caller hooks, one per name, in a small RWX allocation
         let mut thunk_names: Vec<&str> = Vec::new();
         for p in &doc.patches {
             if let doc::Op::Hook { mode: doc::HookMode::EntryCaller, name, .. } = &p.op {
@@ -235,7 +233,6 @@ mod entry {
                 log!("thunk for {n} at {at:#x}");
             }
         }
-        // trampolines for detour hooks: the stolen bytes, then a jump behind them
         let detours: Vec<(&str, u64, &[u8])> = doc
             .patches
             .iter()

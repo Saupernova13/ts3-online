@@ -69,7 +69,7 @@ pub enum Ty {
     Ptr,
     I32,
     U8,
-    /// u64 byte count, reported in whole MB so small changes are not logged
+    /// u64 byte count, logged in whole MB so small changes stay quiet
     Mb,
 }
 
@@ -88,23 +88,21 @@ pub struct Watch {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HookMode {
-    /// Overwrite the function entry with a jump to the hook.
+    /// Function entry jumps to the hook.
     Entry,
     /// Like Entry, through a thunk that passes the caller's return address in R8.
     EntryCaller,
-    /// Replace an inline block with a call to the hook.
+    /// An inline block becomes a call to the hook.
     Call,
-    /// Overwrite the first `steal` bytes of a function with a jump to the hook; the stolen bytes
-    /// run in a trampoline (`hooks::original`) so the hook can call the original. The stolen bytes
-    /// must be position independent (no RIP-relative operands or relative branches), which is
-    /// hand-reviewed.
+    /// Entry jumps to the hook; the first `steal` bytes run in a trampoline (`hooks::original`) and
+    /// must be position independent (no RIP-relative operands or relative branches; hand-reviewed).
     Detour,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
     Bytes(Vec<u8>),
-    /// `prefix`: raw bytes placed before the call in `call` mode (e.g. `mov rcx, rbp` to pass an argument)
+    /// `prefix`: bytes before the call in `call` mode, e.g. `mov rcx, rbp` to pass an argument
     Hook { mode: HookMode, name: String, prefix: Vec<u8> },
     RipReloc { len: usize, disp_pos: usize, target_off: u64 },
 }
@@ -232,7 +230,7 @@ pub fn parse(text: &str) -> Result<Doc, String> {
     })
 }
 
-/// Drops patches of optional groups that are not enabled; returns the kept patches and the sorted skipped groups.
+/// Drops optional groups not in `enable`; returns the kept patches and the sorted skipped groups.
 pub fn select(patches: Vec<Patch>, optional: &[String], enable: &[String]) -> (Vec<Patch>, Vec<String>) {
     let mut skipped: Vec<String> = Vec::new();
     let kept = patches

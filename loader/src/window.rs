@@ -1,4 +1,4 @@
-//! Borderless window placement (`window = x,y,w,h`): finds the game window, restyles and moves it, keeps it there.
+//! `window = x,y,w,h`: makes the game window borderless at that rect and keeps it there.
 use crate::log;
 use std::ffi::c_void;
 use windows_sys::Win32::Foundation::{BOOL, FALSE, HWND, LPARAM, RECT, TRUE};
@@ -16,7 +16,7 @@ const STYLE: isize = (WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN)
 
 type Rect = (i32, i32, i32, i32);
 
-/// Spawns the placement thread (same pattern as the watcher: a raw CreateThread from DllMain).
+/// Raw CreateThread, as this runs from DllMain.
 pub fn start(rect: Rect) {
     let raw = Box::into_raw(Box::new(rect));
     let h = unsafe { CreateThread(std::ptr::null(), 0, Some(thread), raw.cast(), 0, std::ptr::null_mut()) };
@@ -105,7 +105,7 @@ unsafe extern "system" fn thread(param: *mut c_void) -> u32 {
         let now = (GetWindowLongPtrW(hwnd, GWL_STYLE), rect_of(hwnd));
         if now != (STYLE, want) {
             let ok = place(hwnd, want);
-            // log only changes, so a rect the game keeps clamping does not flood the log
+            // log only changes, or a rect the game keeps clamping floods the log
             if now != last {
                 log!("window: drifted (style {:#x}, rect {:?}); re-applied: {}", now.0, now.1, if ok { "ok" } else { "failed" });
             }

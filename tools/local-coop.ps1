@@ -1,17 +1,15 @@
 <#
 .SYNOPSIS
-  Starts two copies of Toy Story 3 side by side on this PC, the first hosting and the second joined
-  to it, for testing online co-op with two controllers.
+  Starts two copies of Toy Story 3 side by side, copy 2 joined to copy 1, to test online co-op
+  with two controllers.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File local-coop.ps1      (what LocalCoop.cmd runs)
 
 .NOTES
-  Needs the loader installed (Setup.cmd) and two controllers: copy 1 plays with controller 1,
-  copy 2 with controller 2. Copy 1 hosts with your own save; copy 2 downloads it and never writes it.
-  While the games run, ts3online.ini in the game folder holds a two-copy setup; your own file is kept
-  as ts3online.ini.before-local-coop and put back when both games have closed (or on the next run,
-  if this window was closed first).
+  Needs the loader installed (Setup.cmd). Copy n uses controller n. Copy 1 hosts with your save;
+  copy 2 downloads it and never writes it. Your ts3online.ini is kept as
+  ts3online.ini.before-local-coop and restored once both games close (or on the next run).
 #>
 [CmdletBinding()]
 param(
@@ -82,7 +80,7 @@ if ((Get-Games).Count -gt 0) {
     Write-Host 'Toy Story 3 is already running. Close it, then run this again.'
     return
 }
-Restore-Ini $ini  # a run whose window was closed early left the two-copy file behind
+Restore-Ini $ini  # a run closed early leaves the two-copy file behind
 
 $halves = Get-Halves
 if (Test-Path -LiteralPath $ini) { Copy-Item -LiteralPath $ini -Destination "$ini.before-local-coop" } else { New-Item -ItemType File -Path "$ini.none-before-local-coop" | Out-Null }

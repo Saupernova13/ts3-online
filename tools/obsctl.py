@@ -2,10 +2,8 @@
 
     work/venv/Scripts/python tools/obsctl.py info|setup|start|stop|shot <out.png>
 
-setup creates a scene `ts3-test` with a display capture and makes it current. Needs OBS running with
-its websocket server enabled (Tools > WebSocket Server Settings); the password is read from OBS's own
-config. Use display capture method 2 (Windows Graphics Capture): the default method records white
-on some setups. Requires `pip install obsws-python` in the venv.
+Needs OBS with its websocket server enabled and obsws-python in the venv. `setup` creates scene
+`ts3-test` with capture method 2 (Windows Graphics Capture); the default records white on some setups.
 """
 import json, os, sys, obsws_python as obs
 pw = json.load(open(os.path.expandvars(r'%APPDATA%\obs-studio\plugin_config\obs-websocket\config.json')))['server_password']

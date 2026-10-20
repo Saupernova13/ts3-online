@@ -15,11 +15,11 @@ use std::time::{Duration, Instant};
 
 const RETRY_US: u64 = 2_000_000;
 const LOG_US: u64 = 1_000_000;
-/// Farther than this from the owner's position, a partner is placed back.
+/// Partner farther than this (m) from its owner is placed back.
 const SNAP_DIST: f32 = 4.0;
 /// Seconds of owner velocity the steering target leads by.
 const LEAD: f32 = 0.10;
-/// Inside this error (m) the partner copies the owner motion instead of chasing the position.
+/// Below this error (m), copy the owner's motion instead of chasing its position.
 const NEAR_ERR: f32 = 0.25;
 /// Error (m) at which chasing reaches full stick.
 const FULL_ERR: f32 = 1.5;
@@ -27,9 +27,7 @@ const MOVING_SPEED: f32 = 0.5;
 const IDLE_STICK: f32 = 0.15;
 /// Owner updates older than this (us) count as standing still.
 const STALE_US: u64 = 250_000;
-/// Buttons that start an interaction: B, X, Y, LB, RB (XINPUT bits) and the triggers past half. A
-/// (jump) is left out: a pose snap on the press moved the partner back to an older, lower position
-/// and cut the jump (or a double jump in the air).
+/// Interaction buttons B, X, Y, LB, RB. A is left out: a snap on the press cuts the jump.
 const ACTION_BUTTONS: u32 = 0xe300;
 const LT_BIT: u32 = 1 << 16;
 const RT_BIT: u32 = 1 << 17;
@@ -37,25 +35,23 @@ const TRIGGER_PRESSED: u8 = 128;
 const PRESS_LOG_US: u64 = 500_000;
 const FACE_US: u64 = 100_000;
 const FACE_TOLERANCE: f32 = 10.0 * std::f32::consts::PI / 180.0;
-/// `State.flags`: the local avatar carries someone / is carried.
+/// `State.flags` carry bits.
 const FLAG_CARRYING: u32 = 1;
 const FLAG_CARRIED: u32 = 2;
-/// The owner's controls are off: a tutorial, shop screen or menu has its pad (bits 8-9 are the target kind).
+/// Owner's controls are off: a tutorial, shop or menu has its pad. Bits 8-9 hold the target kind.
 const FLAG_CONTROLS_OFF: u32 = 1 << 10;
 const CARRY_DISAGREE_US: u64 = 500_000;
 /// Farther than this, a placement fires `PrepareForPlacing` first.
 const PREPARE_DIST: f32 = 2.0;
-/// Local slots for remote players.
 const SLOTS: [usize; 3] = [1, 2, 3];
-/// Avatar byte that says whether controls are enabled.
+/// Avatar byte, nonzero while controls are enabled.
 const CONTROLS_ON: u64 = 0x428;
-/// A client follows the host's level once the two have differed this long.
+/// A client follows the host's level after differing this long.
 const FOLLOW_AFTER: Duration = Duration::from_millis(1500);
 /// No level follow this soon after a level switch of this copy.
 const FOLLOW_COOLDOWN: Duration = Duration::from_secs(15);
 
 struct Class {
-    /// NUL-terminated class name, as stored in the avatar's properties.
     class: &'static [u8],
     spec: &'static [u8],
     name: &'static [u8],
@@ -69,7 +65,6 @@ const CLASSES: [Class; 3] = [
     Class { class: b"jessie\0", spec: b"class=jessie; model_name=characters/Jessie/Jessie\0", name: b"Jessie2\0", hash: 0xcf },
 ];
 
-/// A remote player and the local slot that stands for it.
 struct Partner {
     slot: usize,
     /// 0 while unbound
@@ -80,27 +75,25 @@ struct Partner {
     snaps: u32,
     last_log_us: u64,
     last_drift_us: u64,
-    /// owner position history from received states: seq of the latest, its position and receive time
+    /// latest owner state received: seq, position, receive time
     last_seq: Option<u32>,
     last_pos: [f32; 3],
     last_at: u64,
     /// owner velocity on x and z (m/s)
     vel: [f32; 2],
-    /// owner pressed-button set of the previous state
     prev_pressed: Option<u32>,
     last_press_log_us: u64,
     last_face_us: u64,
     carry: CarryWatch,
-    /// the owner's pick-up target, and what this copy last wrote as the partner's candidate
+    /// owner's pick-up target, and the candidate last written for it
     target: Target,
     target_written: Option<u64>,
     target_lost: u32,
     last_target_log_us: u64,
-    /// owner gone or elsewhere: the avatar stays, idle, until the owner returns or the level ends
+    /// owner gone or elsewhere: the avatar idles until it returns or the level ends
     parked: bool,
 }
 
-/// Notices when a partner carry state disagrees with its owner for a while.
 #[derive(Default)]
 struct CarryWatch {
     key: Option<(u32, u32)>,
@@ -155,8 +148,7 @@ impl Partner {
         }
     }
 
-    /// Records a received state (once per sequence number) and updates the owner velocity.
-    /// True when the state is new.
+    /// Records a received state once per seq; true when it is new.
     fn track(&mut self, seq: u32, pos: [f32; 3], now: u64) -> bool {
         if self.last_seq == Some(seq) {
             return false;
@@ -172,7 +164,6 @@ impl Partner {
         true
     }
 
-    /// Owner velocity, zero when the owner has gone quiet.
     fn velocity(&self, now: u64) -> [f32; 2] {
         if now.saturating_sub(self.last_at) > STALE_US {
             [0.0; 2]
@@ -184,19 +175,17 @@ impl Partner {
 
 static PARTNERS: Mutex<Option<HashMap<u8, Partner>>> = Mutex::new(None);
 static START: OnceLock<Instant> = OnceLock::new();
-/// Last raw `ActorCarriedBy` / `ActorCarried` values of the local avatar, for change logging.
+/// Last raw local `ActorCarriedBy` / `ActorCarried`, to log changes.
 static LAST_CARRY: Mutex<(u64, u64)> = Mutex::new((0, 0));
 static LOCAL_TARGET: Mutex<Target> = Mutex::new(Target::None);
-/// `net_stick_sign`: multiplies the camera delta applied to partners' sticks.
+/// `net_stick_sign`: sign of the camera delta applied to partner sticks.
 static STICK_SIGN: AtomicI32 = AtomicI32::new(1);
 static STEER: AtomicBool = AtomicBool::new(true);
 static STEER_X: AtomicI32 = AtomicI32::new(1);
 static STEER_Y: AtomicI32 = AtomicI32::new(1);
-/// Since when the client's level differs from the host's (both in a level).
 static MISMATCH_SINCE: Mutex<Option<Instant>> = Mutex::new(None);
-/// When this copy last switched level, by its own game or by following.
+/// Last level switch here, by the game itself or by following.
 static LAST_SWITCH: Mutex<Option<Instant>> = Mutex::new(None);
-/// Hash of the level seen last frame, to log level changes.
 static LAST_LEVEL: AtomicU32 = AtomicU32::new(0);
 
 /// `net_steer`, `net_steer_x`, `net_steer_y`.
@@ -215,13 +204,13 @@ pub fn yaw_from_quat(qy: f32, qw: f32) -> f32 {
     -2.0 * qy.atan2(qw)
 }
 
-/// Quaternion `(x, y, z, w)` for a rotation of `yaw` about the vertical axis.
+/// Pure-yaw quaternion `(x, y, z, w)`.
 pub fn quat_from_yaw(yaw: f32) -> [f32; 4] {
     let h = yaw * 0.5;
     [0.0, -h.sin(), 0.0, h.cos()]
 }
 
-/// Class index for a partner whose class is unknown: not the local avatar's, not another partner's.
+/// Class for a partner of unknown class: not ours, and not another partner's if possible.
 pub fn choose_class(own: Option<usize>, used: &[usize], count: usize) -> usize {
     (0..count)
         .find(|c| Some(*c) != own && !used.contains(c))
@@ -229,15 +218,12 @@ pub fn choose_class(own: Option<usize>, used: &[usize], count: usize) -> usize {
         .unwrap_or(0)
 }
 
-/// Lowest free local slot, given the slots in use.
 pub fn free_slot(taken: &[usize]) -> Option<usize> {
     SLOTS.iter().copied().find(|s| !taken.contains(s))
 }
 
-/// The owner's state with its pad as this copy's partner should get it. While the owner's controls
-/// are off its pad drives a screen of its own copy (a tutorial, a shop, a menu): it reaches the partner
-/// only while the partner's controls are off here too, so the same screen here gets the same input;
-/// a partner that is free to move gets a neutral pad instead.
+/// An owner with controls off is on a screen (tutorial, shop, menu): its pad reaches the partner
+/// only if the partner's controls are off too, else the partner gets a neutral pad.
 pub fn mirror_input(st: State, partner_off: bool) -> State {
     if st.flags & FLAG_CONTROLS_OFF != 0 && !partner_off {
         State { pad: Pad::default(), ..st }
@@ -246,7 +232,6 @@ pub fn mirror_input(st: State, partner_off: bool) -> State {
     }
 }
 
-/// Interaction buttons held in a pad: XINPUT bits plus `LT_BIT` / `RT_BIT` for triggers past half.
 pub fn pressed_bits(p: &Pad) -> u32 {
     let mut b = p.buttons as u32 & ACTION_BUTTONS;
     if p.lt >= TRIGGER_PRESSED {
@@ -258,7 +243,6 @@ pub fn pressed_bits(p: &Pad) -> u32 {
     b
 }
 
-/// Buttons newly pressed between two pressed sets.
 pub fn rising(prev: u32, cur: u32) -> u32 {
     cur & !prev
 }
@@ -269,12 +253,11 @@ pub fn yaw_diff(a: f32, b: f32) -> f32 {
     d.min(2.0 * std::f32::consts::PI - d)
 }
 
-/// Length of the left stick, 0..1.
 fn owner_mag(p: &Pad) -> f32 {
     len2([p.lx as f32 / 32767.0, p.ly as f32 / 32767.0]).min(1.0)
 }
 
-/// Velocity on x and z between two received positions; None when they are less than 1 ms apart.
+/// Times in us; None when under 1 ms apart.
 pub fn velocity_xz(p0: [f32; 3], t0: u64, p1: [f32; 3], t1: u64) -> Option<[f32; 2]> {
     let dt = t1.saturating_sub(t0);
     if dt < 1000 {
@@ -293,19 +276,17 @@ fn normalize2(v: [f32; 2]) -> Option<[f32; 2]> {
     (l.is_finite() && l > 1e-4).then(|| [v[0] / l, v[1] / l])
 }
 
-/// What a partner left stick should do.
+/// What a partner's left stick does.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Steer {
-    /// walk in a world direction (unit) at a stick magnitude 0..1
+    /// unit world direction, stick magnitude 0..1
     Dir([f32; 2], f32),
-    /// the owner raw left stick, rotated into this view
+    /// owner's left stick, rotated into this view
     Raw,
-    /// stand still
     Idle,
 }
 
-/// Closed-loop steering: `err` is target minus the partner position on x/z, `vel` the owner
-/// velocity, `owner_mag` the owner left-stick length (0..1).
+/// Closed-loop steering; `err` is target minus partner position on x/z.
 pub fn decide_steer(err: [f32; 2], vel: [f32; 2], owner_mag: f32) -> Steer {
     let e = len2(err);
     if !e.is_finite() {
@@ -320,15 +301,14 @@ pub fn decide_steer(err: [f32; 2], vel: [f32; 2], owner_mag: f32) -> Steer {
     Steer::Dir([err[0] / e, err[1] / e], owner_mag.max(e / FULL_ERR).clamp(0.0, 1.0))
 }
 
-/// Left-stick axes for a world direction under a view whose `right` and `look` are unit vectors on
-/// x/z; `sx` and `sy` are the axis signs (`net_steer_x`, `net_steer_y`).
+/// `right`, `look`: the view's unit x/z vectors; `sx`, `sy`: axis signs (`net_steer_x`, `net_steer_y`).
 pub fn world_to_stick(dir: [f32; 2], mag: f32, right: [f32; 2], look: [f32; 2], sx: i32, sy: i32) -> (i16, i16) {
     let to_i16 = |v: f32| (v * 32767.0).round().clamp(-32767.0, 32767.0) as i16;
     let dot = |a: [f32; 2], b: [f32; 2]| a[0] * b[0] + a[1] * b[1];
     (to_i16(mag * dot(dir, right) * sx as f32), to_i16(mag * dot(dir, look) * sy as f32))
 }
 
-/// The pad a bound partner gets: buttons and triggers from the owner, left stick steered, right stick centred.
+/// Owner pad with a steered left stick and a centred right stick, plus the stick magnitude.
 #[allow(clippy::too_many_arguments)]
 pub fn steer_pad(owner: Pad, err: [f32; 2], vel: [f32; 2], right: [f32; 2], look: [f32; 2], delta: f32, sx: i32, sy: i32) -> (Pad, f32) {
     let owner_mag = owner_mag(&owner);
@@ -346,7 +326,7 @@ pub fn steer_pad(owner: Pad, err: [f32; 2], vel: [f32; 2], right: [f32; 2], look
     (Pad { lx, ly, rx: 0, ry: 0, ..owner }, mag)
 }
 
-/// Rotates a stick (i16 axes, normalised to -1..1) by `d` radians, counter-clockwise.
+/// Rotates a stick by `d` radians, counter-clockwise.
 pub fn rotate_stick(x: i16, y: i16, d: f32) -> (i16, i16) {
     let (fx, fy) = (x as f32 / 32767.0, y as f32 / 32767.0);
     let (s, c) = d.sin_cos();
@@ -354,7 +334,6 @@ pub fn rotate_stick(x: i16, y: i16, d: f32) -> (i16, i16) {
     (to_i16(fx * c - fy * s), to_i16(fx * s + fy * c))
 }
 
-/// `pad` with both thumbsticks rotated by `d` radians.
 pub fn rotate_pad(pad: Pad, d: f32) -> Pad {
     if d == 0.0 || !d.is_finite() {
         return pad;
@@ -373,8 +352,7 @@ unsafe fn view_ptr(mgr: u64, i: u64) -> Option<u64> {
     (view != 0).then_some(view)
 }
 
-/// Unit `right` and `look` vectors on x/z of the view for slot `i`, from its view matrix
-/// (`right = (m00, m20)`, `look = (-m02, -m22)`).
+/// Unit x/z axes of slot `i`'s view: `right = (m00, m20)`, `look = (-m02, -m22)`.
 unsafe fn view_axes(mgr: u64, i: u64) -> Option<([f32; 2], [f32; 2])> {
     let view = view_ptr(mgr, i)?;
     let right = normalize2([rd_f32(view + 0x20), rd_f32(view + 0x40)])?;
@@ -382,16 +360,14 @@ unsafe fn view_axes(mgr: u64, i: u64) -> Option<([f32; 2], [f32; 2])> {
     Some((right, look))
 }
 
-/// Camera heading of the view for player slot `i`, from its view matrix (`view+0x20`, row major):
-/// `atan2(m[0][2], m[2][2])`. None when the view is missing or the values are not finite.
+/// Camera heading of slot `i`'s view: `atan2(m02, m22)` of the row-major matrix at `view+0x20`.
 unsafe fn view_heading(mgr: u64, i: u64) -> Option<f32> {
     let view = view_ptr(mgr, i)?;
     let h = rd_f32(view + 0x28).atan2(rd_f32(view + 0x48));
     h.is_finite().then_some(h)
 }
 
-/// Rotation that turns a stick held relative to the owner's camera (`owner_cam`) into the same
-/// world direction under this copy's camera for the slot (`local_cam`).
+/// Rotation that keeps a stick's world direction from the owner's camera to this copy's.
 pub fn stick_delta(local_cam: Option<f32>, owner_cam: f32, sign: i32) -> f32 {
     match local_cam {
         Some(l) if owner_cam.is_finite() => sign as f32 * (l - owner_cam),
@@ -399,7 +375,6 @@ pub fn stick_delta(local_cam: Option<f32>, owner_cam: f32, sign: i32) -> f32 {
     }
 }
 
-/// Index in `CLASSES` of an avatar's class property, if known.
 unsafe fn class_of(avatar: u64) -> Option<usize> {
     let cls = prop_string(avatar + 0x2e0, b"class\0".as_ptr() as u64, 0);
     if cls == 0 {
@@ -408,7 +383,6 @@ unsafe fn class_of(avatar: u64) -> Option<usize> {
     CLASSES.iter().position(|c| stricmp(cls as *const c_char, c.class.as_ptr() as *const c_char) == 0)
 }
 
-/// Name of the current level, empty outside a level.
 unsafe fn local_level_name() -> String {
     let name = level_name();
     if name == 0 {
@@ -417,14 +391,12 @@ unsafe fn local_level_name() -> String {
     CStr::from_ptr(name as *const c_char).to_string_lossy().into_owned()
 }
 
-/// A level players play in; the front end and the story game board (`gui_*`) are menus.
+/// The front end and `gui_*` levels (such as the story game board) are menus.
 pub fn is_play_level(name: &str) -> bool {
     !name.is_empty() && !name.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("gui_")) && !name.eq_ignore_ascii_case("frontend")
 }
 
-/// The level name a client should switch to: both sides are in a level, the levels differ for
-/// `FOLLOW_AFTER`, the host's name matches the hash its state carries, and this copy has not
-/// switched within `FOLLOW_COOLDOWN`.
+/// The host level a client should switch to; the host's name must match the hash in its state.
 pub fn decide_follow(local_hash: u32, host_hash: u32, host_name: Option<&str>, mismatch_for: Duration, since_switch: Duration) -> Option<String> {
     if local_hash == 0 || host_hash == 0 || local_hash == host_hash {
         return None;
@@ -439,7 +411,7 @@ fn note_switch() {
     }
 }
 
-/// A switch the game itself posted (runs on every `SwitchLevel` post, before the game handles it).
+/// Runs on every `SwitchLevel` post, before the game handles it.
 pub fn on_local_switch(name: &str) {
     note_switch();
     if net::is_client() && is_play_level(name) {
@@ -451,7 +423,7 @@ unsafe fn post_switch_level(name: &str) {
     hooks::call_broadcast(global(EVENTS), b"SwitchLevel\0".as_ptr() as u64, leak_cstr(name), 0);
 }
 
-/// Client: how long the local and host levels have differed (zero when they match or either is unset).
+/// Client: how long the local and host levels have differed.
 fn mismatch_duration(local: u32, host: u32, now: Instant) -> Duration {
     let Ok(mut since) = MISMATCH_SINCE.lock() else { return Duration::ZERO };
     if local == 0 || host == 0 || local == host {
@@ -492,7 +464,7 @@ fn forget_pads() {
     }
 }
 
-/// Per-frame work on the game thread: publish the local player, bind, feed and correct partners.
+/// Per frame, on the game thread.
 pub unsafe fn update() {
     let raw = local_level_name();
     let level = level_hash(&raw);
@@ -510,8 +482,7 @@ pub unsafe fn update() {
     let Ok(mut guard) = PARTNERS.lock() else { return };
     let partners = guard.get_or_insert_with(HashMap::new);
     if switched && !partners.is_empty() {
-        // the name changes when the switch is posted; the coming teardown frees the partner
-        // avatars; removing them here first was followed by a crash (FINDINGS 10)
+        // the switch is only posted: leave the avatars to the teardown, freeing them first crashes (FINDINGS 10)
         log!("coop: level switch: {} partner(s) left to the level teardown", partners.len());
         partners.clear();
         forget_pads();
@@ -533,7 +504,7 @@ pub unsafe fn update() {
     let controls = rd_u8(p0 + CONTROLS_ON) != 0;
     let cam = view_heading(mgr, 0).unwrap_or(0.0);
     let flags = carry_flags(p0, true) | if controls { 0 } else { FLAG_CONTROLS_OFF };
-    // who is who on this copy: (avatar actor id, player id), for naming pick-up targets
+    // (avatar actor id, player id) on this copy, for naming pick-up targets
     let mut players: Vec<(u64, u8)> = partners.iter().filter(|(_, p)| p.avatar != 0).map(|(id, p)| (p.actor_id, *id)).collect();
     if let Some(me) = net::local_id() {
         players.push((rd_u64(p0 + 0x38), me));
@@ -595,7 +566,7 @@ pub unsafe fn update() {
             p.prev_pressed = Some(pressed);
         }
         if p.avatar != 0 && edges != 0 {
-            // interactions depend on exact geometry: make the pose match the owner before the press lands
+            // interactions depend on exact geometry: match the owner's pose before the press lands
             let cur = [rd_f32(p.avatar + 0x80), rd_f32(p.avatar + 0x84), rd_f32(p.avatar + 0x88)];
             let yaw_err = yaw_diff(avatar_yaw(p.avatar), st.yaw);
             place_pose(p.avatar, st.pos, st.yaw);
@@ -653,7 +624,7 @@ pub unsafe fn update() {
     }
 }
 
-/// Spawns the remote's character and binds it to the next free local player slot.
+/// Spawns the remote's character and binds it to the next free player slot.
 unsafe fn bind(mgr: u64, id: u8, p: &mut Partner, st: &State, own_class: Option<usize>, used: &[usize]) {
     let input = global(INPUT_PTR);
     if input == 0 {
@@ -697,7 +668,7 @@ fn class_name(c: usize) -> String {
     CLASSES.get(c).map_or(String::new(), |c| String::from_utf8_lossy(&c.class[..c.class.len() - 1]).into_owned())
 }
 
-/// A newcomer takes over the avatar of a player who left, instead of a fresh slot next to it.
+/// A newcomer takes over a departed player's parked avatar instead of a fresh slot.
 fn adopt_parked(partners: &mut HashMap<u8, Partner>, id: u8, remote: &[(u8, State)]) {
     let old = partners.iter().find(|(i, p)| p.parked && p.avatar != 0 && !remote.iter().any(|(r, _)| r == *i)).map(|(i, _)| *i);
     let Some(old) = old.and_then(|o| partners.remove(&o).map(|p| (o, p))) else { return };
@@ -708,8 +679,7 @@ fn adopt_parked(partners: &mut HashMap<u8, Partner>, id: u8, remote: &[(u8, Stat
     partners.insert(id, q);
 }
 
-/// Leaves a partner idle in its slot. Removing an avatar mid-level drops the player count, and in
-/// wt_stuntpark that crashed the game a few seconds later (FINDINGS 10); the level teardown frees it.
+/// Leaves the avatar idle: removing one mid-level drops the player count and can crash (FINDINGS 10).
 fn park(id: u8, p: &mut Partner, why: &str) {
     pad::set_remote_pad(p.slot, None);
     if !p.parked {
@@ -720,7 +690,7 @@ fn park(id: u8, p: &mut Partner, why: &str) {
     }
 }
 
-/// Places a bound partner back when it drifted from the owner's position.
+/// Snaps a partner that drifted too far back to its owner.
 unsafe fn correct(p: &mut Partner, id: u8, st: &State, now: u64, delta: f32, mag: f32) {
     let cur = [rd_f32(p.avatar + 0x80), rd_f32(p.avatar + 0x84), rd_f32(p.avatar + 0x88)];
     if now.saturating_sub(p.last_drift_us) >= LOG_US {
@@ -742,7 +712,7 @@ fn dist2(a: [f32; 3], b: [f32; 3]) -> f32 {
     (0..3).map(|i| (a[i] - b[i]) * (a[i] - b[i])).sum()
 }
 
-/// Spawns an avatar with the synchronous level-setup spawner; returns it (0 on failure).
+/// Uses the synchronous level-setup spawner; 0 on failure.
 unsafe fn spawn(mgr: u64, class: &Class, pos: [f32; 3], yaw: f32) -> u64 {
     let mut props = [0u64; 3];
     props_init(props.as_mut_ptr());
@@ -760,9 +730,8 @@ unsafe fn spawn(mgr: u64, class: &Class, pos: [f32; 3], yaw: f32) -> u64 {
     avatar
 }
 
-/// Carry state of an avatar as `FLAG_*` bits. `ActorCarriedBy` and `ActorCarried` each keep a
-/// pointer at `+0x18` (script bindings 0x1400b0020 / 0x1400b0120); which one means which
-/// direction is unconfirmed, so the raw values are logged when the local ones change.
+/// `ActorCarriedBy` / `ActorCarried` keep a pointer at `+0x18` (bindings 0x1400b0020 / 0x1400b0120).
+/// Which one means which direction is unconfirmed, so the raw local values are logged.
 unsafe fn carry_flags(avatar: u64, log_raw: bool) -> u32 {
     let raw = |name: &[u8]| {
         let comp = find_component(avatar, name.as_ptr() as u64);
@@ -784,12 +753,11 @@ unsafe fn carry_flags(avatar: u64, log_raw: bool) -> u32 {
     (if by != 0 { FLAG_CARRYING } else { 0 }) | (if carried != 0 { FLAG_CARRIED } else { 0 })
 }
 
-/// Yaw of an avatar from its rotation quaternion (`+0x90`).
+/// From the rotation quaternion at `+0x90`.
 unsafe fn avatar_yaw(avatar: u64) -> f32 {
     yaw_from_quat(rd_f32(avatar + 0x94), rd_f32(avatar + 0x9c))
 }
 
-/// Sets only the rotation: node refresh, matrix from the yaw quaternion, setter, node `vt+0x8`.
 pub unsafe fn set_rotation(actor: u64, yaw: f32) {
     let node = actor + 0x50;
     node_dirty(node);
@@ -800,7 +768,7 @@ pub unsafe fn set_rotation(actor: u64, yaw: f32) {
     vt_call(node, 0x8);
 }
 
-/// Position and rotation, without `PrepareForPlacing` (that event may reset carry state).
+/// Skips `PrepareForPlacing`, which may reset carry state.
 pub unsafe fn place_pose(actor: u64, pos: [f32; 3], yaw: f32) {
     for (i, v) in pos.iter().enumerate() {
         std::ptr::write_unaligned((actor + 0x80 + i as u64 * 4) as *mut f32, *v);
@@ -808,7 +776,7 @@ pub unsafe fn place_pose(actor: u64, pos: [f32; 3], yaw: f32) {
     set_rotation(actor, yaw);
 }
 
-/// The placing handler's sequence (0x1406a2010): PrepareForPlacing when far, position, rotation, node refresh.
+/// Mirrors the game's placing handler (0x1406a2010).
 unsafe fn place(actor: u64, actor_id: u64, pos: [f32; 3], yaw: f32) {
     let cur = [rd_f32(actor + 0x80), rd_f32(actor + 0x84), rd_f32(actor + 0x88)];
     if dist2(cur, pos) > PREPARE_DIST * PREPARE_DIST {
@@ -822,7 +790,6 @@ mod tests {
     use super::*;
     use std::f32::consts::PI;
 
-    /// Smallest absolute difference between two angles.
     fn ang_diff(a: f32, b: f32) -> f32 {
         let d = (a - b).rem_euclid(2.0 * PI);
         d.min(2.0 * PI - d)
@@ -832,12 +799,12 @@ mod tests {
     fn an_owner_on_a_screen_drives_only_a_partner_on_the_same_screen() {
         let pad = Pad { buttons: 0x1000, rt: 255, ..Pad::default() };
         let st = |flags| State { id: 1, seq: 1, level: 7, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad, flags, target: 0, proj: Default::default() };
-        // owner in a tutorial or shop screen, partner here too: the same input reaches the same screen
+        // both on the same screen: the input goes through
         assert_eq!(mirror_input(st(FLAG_CONTROLS_OFF), true).pad, pad);
-        // owner in a menu of its own: the partner here stands still
+        // owner alone on a screen: the partner stands still
         assert_eq!(mirror_input(st(FLAG_CONTROLS_OFF | FLAG_CARRYING), false).pad, Pad::default());
         assert_eq!(mirror_input(st(FLAG_CONTROLS_OFF), false).flags, FLAG_CONTROLS_OFF);
-        // owner playing: its pad goes through whatever the partner is doing
+        // owner playing: the pad always goes through
         assert_eq!(mirror_input(st(0), false).pad, pad);
         assert_eq!(mirror_input(st(0), true).pad, pad);
     }

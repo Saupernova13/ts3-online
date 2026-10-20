@@ -1,5 +1,4 @@
-//! Save folders: the game's `SHGetFolderPathA(CSIDL_APPDATA)` answers with a per-copy folder for copies 2-4,
-//! and with the client session folder (the host save) when this copy joined a host.
+//! Redirects `SHGetFolderPathA(CSIDL_APPDATA)` to a per-copy folder (copies 2-4) or, for a client, the host save.
 use crate::iat::{self, Entry};
 use crate::{copy, log, net};
 use std::ffi::c_void;
@@ -15,17 +14,16 @@ static COPY: AtomicU32 = AtomicU32::new(0);
 static ORIG: AtomicUsize = AtomicUsize::new(0);
 static LOGGED: AtomicBool = AtomicBool::new(false);
 static DECISION: OnceLock<net::Decision> = OnceLock::new();
-/// How long the first call may wait for the net role and the host save. The game asks about 100 ms after load.
+/// First-call wait for the net role and host save; the game asks about 100 ms after load.
 const WAIT: Duration = Duration::from_secs(8);
 
 type ShGetFolderPathAFn = unsafe extern "system" fn(*mut c_void, i32, *mut c_void, u32, *mut u8) -> i32;
 
-/// True when the CSIDL (flags like CSIDL_FLAG_CREATE live above the low byte) asks for the roaming app data folder.
+/// Flags such as CSIDL_FLAG_CREATE live above the low byte.
 pub fn is_appdata(csidl: i32) -> bool {
     csidl & 0xff == CSIDL_APPDATA
 }
 
-/// The redirected folder as a NUL-terminated ANSI buffer, if it fits in MAX_PATH.
 pub fn ansi_path(root: &std::path::Path) -> Option<Vec<u8>> {
     let mut b = root.to_string_lossy().into_owned().into_bytes();
     (b.len() < MAX_PATH).then(|| {
@@ -34,9 +32,7 @@ pub fn ansi_path(root: &std::path::Path) -> Option<Vec<u8>> {
     })
 }
 
-/// The app data root to hand the game, or None to leave the call to Windows. With `net=` the
-/// first call waits for the role (and a client for the host save) and the answer is kept, so
-/// later calls cannot switch folders under the game.
+/// None defers to Windows. The first answer is kept, so the folder cannot switch under the game.
 fn redirect_root(local: &str) -> Option<std::path::PathBuf> {
     let decision = *DECISION.get_or_init(|| {
         let d = net::wait_decision(WAIT);
@@ -72,7 +68,6 @@ unsafe extern "system" fn sh_get_folder_path_a(hwnd: *mut c_void, csidl: i32, to
     std::mem::transmute::<usize, ShGetFolderPathAFn>(ORIG.load(Ordering::Acquire))(hwnd, csidl, token, flags, out)
 }
 
-/// Hooks the main module's import for copy `n` (copies 2-4, and any copy with `net=`).
 pub fn install(base: u64, n: u32) {
     COPY.store(n, Ordering::Relaxed);
     let ok = unsafe { iat::hook(base, "SHELL32.dll", Entry::Name("SHGetFolderPathA"), sh_get_folder_path_a as *const () as usize, &ORIG) };

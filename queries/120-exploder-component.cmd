@@ -1,4 +1,4 @@
-# World sync: the exploder component (class, how it is found from its actor, who sets the break flag)
+# World sync: the exploder component (class, lookup from its actor, who sets the break flag)
 maxlen 4000
 strre (?i).*exploder.*
 func 140446670

@@ -1,8 +1,7 @@
-//! Save transfer helpers: CRC32, chunking and reassembly with a received-chunk bitmap.
+//! Host save transfer: chunking, reassembly and CRC check.
 
-/// Payload bytes per `SaveChunk`.
 pub const CHUNK: usize = 1000;
-/// Largest save we accept (the real one is about 20 KB).
+/// The real save is about 20 KB.
 pub const MAX_SAVE: usize = 1 << 20;
 
 /// CRC-32 (IEEE, the zlib polynomial).
@@ -17,12 +16,11 @@ pub fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
-/// Number of chunks for a save of `total` bytes.
 pub fn chunk_count(total: usize) -> usize {
     total.div_ceil(CHUNK)
 }
 
-/// The `i`-th chunk of `data` as `(offset, bytes)`.
+/// Chunk `i` as `(offset, bytes)`.
 pub fn chunk(data: &[u8], i: usize) -> Option<(u32, &[u8])> {
     let start = i.checked_mul(CHUNK)?;
     let end = (start + CHUNK).min(data.len());
@@ -39,12 +37,10 @@ fn set_bit(map: &mut [u8], i: usize) {
     }
 }
 
-/// Chunks of a `total`-byte save that the `have` bitmap lacks.
 pub fn missing(have: &[u8], total: usize) -> Vec<usize> {
     (0..chunk_count(total)).filter(|i| !bit(have, *i)).collect()
 }
 
-/// Collects chunks of one save until it is complete.
 pub struct Reassembler {
     total: usize,
     crc: u32,
@@ -53,7 +49,6 @@ pub struct Reassembler {
 }
 
 impl Reassembler {
-    /// None when `total` is zero or over `MAX_SAVE`.
     pub fn new(total: u32, crc: u32) -> Option<Reassembler> {
         let total = total as usize;
         (total > 0 && total <= MAX_SAVE).then(|| Reassembler { total, crc, buf: vec![0; total], have: vec![0; chunk_count(total).div_ceil(8)] })
@@ -67,7 +62,7 @@ impl Reassembler {
         self.crc
     }
 
-    /// Stores a chunk; false when it does not fit the save or is not chunk-aligned.
+    /// False for a misaligned chunk or one that does not fit.
     pub fn add(&mut self, offset: u32, data: &[u8]) -> bool {
         let off = offset as usize;
         let i = off / CHUNK;
@@ -80,7 +75,6 @@ impl Reassembler {
         true
     }
 
-    /// Bitmap of the chunks received so far.
     pub fn bitmap(&self) -> &[u8] {
         &self.have
     }
@@ -89,7 +83,6 @@ impl Reassembler {
         missing(&self.have, self.total).is_empty()
     }
 
-    /// The assembled save when complete and its CRC matches.
     pub fn finish(&self) -> Option<&[u8]> {
         (self.complete() && crc32(&self.buf) == self.crc).then_some(&self.buf[..])
     }

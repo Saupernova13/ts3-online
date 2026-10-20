@@ -1,14 +1,8 @@
-"""Generate loader/patches.json: the MAX_PLAYERS 2 -> 4 patch set for the runtime loader.
+"""Generate loader/patches.json, the MAX_PLAYERS 2 -> 4 patch set, from Ghidra pipeline output.
 
     python -I tools/gen_patches.py <original-exe> [--out loader/patches.json]
 
-Inputs (all produced by the Ghidra pipeline, see README):
-  work/out/08-relocation-table.txt   RIPREF lines: instructions addressing the player manager
-  data/bounds-candidates.json        classified MAX_PLAYERS bound sites
-  data/patches-manual.json           hand-reviewed patches (join flow, far guards)
-
-Every patch carries the original bytes read from the exe; the script fails if the exe does not
-match the analysed build. Offsets are RVAs because the exe is ASLR-relocated.
+Fails unless every patch's original bytes match the exe. Offsets are RVAs (ASLR).
 """
 import argparse
 import json
@@ -27,7 +21,7 @@ TAIL_START = SLOT_BASE + OLD_SLOTS * SLOT_SIZE          # 0x248: first field aft
 TAIL_SHIFT = (NEW_SLOTS - OLD_SLOTS) * SLOT_SIZE         # 0xb0
 MGR_NEW_SIZE = 0x400
 
-# Instructions that access manager fields past the slot array through a register (FINDINGS 3a).
+# Register-based accesses to manager fields past the slot array (FINDINGS 3a).
 TAIL_SITES = [0x1401B8920, 0x1405EC6A0, 0x1405EC6AC, 0x1405F10D1, 0x1405F2305, 0x1405F2440,
               0x1405F244C, 0x14005185F, 0x1405FC7D6, 0x1405FC8B8, 0x1405FCA20]
 
@@ -75,7 +69,7 @@ def main():
         p.update(extra)
         patches.append(p)
 
-    # 1. relocate: RIP-relative references into the manager object
+    # RIP-relative references into the manager object
     for line in open(a.reloc, encoding="utf-8"):
         m = re.match(r"RIPREF (\w+) (\d+) (\w+) (0x\w+) ; (.*)", line)
         if not m:
@@ -92,12 +86,10 @@ def main():
         add(f"reloc_{va:x}", "relocate", va, raw, kind="rip_reloc", len=ln, disp_pos=pos[0],
             target_off=f"{remap(off):#x}", note=text)
 
-    # 2. slot count 2 -> 4 in the static vector ctor/dtor
     for va in SLOT_COUNT_SITES:
         add(f"slots_{va:x}", "relocate", va, bytes.fromhex("41b802000000"), bytes.fromhex("41b804000000"),
             kind="bytes", note="MOV R8D, 2 -> 4 (player slot vector count)")
 
-    # 3. fields after the slot array move by TAIL_SHIFT
     for va in TAIL_SITES:
         raw = exe.read(va, 16)
         for old in (0x248, 0x250):
@@ -112,7 +104,6 @@ def main():
         else:
             errors.append(f"tail {va:#x}: no 0x248/0x250 displacement in {raw.hex()}")
 
-    # 4. MAX_PLAYERS bound checks
     bounds = json.load(open(a.bounds))
     for cls, (old, new) in BOUND_CLASSES.items():
         for e in bounds[cls]:
@@ -125,13 +116,12 @@ def main():
             add(f"bound_{e['addr']}", "bounds", int(e["addr"], 16), raw, raw[:-1] + bytes([new]), kind="bytes",
                 note=f"{cls}: CMP {e['cmp']} {e['jcc']} in {e['func']}")
 
-    # 5. hand-reviewed patches the classifiers cannot find
     manual = json.load(open(a.manual))
     for m in manual["patches"]:
         add(m["id"], m["group"], int(m["va"], 16), bytes.fromhex(m["orig"]), bytes.fromhex(m["new"]),
             kind="bytes", note=m["note"])
 
-    # 6. function hooks (resolved to Rust functions by the loader)
+    # hook names resolve to Rust functions in the loader
     for m in manual.get("hooks", []):
         orig = bytes.fromhex(m["orig"])
         if m["mode"] in ("entry", "entry_caller") and len(orig) != 12:
@@ -194,15 +184,15 @@ def main():
             {"name": "pobj_count", "base": "pobj", "off": "0x0", "type": "i32"},
             {"name": "split_mode", "rva": f"{0x140B2C5F8 - IMAGE_BASE:#x}", "type": "i32"},
             {"name": "viewport_count", "rva": f"{0x1409581A8 - IMAGE_BASE:#x}", "type": "i32"},
-            # control stacks (static at 0x140ac61c0): per-player stack pointer at +0x58 + i*8, count = first i32
+            # per-player control stacks; count is each stack's first i32
             *[w for i in range(NEW_SLOTS) for w in (
                 {"name": f"cstack{i}", "rva": f"{0x140AC61C0 + 0x58 + i * 8 - IMAGE_BASE:#x}", "type": "ptr"},
                 {"name": f"cstack{i}_count", "base": f"cstack{i}", "off": "0x0", "type": "i32"})],
-            # entries 0/1 of stacks 1-3 and their vtables, to see who receives each player's input
+            # entries 0/1 and their vtables show who receives each player's input
             *[w for i in (1, 2, 3) for e in (0, 1) for w in (
                 {"name": f"cstack{i}_e{e}", "base": f"cstack{i}", "off": f"{8 + 8 * e:#x}", "type": "ptr"},
                 {"name": f"cstack{i}_e{e}_vt", "base": f"cstack{i}_e{e}", "off": "0x0", "type": "ptr"})],
-            # "System" heap object (static at 0x1409bb8a0): +0x120 free bytes, logged in MB steps by the loader
+            # "System" heap free bytes, logged in MB steps by the loader
             {"name": "sysheap_free", "rva": f"{0x1409BB8A0 + 0x120 - IMAGE_BASE:#x}", "type": "mb"},
         ],
         "optional_groups": optional,
@@ -219,7 +209,7 @@ def main():
 
 
 def write_catalog(doc_path):
-    """Regenerate docs/PATCHES.md from the patch document (loaded by path: `python -I` drops the script dir)."""
+    """Regenerate docs/PATCHES.md (patch_catalog loaded by path: `python -I` drops the script dir)."""
     import importlib.util
     import os
     here = os.path.dirname(os.path.abspath(__file__))

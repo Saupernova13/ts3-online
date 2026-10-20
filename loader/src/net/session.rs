@@ -12,47 +12,37 @@ const HELLO_US: u64 = 500_000;
 const PING_US: u64 = 1_000_000;
 const STATE_US: u64 = 16_000;
 const SAVE_REQ_US: u64 = 300_000;
-/// The host repeats its level name this often.
 const LEVEL_US: u64 = 1_000_000;
-/// The host repeats its wallet values this often.
 const WALLET_US: u64 = 1_000_000;
-/// World entries and client reports are resent this often until acknowledged.
 const WORLD_US: u64 = 200_000;
-/// Most distinct actors a client keeps host transforms for.
 const MAX_NPCS_IN: usize = 4096;
-/// Most unlisted reports a client keeps.
 const MAX_REPORTS: usize = 32;
-/// The host answers a client's `SaveRequest` at most this often.
+/// Per-client limit on answering `SaveRequest`.
 const SAVE_SERVE_US: u64 = 200_000;
-/// Chunks sent per `SaveRequest`.
 const SAVE_BURST: usize = 64;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    /// Client: the host accepted us.
     Connected { id: u8 },
-    /// Client: the host turned us away.
     Refused { reason: u8 },
-    /// Client: the host went silent or said goodbye; hellos resume.
+    /// Client: the host timed out or said bye; hellos resume.
     HostLost,
     PeerJoined { id: u8, name: String },
     PeerLeft { id: u8 },
     RosterChanged,
     Rtt { id: u8, ms: u32 },
-    /// A `ProbeReply` arrived (discovery and host merging).
+    /// A `ProbeReply` arrived.
     Discovered { from: SocketAddr, build: u64, host: bool, players: u8, name: String },
-    /// Host: the save went out to a client (first service of its request).
+    /// Host: on the first serve to a client.
     SaveSent { id: u8, bytes: usize },
-    /// Client: the host's save arrived complete and its CRC matched.
+    /// Complete and CRC-checked.
     SaveReceived(Vec<u8>),
-    /// Client: the host has no save to send.
     SaveMissing,
-    /// Client: a complete download failed its CRC; it restarts.
+    /// A complete download failed its CRC; it restarts.
     SaveBad,
-    /// Host: a client's game switched to this level and asks us to follow.
+    /// A client asks the host to follow it to this level.
     LevelRequested { id: u8, name: String },
-    /// Host: spends of a client not seen before, as (wallet index, delta) in order.
-    /// `upto` is the seq to acknowledge once the game thread applied them (`confirm_spends`).
+    /// New spends as (wallet index, delta), in order; pass `upto` to `confirm_spends` once applied.
     Spend { id: u8, deltas: Vec<(u8, i32)>, upto: u32 },
 }
 
@@ -63,7 +53,6 @@ enum Link {
     Refused,
 }
 
-/// The local player's state waiting for the next send.
 #[derive(Clone, Copy)]
 struct Local {
     level: u32,
@@ -75,17 +64,14 @@ struct Local {
     flags: u32,
 }
 
-/// A remote end we exchange datagrams with (every client on the host, the host on a client).
+/// Every client on the host; the host on a client.
 struct Peer {
     addr: SocketAddr,
     id: u8,
     last_seen: u64,
-    /// host side: the save read for this client, once `save_read`
     save: Option<Vec<u8>>,
     save_read: bool,
-    /// host side: when this client's last `SaveRequest` was answered
     last_save_serve: Option<u64>,
-    /// host side: highest world seq this client acknowledged, highest sent, when the last `World` went out
     world_acked: u32,
     world_sent: u32,
     last_world: Option<u64>,
@@ -94,9 +80,9 @@ struct Peer {
 pub struct Session {
     build: u64,
     name: String,
-    /// the shared `net_key`; empty when there is none
+    /// `net_key`; empty when unset.
     key: Vec<u8>,
-    /// `Some` on a client: the only address we talk to.
+    /// `None` on the host; on a client, the only address we talk to.
     host_addr: Option<SocketAddr>,
     link: Link,
     local_id: Option<u8>,
@@ -105,9 +91,7 @@ pub struct Session {
     rtt: BTreeMap<u8, u32>,
     states: BTreeMap<u8, State>,
     pending: Option<Local>,
-    /// `State.target` of the local player
     local_target: u32,
-    /// `State.proj` of the local player
     local_proj: Proj,
     state_seq: u32,
     last_state: Option<u64>,
@@ -116,45 +100,37 @@ pub struct Session {
     ping_seq: u32,
     out: Vec<(SocketAddr, Vec<u8>)>,
     events: Vec<Event>,
-    /// host: where the save to send comes from
     save_source: Option<Box<dyn Fn() -> Option<Vec<u8>> + Send>>,
-    /// client: fetch the host save after connecting
     want_save: bool,
     save_done: bool,
     rx: Option<Reassembler>,
     last_save_req: Option<u64>,
-    /// host: the level the local game is in
     local_level: String,
     last_level: Option<u64>,
-    /// client: the level the host last reported
     host_level: Option<String>,
-    /// host: the local wallet values, which spends of each client were applied
     wallet: Vec<i32>,
     spent: HostWallet,
-    /// host: per client, the highest spend seq the game applied; this is what `Wallet.acked` carries
+    /// Host: per client, the highest spend seq the game applied; sent as `Wallet.acked`.
     published: HashMap<u8, u32>,
     wallet_dirty: bool,
     last_wallet: Option<u64>,
-    /// client: the latest `Wallet` from the host, until taken
     host_wallet: Option<(Vec<i32>, u32)>,
-    /// the local play level hash (0 outside one) world events are about
+    /// Level hash; 0 outside a level.
     world_level: u32,
-    /// host: the authoritative list for `world_level`
+    /// Host: the authoritative (seq, event, name) list.
     world: Vec<(u32, String, String)>,
-    /// client: highest contiguous seq received for `world_level`
+    /// Client: highest contiguous seq received.
     world_seq: u32,
-    /// client: reports the host has not listed yet, resent every `WORLD_US`
+    /// Client: reports the host has not listed yet.
     reports: Vec<(String, String)>,
     last_report: Option<u64>,
-    /// client: every (event, name) the host listed for `world_level`
     world_seen: Vec<(String, String)>,
-    /// entries for the game thread to replay: the host list on a client, accepted reports on the host
+    /// To replay locally: the host list on a client, accepted reports on the host.
     world_apply: Vec<(u32, String, String)>,
-    /// client: the latest host transform per actor hash for `world_level`, until taken
+    /// Client: actor hash to latest (pos, yaw).
     npcs_in: HashMap<u32, ([f32; 3], f32)>,
 }
 
-/// `new` is ahead of `old` in wrapping sequence order.
 fn newer(new: u32, old: u32) -> bool {
     new.wrapping_sub(old) as i32 > 0
 }
@@ -217,17 +193,15 @@ impl Session {
         Session::new(build, name, Some(host_addr))
     }
 
-    /// The shared password every datagram (but probes and refusals) is tagged with.
+    /// Tags every datagram except probes and refusals.
     pub fn set_key(&mut self, key: &[u8]) {
         self.key = key.to_vec();
     }
 
-    /// Host: how to read the save when a client asks for it.
     pub fn set_save_source(&mut self, f: impl Fn() -> Option<Vec<u8>> + Send + 'static) {
         self.save_source = Some(Box::new(f));
     }
 
-    /// Client: whether to fetch the host save (on by default).
     pub fn set_want_save(&mut self, want: bool) {
         self.want_save = want;
     }
@@ -248,13 +222,11 @@ impl Session {
         self.rtt.get(&id).copied()
     }
 
-    /// Latest state of every remote player.
     pub fn remote_states(&self) -> Vec<(u8, State)> {
         self.states.iter().map(|(i, s)| (*i, *s)).collect()
     }
 
-    /// Queues the local player's state; the next `tick` past the rate limit sends it. Buttons of
-    /// an update that was never sent are kept, so a short tap survives the rate limit.
+    /// Sent on the next rate-limited `tick`; unsent buttons are merged in so a short tap survives.
     pub fn set_local_state(&mut self, level: u32, class: u8, pos: [f32; 3], yaw: f32, cam: f32, pad: Pad, flags: u32) {
         let mut pad = pad;
         if let Some(old) = self.pending {
@@ -263,17 +235,17 @@ impl Session {
         self.pending = Some(Local { level, class, pos, yaw, cam, pad, flags });
     }
 
-    /// The local player's pick-up or carry target (`State.target`), sent with each state.
+    /// Pick-up or carry target (`State.target`).
     pub fn set_local_target(&mut self, target: u32) {
         self.local_target = target;
     }
 
-    /// The local player's object in flight (`State.proj`), sent with each state.
+    /// Object in flight (`State.proj`).
     pub fn set_local_proj(&mut self, proj: Proj) {
         self.local_proj = proj;
     }
 
-    /// Host: the level name of the local game ("" outside a level); a change goes out at once.
+    /// Host: "" outside a level; a change is sent at once.
     pub fn set_local_level_name(&mut self, name: &str) {
         let name = proto::clamp_level(name);
         if self.local_level == name {
@@ -285,19 +257,17 @@ impl Session {
         }
     }
 
-    /// Client: the level name the host last reported.
     pub fn host_level_name(&self) -> Option<String> {
         self.host_level.clone()
     }
 
-    /// Client: asks the host to follow our game to `name`.
+    /// Client: asks the host to follow us to `name`.
     pub fn request_level(&mut self, name: &str) {
         if let (Some(host), Link::Connected) = (self.host_addr, self.link) {
             self.send(host, &Msg::LevelRequest { name: name.to_string() });
         }
     }
 
-    /// Host: the local wallet values; a change goes out at once.
     pub fn set_local_wallet(&mut self, values: &[i32]) {
         if self.wallet != values {
             self.wallet = values.to_vec();
@@ -305,7 +275,7 @@ impl Session {
         }
     }
 
-    /// Host: the game applied the spends of `id` up to `upto`; the next wallet send acknowledges them.
+    /// Host: the game applied `id`'s spends up to `upto`; the next wallet send acks them.
     pub fn confirm_spends(&mut self, id: u8, upto: u32) {
         let e = self.published.entry(id).or_insert(0);
         if upto > *e {
@@ -314,20 +284,19 @@ impl Session {
         }
     }
 
-    /// Client: the latest wallet values and acked spend seq from the host.
+    /// Client: (wallet values, acked spend seq).
     pub fn take_host_wallet(&mut self) -> Option<(Vec<i32>, u32)> {
         self.host_wallet.take()
     }
 
-    /// Client: sends the unacknowledged spends to the host.
+    /// Client: pass every unacked spend.
     pub fn send_spends(&mut self, spends: &[(u32, u8, i32)]) {
         if let (Some(host), Link::Connected, false) = (self.host_addr, self.link, spends.is_empty()) {
             self.send(host, &Msg::Spend { spends: spends.to_vec() });
         }
     }
 
-    /// The local play level (0 outside one). A change drops the world list (host) or the received
-    /// state and pending reports (client).
+    /// 0 outside a level; a change resets all world state.
     pub fn set_world_level(&mut self, level: u32) {
         if self.world_level == level {
             return;
@@ -350,8 +319,7 @@ impl Session {
         }
     }
 
-    /// A world event the local game produced in `level`. Host: appended to the list. Client: reported to
-    /// the host until listed. True when it was new.
+    /// A local world event. Host: listed. Client: reported until listed. True if new.
     pub fn world_local(&mut self, level: u32, event: &str, name: &str) -> bool {
         if level == 0 || level != self.world_level || !world::valid_entry(event, name) {
             return false;
@@ -368,7 +336,7 @@ impl Session {
         }
     }
 
-    /// Host: appends to the list unless it is there already or full; the new seq.
+    /// The new seq; None if already listed or full.
     fn world_add(&mut self, event: &str, name: &str) -> Option<u32> {
         if self.world_level == 0 || self.world.len() >= world::MAX_LIST || self.world.iter().any(|(_, e, n)| e == event && n == name) {
             return None;
@@ -378,12 +346,12 @@ impl Session {
         Some(seq)
     }
 
-    /// Entries to replay in the local game, as (level, event, name).
+    /// As (level, event, name).
     pub fn take_world_apply(&mut self) -> Vec<(u32, String, String)> {
         std::mem::take(&mut self.world_apply)
     }
 
-    /// Client: the host's `World` for our level; takes the next entries in order and acknowledges.
+    /// Takes entries strictly in seq order, then acks the highest contiguous seq.
     fn on_world(&mut self, from: SocketAddr, level: u32, mut entries: Vec<(u32, String, String)>) {
         if level == 0 || level != self.world_level {
             return;
@@ -401,7 +369,7 @@ impl Session {
         self.send(from, &Msg::WorldAck { level, seq: self.world_seq });
     }
 
-    /// Host: sends each client the entries it has not acknowledged: new ones at once, the rest every `WORLD_US`.
+    /// New entries go out at once; unacked ones are resent every `WORLD_US`.
     fn send_world(&mut self, now: u64) {
         let latest = self.world.last().map_or(0, |e| e.0);
         for i in 0..self.peers.len() {
@@ -424,7 +392,6 @@ impl Session {
         }
     }
 
-    /// Host: sends the moving actors' transforms of `level` to every client, in as many datagrams as needed.
     /// Unreliable: the caller resends whatever is still moving.
     pub fn set_npcs(&mut self, level: u32, entries: &[(u32, [f32; 3], f32)]) {
         if !self.is_host() || level == 0 || level != self.world_level {
@@ -439,7 +406,6 @@ impl Session {
         }
     }
 
-    /// Client: keeps the host's transforms for our level; the latest per actor wins.
     fn on_npcs(&mut self, level: u32, entries: Vec<(u32, [f32; 3], f32)>) {
         if level == 0 || level != self.world_level {
             return;
@@ -451,12 +417,10 @@ impl Session {
         }
     }
 
-    /// Client: the host transforms received since the last call.
     pub fn take_npcs(&mut self) -> Vec<(u32, [f32; 3], f32)> {
         self.npcs_in.drain().map(|(h, (p, y))| (h, p, y)).collect()
     }
 
-    /// Host: a client report becomes a list entry and something the local game replays.
     fn on_world_report(&mut self, level: u32, event: String, name: String) {
         if level == 0 || level != self.world_level || !world::valid_entry(&event, &name) {
             return;
@@ -466,7 +430,6 @@ impl Session {
         }
     }
 
-    /// Client: resends the reports the host has not listed.
     fn send_reports(&mut self, host: SocketAddr, now: u64) {
         if self.reports.is_empty() || !Self::due(&mut self.last_report, now, WORLD_US) {
             return;
@@ -500,7 +463,6 @@ impl Session {
         std::mem::take(&mut self.events)
     }
 
-    /// Tells the other side we are leaving.
     pub fn leave(&mut self) {
         let Some(id) = self.local_id else { return };
         let addrs: Vec<SocketAddr> = self.peers.iter().map(|p| p.addr).collect();
@@ -525,9 +487,9 @@ impl Session {
             Ok(Msg::Check { .. } | Msg::CheckReply { .. }) => {}
             Ok(msg) if self.is_host() => self.host_msg(from, msg, now_us),
             Ok(msg) => self.client_msg(from, msg, now_us),
-            // never answer a refusal: two hosts of different versions would refuse each other forever
+            // never answer a refusal, or two hosts of different versions refuse each other forever
             Err(DecodeError::Version(_)) if self.is_host() && !proto::is_refuse(bytes) => self.send(from, &Msg::Refuse { reason: proto::REFUSE_PROTOCOL }),
-            // the host runs another version: ends the attempt like any refusal
+            // the host runs another version: treat as a refusal
             Err(DecodeError::Version(_)) if !self.is_host() && proto::refused_version(bytes).is_some() => self.client_msg(from, Msg::Refuse { reason: proto::REFUSE_PROTOCOL }, now_us),
             Err(DecodeError::BadKey) if self.is_host() && proto::asks_key(bytes) => self.send(from, &Msg::Refuse { reason: proto::REFUSE_KEY }),
             Err(_) => {}
@@ -551,7 +513,6 @@ impl Session {
         }
     }
 
-    /// Pings and local-state sends common to both roles.
     fn tick_traffic(&mut self, now: u64) {
         let addrs: Vec<SocketAddr> = self.peers.iter().map(|p| p.addr).collect();
         if Self::due(&mut self.last_ping, now, PING_US) {
@@ -627,13 +588,12 @@ impl Session {
                 let deltas = self.spent.accept(id, &spends);
                 let upto = self.spent.acked(id);
                 if deltas.is_empty() {
-                    // nothing for the game to apply: acknowledge at once
+                    // nothing to apply: ack at once
                     if upto != before {
                         self.confirm_spends(id, upto);
                     }
                 } else {
-                    // acknowledged with the value that includes them, so a client never sees the ack
-                    // on a wallet that does not have the spend yet
+                    // acked only once applied, so an ack never arrives with a wallet lacking the spend
                     self.events.push(Event::Spend { id, deltas, upto });
                 }
             }
@@ -664,7 +624,6 @@ impl Session {
         self.broadcast_roster();
     }
 
-    /// Answers a `SaveRequest`: the info message, then the chunks the client lacks.
     fn serve_save(&mut self, i: usize, have: &[u8], now: u64) {
         if !Self::due(&mut self.peers[i].last_save_serve, now, SAVE_SERVE_US) {
             return;
@@ -855,7 +814,7 @@ mod tests {
         SocketAddr::from(([10, 0, 0, 1], n))
     }
 
-    /// Delivers everything `from` queued to the session at `to`.
+    /// Datagrams for other addresses are dropped.
     fn deliver(from_addr: SocketAddr, from: &mut Session, to_addr: SocketAddr, to: &mut Session, now: u64) {
         for (dest, bytes) in from.drain_outgoing() {
             if dest == to_addr {
@@ -950,7 +909,7 @@ mod tests {
         assert_eq!(msgs(&mut host), vec![(addr(1), Msg::Refuse { reason: proto::REFUSE_PROTOCOL })]);
         host.handle(addr(1), b"junk", 0);
         assert!(host.drain_outgoing().is_empty());
-        // another version's refusal is not answered (two hosts would otherwise loop)
+        // another version's refusal is not answered
         let mut refuse = encode(&Msg::Refuse { reason: proto::REFUSE_PROTOCOL });
         refuse[4] = 200;
         host.handle(addr(2), &refuse, 0);
@@ -984,7 +943,7 @@ mod tests {
         assert_eq!(host.drain_events(), vec![Event::PeerLeft { id: 1 }, Event::RosterChanged]);
         assert_eq!(host.roster().len(), 1);
 
-        // the client hears nothing for 5 s, gives up on the host, then says hello again
+        // the client times out the host, then says hello again
         c.tick(4999 * MS);
         assert!(c.drain_events().iter().all(|e| !matches!(e, Event::HostLost)));
         c.drain_outgoing();
@@ -993,7 +952,6 @@ mod tests {
         assert_eq!(c.local_id(), None);
         c.tick(5001 * MS);
         assert!(matches!(msgs(&mut c)[..], [(_, Msg::Hello { .. })]));
-        // and gets back in
         c.tick(5501 * MS);
         deliver(addr(1), &mut c, addr(H), &mut host, 5501 * MS);
         deliver(addr(H), &mut host, addr(1), &mut c, 5501 * MS);
@@ -1022,13 +980,13 @@ mod tests {
         c.drain_events();
         host.drain_outgoing();
         c.drain_outgoing();
-        // client pings at t=0 (first tick after connecting), host answers 40 ms later
+        // ping at t=0, pong back at 40 ms
         c.tick(0);
         deliver(addr(1), &mut c, addr(H), &mut host, 20 * MS);
         deliver(addr(H), &mut host, addr(1), &mut c, 40 * MS);
         assert_eq!(c.drain_events(), vec![Event::Rtt { id: 0, ms: 40 }]);
         assert_eq!(c.rtt_ms(0), Some(40));
-        // the host pings too (it already sent one in the same exchange)
+        // the host pings too
         host.tick(0);
         deliver(addr(H), &mut host, addr(1), &mut c, 5 * MS);
         deliver(addr(1), &mut c, addr(H), &mut host, 30 * MS);
@@ -1157,7 +1115,7 @@ mod tests {
         let mut c = Session::client(BUILD, "bob", addr(H));
         connect(&mut host, &mut c, addr(1), addr(H), 0);
         c.drain_events();
-        // first request: the network drops every third chunk
+        // drop every third chunk of the first answer
         c.tick(10 * MS);
         deliver(addr(1), &mut c, addr(H), &mut host, 10 * MS);
         let mut n = 0;
@@ -1173,7 +1131,7 @@ mod tests {
             }
         }
         assert!(!c.drain_events().iter().any(|e| matches!(e, Event::SaveReceived(_))));
-        // the next request carries the bitmap and gets only the missing chunks
+        // the next request's bitmap gets only the missing chunks
         c.tick(400 * MS);
         let req = msgs(&mut c).into_iter().find_map(|(_, m)| if let Msg::SaveRequest { have } = m { Some(have) } else { None });
         let have = req.unwrap_or_default();
@@ -1240,7 +1198,7 @@ mod tests {
         a.handle(addr(H), &encode(&Msg::Level { name: "ST_ToyBox".into() }), 0);
         assert_eq!(a.host_level_name().as_deref(), Some("ST_ToyBox"));
         assert_eq!(b.host_level_name().as_deref(), Some("")); // from its welcome, before the change
-        // unchanged: nothing new; the periodic resend repeats it
+        // unchanged: only the periodic resend repeats it
         host.set_local_level_name("ST_ToyBox");
         assert!(levels(&mut host).is_empty());
         host.tick(10 * MS);
@@ -1298,7 +1256,7 @@ mod tests {
         assert_eq!(c.take_host_wallet(), Some((vec![500, 7], 0)));
         assert_eq!(c.take_host_wallet(), None);
 
-        // the client spends; the host applies it once however often it is resent
+        // a spend is applied once however often it is resent
         let spends = [(1, 0, -200)];
         for t in [2, 3] {
             c.send_spends(&spends);
@@ -1307,7 +1265,7 @@ mod tests {
         let ev = host.drain_events();
         assert_eq!(ev.iter().filter(|e| matches!(e, Event::Spend { .. })).count(), 1);
         assert!(ev.contains(&Event::Spend { id: 1, deltas: vec![(0, -200)], upto: 1 }));
-        // no ack before the game applied the spend, even on the once-a-second send
+        // no ack before the game applies it, even on the periodic send
         host.tick(1500 * MS);
         deliver(addr(H), &mut host, addr(1), &mut c, 1500 * MS);
         assert_eq!(c.take_host_wallet(), Some((vec![500, 7], 0)));
@@ -1379,7 +1337,7 @@ mod tests {
             assert_eq!(c.drain_events(), vec![Event::Refused { reason: proto::REFUSE_KEY }]);
             assert_eq!(host.roster().len(), 1);
         }
-        // a keyed client against an open host is not welcomed: the host cannot verify its tag
+        // an open host cannot verify a keyed client's tag
         let (mut host, mut c) = keyed_pair(b"", b"secret");
         connect(&mut host, &mut c, addr(1), addr(H), 0);
         assert_eq!(host.roster().len(), 1);
@@ -1391,7 +1349,7 @@ mod tests {
         connect(&mut host, &mut c, addr(1), addr(H), 0);
         host.drain_events();
         host.drain_outgoing();
-        // a spoofed state and bye with the wrong key change nothing and draw no answer
+        // wrong-key state and bye: no effect, no answer
         let st = State { id: 1, seq: 9, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Proj::default() };
         host.handle(addr(1), &encode(&Msg::State(st)), MS);
         host.handle(addr(1), &encode(&Msg::Bye { id: 1 }), MS);
@@ -1560,7 +1518,7 @@ mod tests {
         msgs(s).into_iter().filter_map(|(a, m)| if let Msg::World { level, entries } = m { Some((a, level, entries)) } else { None }).collect()
     }
 
-    /// Host and one client in the same level, handshake done, queues empty.
+    /// Connected host and client in level `L`, queues drained.
     fn world_pair() -> (Session, Session) {
         let mut host = Session::host(BUILD, "h");
         let mut c = Session::client(BUILD, "bob", addr(H));
@@ -1631,7 +1589,7 @@ mod tests {
         }
         host.tick(MS);
         let all = worlds(&mut host).remove(0).2;
-        // entry 1 is lost: 2 and 3 are not taken out of order and nothing is acked beyond 0
+        // entry 1 lost: 2 and 3 wait and the ack stays at 0
         c.handle(addr(H), &encode(&Msg::World { level: L, entries: all[1..].to_vec() }), MS);
         assert!(c.take_world_apply().is_empty());
         assert_eq!(msgs(&mut c), vec![(addr(H), Msg::WorldAck { level: L, seq: 0 })]);
@@ -1705,7 +1663,7 @@ mod tests {
         assert_eq!(reports(&mut c), 0);
         c.tick(250 * MS);
         assert_eq!(reports(&mut c), 1);
-        // the host accepts it once, lists it and has its own game replay it
+        // accepted once, listed, and replayed on the host
         let report = encode(&Msg::WorldReport { level: L, event: EV.into(), refname: "Crate_9".into() });
         host.handle(addr(1), &report, 260 * MS);
         host.handle(addr(1), &report, 261 * MS);
@@ -1718,7 +1676,7 @@ mod tests {
         c.drain_outgoing();
         c.tick(600 * MS);
         assert_eq!(reports(&mut c), 0);
-        // and an event the host already listed is not reported again
+        // a listed event is not reported again
         assert!(!c.world_local(L, EV, "Crate_9"));
     }
 
@@ -1730,9 +1688,9 @@ mod tests {
             s.handle(addr(1), &b, MS);
             s.take_world_apply().len()
         };
-        assert_eq!(report(&mut host, L + 1, EV, "Crate_1"), 0); // wrong level
+        assert_eq!(report(&mut host, L + 1, EV, "Crate_1"), 0);
         assert_eq!(report(&mut host, L, "SwitchLevel", "Crate_1"), 0); // unknown event
-        assert_eq!(report(&mut host, L, EV, "bad name"), 0); // bad name
+        assert_eq!(report(&mut host, L, EV, "bad name"), 0);
         assert_eq!(report(&mut host, L, EV, ""), 0);
         assert_eq!(report(&mut host, 0, EV, "Crate_1"), 0);
         host.tick(10 * MS);

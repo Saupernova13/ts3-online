@@ -35,7 +35,7 @@ fn read_val(mem: &dyn Mem, addr: u64, ty: Ty) -> Option<Val> {
     }
 }
 
-/// Evaluates every entry in order; a based entry needs an earlier non-null ptr entry of that name.
+/// A based entry needs an earlier non-null ptr entry of that name.
 pub fn eval(mem: &dyn Mem, module_base: u64, watch: &[Watch]) -> Vec<(String, Option<Val>)> {
     let mut seen: HashMap<&str, Option<Val>> = HashMap::new();
     let mut out = Vec::with_capacity(watch.len());
@@ -54,14 +54,13 @@ pub fn eval(mem: &dyn Mem, module_base: u64, watch: &[Watch]) -> Vec<(String, Op
     out
 }
 
-/// Remembers the last values and yields the entries that changed since.
 #[derive(Default)]
 pub struct Tracker {
     last: HashMap<String, Option<Val>>,
 }
 
 impl Tracker {
-    /// Returns `(name, old, new)` for every change; the first sample counts as None -> value only if not None.
+    /// `(name, old, new)` per change; a first sample of None is not a change.
     pub fn update(&mut self, now: &[(String, Option<Val>)]) -> Vec<(String, Option<Val>, Option<Val>)> {
         let mut changes = Vec::new();
         for (name, v) in now {

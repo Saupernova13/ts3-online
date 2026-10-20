@@ -1,5 +1,5 @@
-// Batch query runner for headless Ghidra. Reads one command per line from a file so
-// shells never have to quote addresses, regexes or commas.
+// Headless Ghidra query runner: one command per line from a file, so shells never quote
+// addresses, regexes or commas.
 //
 // args: <cmdfile> <outfile>
 //

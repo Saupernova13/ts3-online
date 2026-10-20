@@ -1,28 +1,23 @@
-//! Wire format: `b"TS3O"`, protocol version u16, message type u8, body, 16-byte tag. Little-endian, no padding.
-//! The tag is the first 16 bytes of HMAC-SHA256 over everything before it; `Probe`, `ProbeReply` and
-//! `Refuse` use the empty key so a host can be found and can turn a wrong key away, the rest the session key.
+//! Wire format: `b"TS3O"`, version u16, type u8, body, 16-byte tag; little-endian, no padding.
+//! Tag: HMAC-SHA256 of everything before it, cut to 16 bytes; session key, except the empty key for
+//! `Probe`, `ProbeReply` and `Refuse` so a host can be found and can refuse a wrong key.
 use crate::world;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
 pub const VERSION: u16 = 13;
-/// Length of the authentication tag that ends every datagram.
 pub const TAG_LEN: usize = 16;
-/// Zero bytes after a `Probe`'s build, so a probe is never shorter than the reply it provokes.
+/// Zero bytes after a `Probe`'s build, so a probe is never shorter than its reply.
 pub const PROBE_PAD: usize = 40;
-/// Largest `SaveChunk` payload we accept.
 pub const MAX_CHUNK: usize = 1200;
 pub const MAX_NAME: usize = 32;
-/// Longest level name on the wire.
 pub const MAX_LEVEL: usize = 64;
-/// Most wallet values in a `Wallet` message.
 pub const MAX_WALLETS: usize = 16;
-/// Most spends in a `Spend` message.
 pub const MAX_SPENDS: usize = 64;
-/// Most entries in a `World` message (8 x up to 117 bytes stays well under 1200).
+/// 8 entries of up to 117 bytes stay well under 1200.
 pub const MAX_WORLD: usize = 8;
-/// Most entries in an `Npcs` message (20 bytes each, a datagram stays under ~1000 bytes).
+/// 20 bytes each: a datagram stays under ~1000 bytes.
 pub const MAX_NPCS: usize = 48;
 
 pub const REFUSE_FULL: u8 = 1;
@@ -66,34 +61,33 @@ pub struct Pad {
     pub ry: i16,
 }
 
-/// Class byte for a character the receiver cannot place.
 pub const CLASS_UNKNOWN: u8 = 255;
 
-/// One player's transform, controller and action flags, sent by its owner.
+/// One player's state, sent by its owner.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct State {
     pub id: u8,
     pub seq: u32,
-    /// FNV-1a of the lowercase level name, 0 when not in a level
+    /// `level_hash` of the current level; 0 outside one
     pub level: u32,
     /// 0 buzz, 1 woody, 2 jessie, 255 unknown
     pub class: u8,
     pub pos: [f32; 3],
     pub yaw: f32,
-    /// the sender's camera heading (radians), to rotate its stick into the receiver's view
+    /// camera heading (radians), to rotate the stick into the receiver's view
     pub cam: f32,
     pub pad: Pad,
     pub flags: u32,
-    /// what the player would pick up or is carrying; its kind is in `flags` (`coop::TARGET_*`)
+    /// pick-up or carry target; its kind is in `flags` (`coop::TARGET_*`)
     pub target: u32,
-    /// the latest object this player threw, while it flies (`seq` 0: none)
+    /// latest thrown object while in flight (`seq` 0: none)
     pub proj: Proj,
 }
 
-/// A thrown object's physics state as its thrower's copy sees it.
+/// A thrown object's physics state, from the thrower's copy.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Proj {
-    /// counts the owner's throws, wrapping past 255 to 1; 0 means no object in flight
+    /// throw counter, wraps 255 to 1; 0: nothing in flight
     pub seq: u8,
     pub pos: [f32; 3],
     pub vel: [f32; 3],
@@ -102,7 +96,7 @@ pub struct Proj {
 /// Positions beyond this are not a real level.
 const MAX_COORD: f32 = 1.0e6;
 
-/// The state's numbers are finite and in range; anything else is dropped, not stored or relayed.
+/// A state that fails this is dropped, not stored or relayed.
 pub fn sane(s: &State) -> bool {
     let coord = |v: &f32| v.is_finite() && v.abs() <= MAX_COORD;
     let speed = |v: &f32| v.is_finite() && v.abs() <= MAX_SPEED;
@@ -112,12 +106,11 @@ pub fn sane(s: &State) -> bool {
 /// Thrown-object speeds beyond this (m/s) are not real.
 const MAX_SPEED: f32 = 1.0e3;
 
-/// Empty, or 1..=`MAX_LEVEL` bytes of `[A-Za-z0-9_]`.
 pub fn valid_level(name: &str) -> bool {
     name.len() <= MAX_LEVEL && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-/// 32-bit FNV-1a of the lowercase level name; 0 for an empty name.
+/// FNV-1a of the lowercase name; 0 for an empty one.
 pub fn level_hash(name: &str) -> u32 {
     if name.is_empty() {
         return 0;
@@ -135,33 +128,30 @@ pub enum Msg {
     Pong { seq: u32, t_us: u64 },
     State(State),
     Bye { id: u8 },
-    /// Discovery: "is there a host here?" (answered by any running copy, never relayed)
+    /// Discovery; answered by any running copy, never relayed.
     Probe { build: u64 },
     ProbeReply { build: u64, host: bool, players: u8, locked: bool, name: String },
-    /// Client to host: send the save; `have` is a bitmap of the chunks already received.
+    /// Client to host; `have` is a bitmap of chunks already received.
     SaveRequest { have: Vec<u8> },
     SaveInfo { total: u32, crc: u32 },
     SaveChunk { total: u32, offset: u32, data: Vec<u8> },
-    /// Host to clients: the host's current level name, empty outside a level.
+    /// Host to clients: current level name, empty outside a level.
     Level { name: String },
-    /// Client to host: "my game switched to this level, please follow".
+    /// Client to host: "I switched to this level, follow me".
     LevelRequest { name: String },
-    /// Host to one client: the host's wallet values (in `wallet::WALLETS` order) and the highest
-    /// spend seq the host has applied from that client.
+    /// Host to one client: values in `wallet::WALLETS` order; `acked` is its highest spend seq applied.
     Wallet { values: Vec<i32>, acked: u32 },
-    /// Client to host: every unacknowledged spend as (seq, wallet index, delta), resent until acked.
+    /// Client to host: unacked spends as (seq, wallet index, delta), resent until acked.
     Spend { spends: Vec<(u32, u8, i32)> },
-    /// Host to one client: the world events of `level` the client has not acknowledged, as (seq, event, reference name).
+    /// Host to one client: unacked world events of `level` as (seq, event, reference name).
     World { level: u32, entries: Vec<(u32, String, String)> },
-    /// Client to host: the highest contiguous `World` seq received for `level`.
+    /// Client to host: highest contiguous `World` seq received for `level`.
     WorldAck { level: u32, seq: u32 },
-    /// Client to host: a world event the client's own game produced, resent until the host lists it.
+    /// Client to host: an event from the client's own game, resent until the host lists it.
     WorldReport { level: u32, event: String, refname: String },
-    /// Host to clients, unreliable (latest wins): transforms of moving named actors of `level` as
-    /// (reference-name hash, position, yaw).
+    /// Host to clients, unreliable (latest wins): moving named actors as (reference-name hash, pos, yaw).
     Npcs { level: u32, entries: Vec<(u32, [f32; 3], f32)> },
-    /// Connect menu to host, tagged with the menu's password: "would my password get me in?" A host
-    /// answers `CheckReply` with the same nonce, or `Refuse` with `REFUSE_KEY` when the tag fails.
+    /// Connect menu's password test, tagged with it; answered by `CheckReply` (same nonce) or `REFUSE_KEY`.
     Check { nonce: u64 },
     CheckReply { nonce: u64 },
 }
@@ -170,13 +160,11 @@ pub enum Msg {
 pub enum DecodeError {
     /// Not one of ours, or cut short.
     Malformed,
-    /// Ours, but another protocol version.
     Version(u16),
-    /// Ours and the right version, but the tag does not verify: another `net_key`, or tampered.
+    /// Tag does not verify: another `net_key`, or tampered.
     BadKey,
 }
 
-/// `name` cut to at most `MAX_NAME` bytes on a char boundary.
 pub fn clamp_name(name: &str) -> &str {
     let mut end = name.len().min(MAX_NAME);
     while !name.is_char_boundary(end) {
@@ -191,7 +179,6 @@ fn put_name(out: &mut Vec<u8>, name: &str) {
     out.extend_from_slice(n.as_bytes());
 }
 
-/// `name` cut to at most `MAX_LEVEL` bytes on a char boundary.
 pub fn clamp_level(name: &str) -> &str {
     let mut end = name.len().min(MAX_LEVEL);
     while !name.is_char_boundary(end) {
@@ -206,14 +193,14 @@ fn put_level(out: &mut Vec<u8>, name: &str) {
     out.extend_from_slice(n.as_bytes());
 }
 
-/// Writes a length-prefixed string of at most 255 bytes (callers keep world strings valid and short).
+/// Only caps at 255 bytes; callers keep world strings valid and short.
 fn put_str(out: &mut Vec<u8>, s: &str) {
     let b = &s.as_bytes()[..s.len().min(255)];
     out.push(b.len() as u8);
     out.extend_from_slice(b);
 }
 
-/// Whether datagrams of type `t` are tagged with the empty key.
+/// Types tagged with the empty key.
 fn public(t: u8) -> bool {
     matches!(t, T_REFUSE | T_PROBE | T_PROBE_REPLY)
 }
@@ -223,24 +210,23 @@ fn mac(key: &[u8]) -> Hmac<Sha256> {
     Hmac::<Sha256>::new_from_slice(key).unwrap_or_else(|_| unreachable!())
 }
 
-/// Whether `bytes` is a `Hello` or `Check` frame (the two a wrong key is answered for).
+/// `Hello` or `Check`: the frames a wrong key is answered for.
 pub fn asks_key(bytes: &[u8]) -> bool {
     matches!(bytes.get(6), Some(&T_HELLO | &T_CHECK))
 }
 
-/// The sender's protocol version when `bytes` is another version's refusal of ours for a protocol
-/// mismatch (magic, version, type and reason sit at the same offsets in every version).
+/// The sender's version if `bytes` is another version's `REFUSE_PROTOCOL` refusal.
+/// Magic, version, type and reason keep their offsets in every version.
 pub fn refused_version(bytes: &[u8]) -> Option<u16> {
     let v = u16::from_le_bytes([*bytes.get(4)?, *bytes.get(5)?]);
     (is_refuse(bytes) && v != VERSION && bytes.get(7) == Some(&REFUSE_PROTOCOL)).then_some(v)
 }
 
-/// Whether `bytes` is a `Refuse` frame, of any version (its type byte has not moved).
+/// A `Refuse` of any version (its type byte never moves).
 pub fn is_refuse(bytes: &[u8]) -> bool {
     bytes.get(..4) == Some(MAGIC.as_slice()) && bytes.get(6) == Some(&T_REFUSE)
 }
 
-/// `msg` as a datagram tagged with `key` (the empty key for the public message types).
 pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
     let mut o = Vec::with_capacity(32);
     o.extend_from_slice(MAGIC);
@@ -394,7 +380,7 @@ pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
     o
 }
 
-/// Cursor over a datagram body; every read fails instead of panicking.
+/// Every read returns None instead of panicking.
 struct Reader<'a>(&'a [u8]);
 
 impl<'a> Reader<'a> {
@@ -431,7 +417,6 @@ impl<'a> Reader<'a> {
         }
         Some(String::from_utf8_lossy(self.take(n)?).chars().map(|c| if c.is_control() { '?' } else { c }).collect())
     }
-    /// A length-prefixed string of at most `max` bytes that `ok` accepts.
     fn checked(&mut self, max: usize, ok: impl Fn(&str) -> bool) -> Option<String> {
         let n = self.u8()? as usize;
         if n > max {
@@ -448,7 +433,7 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Parses and authenticates a datagram against `key` (ignored for the public message types).
+/// Authenticates as well as parses; `key` is ignored for public types.
 pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
     use DecodeError::Malformed;
     if bytes.get(..4) != Some(MAGIC.as_slice()) {
@@ -604,7 +589,6 @@ mod tests {
         decode(b, &[])
     }
 
-    /// Recomputes the tag after a test edited the body.
     fn retag(b: &mut Vec<u8>, key: &[u8]) {
         b.truncate(b.len() - TAG_LEN);
         let mut m = mac(if public(b[6]) { &[] } else { key });
@@ -805,7 +789,7 @@ mod tests {
     #[test]
     fn world_messages_are_capped_and_validated() {
         let entry = |i: u32| (i, "ExploderDestroy".to_string(), format!("Crate_{i}"));
-        // too many entries are cut on encode; invalid ones are skipped
+        // invalid entries are skipped, extras cut
         let mut entries: Vec<_> = (1..=30).map(entry).collect();
         entries.insert(0, (99, "ExploderDestroy".into(), "bad name".into()));
         entries.insert(1, (98, "Unlisted".into(), "Crate".into()));
@@ -816,7 +800,6 @@ mod tests {
         // the largest legal datagram stays well under the MTU
         let big = (0..MAX_WORLD as u32).map(|i| (i, "ExploderDestroy".to_string(), "x".repeat(world::MAX_REF))).collect();
         assert!(enc(&Msg::World { level: 1, entries: big }).len() < 1200);
-        // forged count / names are refused
         let mut forged = enc(&Msg::World { level: 1, entries: vec![entry(1)] });
         forged[11] = 200;
         retag(&mut forged, &[]);
@@ -848,11 +831,9 @@ b")] {
         }
         let full = enc(&Msg::Npcs { level: 5, entries: (0..MAX_NPCS as u32).map(entry).collect() });
         assert!(full.len() < 1100, "{}", full.len());
-        // truncated at every length
         for cut in 0..full.len() {
             assert!(dec(&full[..cut]).is_err(), "cut {cut}");
         }
-        // forged count
         let mut forged = enc(&Msg::Npcs { level: 1, entries: vec![entry(1)] });
         forged[11] = 200;
         retag(&mut forged, &[]);
@@ -860,7 +841,6 @@ b")] {
         forged[11] = 2; // more than the body holds
         retag(&mut forged, &[]);
         assert_eq!(dec(&forged), Err(DecodeError::Malformed));
-        // non-finite and out-of-range numbers
         for bad in [(1, [f32::NAN, 0.0, 0.0], 0.0), (1, [0.0, 2.0e6, 0.0], 0.0), (1, [0.0; 3], f32::INFINITY), (1, [0.0, 0.0, f32::NEG_INFINITY], 0.0)] {
             assert_eq!(dec(&enc(&Msg::Npcs { level: 1, entries: vec![bad] })), Err(DecodeError::Malformed), "{bad:?}");
         }
@@ -888,7 +868,6 @@ b")] {
             assert_eq!(encode(&m, KEY), encode(&m, &[]), "{m:?}");
             assert_eq!(decode(&encode(&m, b"a"), b"b"), Ok(m.clone()), "{m:?}");
         }
-        // everything else depends on it
         let m = Msg::Bye { id: 1 };
         assert_ne!(encode(&m, KEY), encode(&m, &[]));
     }

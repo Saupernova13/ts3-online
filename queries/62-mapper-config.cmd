@@ -1,4 +1,4 @@
-# BuzzControlMapper set-type (vt+0x38/+0x40), ctor, per-player setting lookup, users of the avatar's mapper
+# BuzzControlMapper set-type (vt+0x38/+0x40), ctor, per-player setting lookup, avatar mapper users
 maxlen 7000
 func 1402150b0
 func 140217460

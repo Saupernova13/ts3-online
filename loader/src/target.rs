@@ -1,22 +1,18 @@
-//! Pick-up targets: what each player would pick up (or carries), as an identity every copy can resolve.
-//! A partner's avatar on this copy picks up whatever is nearest here, which is not what its owner picked
-//! when the worlds differ; so the owner sends its candidate and this copy points the partner's
-//! `PlayerPerception` candidate at the same thing, or at nothing (FINDINGS 10).
+//! Pick-up targets as identities every copy can resolve. A partner here would pick up whatever is
+//! nearest here, so its candidate is pointed at what its owner picked, or at nothing (FINDINGS 10).
 use crate::net::proto::level_hash;
 use std::collections::HashMap;
 
 /// Kind of `State.target`, in `State.flags` bits 8-9.
 pub const TARGET_NONE: u32 = 0;
-/// `target` is a player id
 pub const TARGET_PLAYER: u32 = 1;
-/// `target` is the `level_hash` of a reference name
+/// `level_hash` of a reference name
 pub const TARGET_NAMED: u32 = 2;
-/// something this copy cannot name (a runtime spawn): partners pick up nothing
+/// unnameable (such as a runtime spawn): partners pick up nothing
 pub const TARGET_OTHER: u32 = 3;
 const SHIFT: u32 = 8;
 const MASK: u32 = 3 << SHIFT;
 
-/// A pick-up target as it goes on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     None,
@@ -78,8 +74,7 @@ impl RefIndex {
     }
 }
 
-/// The owner's candidate actor id as a `Target`: a player's avatar, a uniquely named actor, or other.
-/// `players` maps avatar actor ids on this copy to player ids.
+/// The owner's candidate as a `Target`; `players` maps avatar actor ids here to player ids.
 pub fn identify(candidate: u64, players: &[(u64, u8)], refname: Option<&str>, unique: bool) -> Target {
     if candidate == 0 {
         return Target::None;
@@ -93,7 +88,7 @@ pub fn identify(candidate: u64, players: &[(u64, u8)], refname: Option<&str>, un
     }
 }
 
-/// The actor id on this copy that `target` names (0 for none), given each player's avatar id here.
+/// The actor id here that `target` names, 0 for none.
 pub fn resolve(target: Target, players: &[(u64, u8)], index: &RefIndex) -> u64 {
     match target {
         Target::None | Target::Other => 0,
@@ -114,14 +109,13 @@ mod live {
     use std::sync::Mutex;
     use std::time::Instant;
 
-    /// `PlayerPerception` fields (FINDINGS 10): the carry target once a pick-up started, the state
-    /// (0 or 1 while only looking), and the nearest candidate the next pick-up takes.
+    /// `PlayerPerception` (FINDINGS 10): carry target, state (0-1 while looking), nearest pick-up candidate.
     const CARRY: u64 = 0x208;
     const STATE: u64 = 0x278;
     const CANDIDATE: u64 = 0x280;
     const ACTOR_ID: u64 = 0x38;
     const ACTOR_REF: u64 = 0x150;
-    /// The index is rebuilt at most this often when a name is not found.
+    /// Minimum interval between index rebuilds on a miss.
     const REBUILD_MS: u128 = 1000;
 
     struct Index {
@@ -165,12 +159,11 @@ mod live {
         out
     }
 
-    /// Every (reference name, actor id) in the actor manager's three lists.
     unsafe fn named_actors() -> Vec<(String, u64)> {
         named_actor_ptrs().into_iter().map(|(n, id, _)| (n, id)).collect()
     }
 
-    /// Resolves a named target, rebuilding the index on a new level or (rate-limited) on a miss.
+    /// Rebuilds the index on a new level, or on a miss at most every `REBUILD_MS`.
     pub unsafe fn named(level: u32, hash: u32) -> u64 {
         let Ok(mut guard) = INDEX.lock() else { return 0 };
         let g = guard.get_or_insert_with(|| Index { level: 0, built: None, index: RefIndex::default() });
@@ -184,7 +177,7 @@ mod live {
         g.index.get(hash).unwrap_or(0)
     }
 
-    /// The local player's target: its carry while it carries, else its nearest candidate.
+    /// The local player's carry while carrying, else its nearest candidate.
     pub unsafe fn local(avatar: u64, players: &[(u64, u8)], level: u32) -> Target {
         let comp = perception(avatar);
         if comp == 0 {
@@ -201,8 +194,7 @@ mod live {
         identify(id, players, name.as_deref(), unique)
     }
 
-    /// Points a partner avatar's pick-up candidate at `target` while it is only looking. Returns
-    /// whether the value written last frame was still there (false means the game rewrote it).
+    /// Points a partner's candidate at `target` while looking; false if the game rewrote last frame's write.
     pub unsafe fn steer(avatar: u64, target: Target, players: &[(u64, u8)], level: u32, last: &mut Option<u64>) -> bool {
         let comp = perception(avatar);
         if comp == 0 {
@@ -223,7 +215,6 @@ mod live {
         kept
     }
 
-    /// Logs a target change of the local player (research aid while this is tuned).
     pub fn log_change(prev: &mut Target, now: Target) {
         if *prev != now {
             log!("coop: local target {now:?}");

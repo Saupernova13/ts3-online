@@ -1,8 +1,7 @@
-// Lists every Kernel::CommandLineArgument the game registers and whether any code reads it.
-// A flag object referenced only by its registrar and atexit destructor is dead.
+// Lists every Kernel::CommandLineArgument the game registers and which functions use it.
+// A flag referenced only by its registrar and atexit destructor is dead.
 //
-// args: <outfile> [ctorAddr]   ctorAddr defaults to the CommandLineArgument ctor in the
-//                              build documented in docs/FINDINGS.md
+// args: <outfile> [ctorAddr]   default: the CommandLineArgument ctor of the documented build
 //
 // @category ts3-online
 import ghidra.app.script.GhidraScript;

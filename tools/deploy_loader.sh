@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# Copy the built loader (dinput8.dll) into the game folder, or remove it again.
-#
+# Copy the built dinput8.dll into the game folder ($TS3_DIR or via Steam), or remove it.
 #   tools/deploy_loader.sh [--remove]
-#
-# Game folder: $TS3_DIR if set, else found through Steam's libraryfolders.vdf.
-# Only dinput8.dll is touched, and only if it is ours (export name + ts3online marker).
+# Never overwrites or removes a dinput8.dll that is not ours.
 set -euo pipefail
 
 GAME="Toy Story 3 Complete Edition"

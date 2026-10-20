@@ -21,13 +21,11 @@ unsafe fn rd64(p: u64) -> u64 {
     (p as *const u64).read_unaligned()
 }
 
-/// NUL-terminated ASCII string at `p`.
 unsafe fn cstr<'a>(p: u64) -> &'a [u8] {
     std::ffi::CStr::from_ptr(p as *const _).to_bytes()
 }
 
-/// The IAT slot for `dll` / `entry` in the image at `base`, and whether it is already bound (no longer holds the
-/// import-lookup thunk). Err says what was not found.
+/// The IAT slot, and whether it is bound (no longer holds the import-lookup thunk).
 ///
 /// # Safety
 /// `base` must be the base of a mapped PE32+ image.
@@ -76,8 +74,7 @@ pub unsafe fn find_slot(base: u64, dll: &str, entry: Entry) -> Result<(*mut u64,
     Err(if dll_seen { format!("{dll} is imported, but not {entry:?}") } else { format!("{dll} is not imported") })
 }
 
-/// Points the slot at `new`. The original function address goes into `orig` before the slot changes, so `new`
-/// can call it from its first run. Returns whether the slot was hooked; logs the reason when not.
+/// `orig` is set before the slot changes, so `new` can call it from its first run.
 ///
 /// # Safety
 /// `base` must be the main module; `new` must have the signature of the imported function.
@@ -107,9 +104,7 @@ pub unsafe fn hook(base: u64, dll: &str, entry: Entry, new: usize, orig: &Atomic
     true
 }
 
-/// Puts `new` back into the slot when something else (the Steam overlay does this some seconds after
-/// start) has replaced it; the replacement becomes `orig`, so the chain continues through it.
-/// Returns true when the slot had to be restored.
+/// Restores `new` if something (the Steam overlay) replaced it; the replacement becomes `orig`, keeping the chain.
 ///
 /// # Safety
 /// As for [`hook`].

@@ -1,4 +1,4 @@
-//! UDP host/client session in a loader thread; the game thread reads and writes it through the statics below.
+//! UDP session on its own thread; the game thread reaches it through the statics below.
 pub mod discover;
 pub mod proto;
 pub mod save;
@@ -20,29 +20,28 @@ use std::time::{Duration, Instant};
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 static COPY: AtomicU32 = AtomicU32::new(1);
-/// Level names clients asked the host to follow, until the game thread takes them.
+/// Host: level requests queued for the game thread.
 static LEVEL_REQUESTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-/// Client spends the host accepted, as (client, wallet index, delta), until the game thread takes them.
-/// Host: client spends for the game thread, as (client, [(wallet index, delta)], seq to acknowledge).
+/// Host: client spends for the game thread, as (client, [(wallet index, delta)], seq to ack).
 static SPENDS: Mutex<Vec<(u8, Vec<(u8, i32)>, u32)>> = Mutex::new(Vec::new());
 
 const LOOP_SLEEP: Duration = Duration::from_millis(5);
 const RTT_LOG_MS: u64 = 5000;
-/// A client that lost its host (or was refused) looks for a host again after this long.
+/// A lost or refused client looks for a host again after this.
 const REDISCOVER_US: u64 = 5_000_000;
-/// An auto client that never got a welcome gives up after this long.
+/// An auto client with no welcome by then gives up.
 const FIRST_CONNECT_US: u64 = 10_000_000;
 /// A lone auto host probes its peers again this often.
 const REPROBE_US: u64 = 10_000_000;
 
-/// What this copy is, for the code that must wait for it (the save folder redirect).
+/// Waited on by the save folder redirect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
-    /// `net=` is configured and the role is not decided yet
+    /// `net=` set, role not decided yet
     Pending,
     Host,
     Client,
-    /// no networking (not configured, or it failed to start)
+    /// not configured, or failed to start
     Off,
 }
 
@@ -56,28 +55,27 @@ pub enum SaveState {
 /// Which app data folder the game should be given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
-    /// the normal folder of this copy
     Normal,
-    /// the client session folder holding the host save
+    /// client session folder holding the host save
     Session,
 }
 
 struct Shared {
     role: Role,
     save: SaveState,
-    /// the connect menu is open: nobody times out waiting for the role
+    /// connect menu open: role waits do not time out
     menu_open: bool,
 }
 
 static SHARED: Mutex<Shared> = Mutex::new(Shared { role: Role::Off, save: SaveState::Waiting, menu_open: false });
 static CHANGED: Condvar = Condvar::new();
 
-/// Marks the role as undecided; call before anything may wait for it.
+/// Call before anything may wait for the role.
 pub fn expect_role() {
     set_shared(|s| s.role = Role::Pending);
 }
 
-/// The connect menu is open (or closed); `wait_decision` does not count time while it is open.
+/// `wait_decision` does not count time while the menu is open.
 pub fn set_menu_open(open: bool) {
     set_shared(|s| s.menu_open = open);
 }
@@ -97,8 +95,7 @@ fn set_shared(f: impl FnOnce(&mut Shared)) {
     }
 }
 
-/// Waits (up to `timeout`) for the role and, for a client, the host save; says which folder to use.
-/// Never blocks when networking is off. The timeout only starts once the connect menu is closed.
+/// Waits for the role and a client's host save; `timeout` runs only while the connect menu is closed.
 pub fn wait_decision(timeout: Duration) -> Decision {
     let mut deadline: Option<Instant> = None;
     let Ok(mut g) = SHARED.lock() else { return Decision::Normal };
@@ -125,7 +122,6 @@ pub fn wait_decision(timeout: Duration) -> Decision {
     }
 }
 
-/// Role and save state for log lines.
 pub fn describe() -> String {
     SHARED.lock().map(|g| format!("role {:?}, save {:?}", g.role, g.save)).unwrap_or_default()
 }
@@ -140,147 +136,136 @@ pub fn build_id(headers: &[u8]) -> Option<u64> {
     Some((u32_at(nt + 8)? as u64) << 32 | u32_at(nt + 24 + 56)? as u64)
 }
 
-/// A session was started.
 pub fn active() -> bool {
     SESSION.lock().ok().is_some_and(|g| g.is_some())
 }
 
-/// Local player's state for the next outgoing update.
 pub fn set_local_state(level: u32, class: u8, pos: [f32; 3], yaw: f32, cam: f32, pad: proto::Pad, flags: u32) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
         s.set_local_state(level, class, pos, yaw, cam, pad, flags);
     }
 }
 
-/// The local player's pick-up or carry target for the next outgoing state.
 pub fn set_local_target(target: u32) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
         s.set_local_target(target);
     }
 }
 
-/// The local player's object in flight for the next outgoing state.
 pub fn set_local_proj(proj: proto::Proj) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
         s.set_local_proj(proj);
     }
 }
 
-/// This copy's player id in the session.
 pub fn local_id() -> Option<u8> {
     SESSION.lock().ok().and_then(|g| g.as_ref().and_then(|s| s.local_id()))
 }
 
-/// Latest state of every remote player.
 pub fn remote_states() -> Vec<(u8, State)> {
     SESSION.lock().ok().and_then(|g| g.as_ref().map(|s| s.remote_states())).unwrap_or_default()
 }
 
-/// Host: the level name of the local game, "" outside a level.
+/// Host: "" outside a level.
 pub fn set_local_level_name(name: &str) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
         s.set_local_level_name(name);
     }
 }
 
-/// Client: the level the host last reported.
 pub fn host_level_name() -> Option<String> {
     SESSION.lock().ok().and_then(|g| g.as_ref().and_then(|s| s.host_level_name()))
 }
 
-/// This copy is a client of a host.
 pub fn is_client() -> bool {
     SESSION.lock().ok().is_some_and(|g| g.as_ref().is_some_and(|s| !s.is_host()))
 }
 
-/// Client: tells the host our game switched to `name`.
+/// Client: our game switched to `name`.
 pub fn request_level(name: &str) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
         s.request_level(name);
     }
 }
 
-/// Host: the level names clients asked us to follow since the last call.
 pub fn take_level_requests() -> Vec<String> {
     LEVEL_REQUESTS.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default()
 }
 
-/// Host: the local wallet values, sent to every client.
+/// Host: sent to every client.
 pub fn set_local_wallet(values: &[i32]) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
         s.set_local_wallet(values);
     }
 }
 
-/// Host: client spends to apply to the local wallet since the last call; confirm each with `confirm_spends`.
+/// Host: confirm each with `confirm_spends` once applied.
 pub fn take_spends() -> Vec<(u8, Vec<(u8, i32)>, u32)> {
     SPENDS.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default()
 }
 
-/// Host: the game applied the spends of `client` up to seq `upto`.
+/// Host: the game applied `client`'s spends up to `upto`.
 pub fn confirm_spends(client: u8, upto: u32) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
         s.confirm_spends(client, upto);
     }
 }
 
-/// Client: the latest (values, acked seq) from the host's wallet, once.
+/// Client: the latest (values, acked seq), once.
 pub fn take_host_wallet() -> Option<(Vec<i32>, u32)> {
     SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()).and_then(|s| s.take_host_wallet())
 }
 
-/// Client: sends the unacknowledged spends to the host.
+/// Client: the spends the host has not acked yet.
 pub fn send_spends(spends: &[(u32, u8, i32)]) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
         s.send_spends(spends);
     }
 }
 
-/// The local play level hash (0 outside one) world events are about.
+/// Level hash world events are about; 0 outside a level.
 pub fn set_world_level(level: u32) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
         s.set_world_level(level);
     }
 }
 
-/// A world event the local game produced: listed (host) or reported (client). True when new.
+/// A local world event: listed (host) or reported (client). True when new.
 pub fn world_local(level: u32, event: &str, name: &str) -> bool {
     SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()).is_some_and(|s| s.world_local(level, event, name))
 }
 
-/// World events to replay in the local game, as (level, event, reference name).
+/// (level, event, reference name) to replay locally.
 pub fn take_world_apply() -> Vec<(u32, String, String)> {
     SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()).map(|s| s.take_world_apply()).unwrap_or_default()
 }
 
-/// Host: sends the transforms of moving named actors of `level` to every client (unreliable).
+/// Host: moving named actors of `level`, sent unreliably to every client.
 pub fn set_npcs(level: u32, entries: &[(u32, [f32; 3], f32)]) {
     if let Some(s) = SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()) {
         s.set_npcs(level, entries);
     }
 }
 
-/// Client: the host's actor transforms received since the last call, as (hash, position, yaw).
+/// Client: (hash, position, yaw) from the host.
 pub fn take_npcs() -> Vec<(u32, [f32; 3], f32)> {
     SESSION.lock().ok().as_mut().and_then(|g| g.as_mut()).map(|s| s.take_npcs()).unwrap_or_default()
 }
 
-/// Everything `start` needs besides the mode.
 #[derive(Debug, Clone)]
 pub struct Options {
     pub name: String,
     pub sim: Option<Sim>,
-    /// this copy's number (1-4): where its save lives
+    /// copy number (1-4): picks the save folder
     pub copy: u32,
     /// default port of every mode
     pub port: u16,
     /// `net_peers` for `net=auto`
     pub peers: Vec<String>,
-    /// `net_key`: the shared password, empty for none
+    /// `net_key` password; empty for none
     pub key: String,
 }
 
-/// Starts the session thread for the game's own build.
 #[cfg(windows)]
 pub fn start(net: &Net, opts: Options) {
     let headers = crate::win::ProcMem.read_headers(crate::win::main_module_base());
@@ -342,7 +327,6 @@ fn bind(addr: SocketAddr) -> std::io::Result<UdpSocket> {
     Ok(s)
 }
 
-/// Makes `session` the live one and publishes its role.
 fn install(session: Session) {
     let role = if session.is_host() { Role::Host } else { Role::Client };
     if let Ok(mut g) = SESSION.lock() {
@@ -351,7 +335,7 @@ fn install(session: Session) {
     set_role(role);
 }
 
-/// The host save of copy `copy`: `<its app data>\Disney\Toy Story 3 Complete Edition\savedata\Saved Game`.
+/// `<copy's app data>\Disney\Toy Story 3 Complete Edition\savedata\Saved Game`.
 pub fn host_save_path(app_data: &str, local_app_data: &str, copy: u32) -> PathBuf {
     copy::savedata_dir(&copy::normal_root(app_data, local_app_data, copy)).join("Saved Game")
 }
@@ -370,7 +354,7 @@ fn host_session(build: u64, name: &str, copy: u32, key: &str) -> Session {
     s
 }
 
-/// Writes the host save into the client session folder and copies the player's own settings next to it.
+/// Writes the host save into `session_dir`, with the player's own settings beside it.
 pub fn install_session_save(data: &[u8], session_dir: &Path, normal_dir: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(session_dir)?;
     let target = session_dir.join("Saved Game");
@@ -403,18 +387,18 @@ fn store_received_save(data: &[u8]) {
 
 #[derive(Debug, Clone)]
 pub struct AutoOpts {
-    /// port to bind; a taken port means another copy here is hosting
+    /// taken: another local copy is hosting
     pub bind_port: u16,
     /// port the peers listen on
     pub probe_port: u16,
-    /// explicit peers; empty means ask Tailscale
+    /// empty: ask Tailscale
     pub peers: Vec<String>,
     /// how long to wait for a host to answer
     pub probe: Duration,
     pub tailscale: bool,
 }
 
-/// What a running auto session needs to find and merge with other hosts.
+/// Context for finding and merging with other hosts.
 pub struct Auto {
     peers: Vec<SocketAddr>,
     own: (Ipv4Addr, u16),
@@ -427,7 +411,7 @@ fn port_taken(e: &std::io::Error) -> bool {
     matches!(e.kind(), std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied)
 }
 
-/// Binds, finds peers, probes them: the socket, the session (client of a found host, else host) and the merge context.
+/// Joins a found host as a client, else hosts.
 pub fn auto_join(opts: &AutoOpts, o: &Options, build: u64) -> Option<(UdpSocket, Session, Auto)> {
     let name = &o.name;
     let sock = match bind(SocketAddr::from(([0, 0, 0, 0], opts.bind_port))) {
@@ -480,8 +464,8 @@ fn auto_main(auto: AutoOpts, opts: Options, build: u64, sim: Option<SimQueue>) {
     }
 }
 
-/// One loop pass of the session thread: receive, tick, send; returns the events and whether we are a host alone.
-/// Socket calls happen outside the session lock, so the game thread never waits on them.
+/// Returns the events and whether we host alone.
+/// Socket calls stay outside the session lock so the game thread never waits on them.
 fn step(sock: &UdpSocket, sim: &mut Option<SimQueue>, now: u64, t: &mut Traffic) -> Option<(Vec<Event>, bool)> {
     let inbound = receive(sock, t);
     let locked = Instant::now();
@@ -500,7 +484,7 @@ fn step(sock: &UdpSocket, sim: &mut Option<SimQueue>, now: u64, t: &mut Traffic)
     Some((events, alone))
 }
 
-/// The session loop. With `auto` it returns (handing the sim queue back) when a client should look for a host again.
+/// With `auto`, returns the sim queue when a client should look for a host again.
 fn run_loop(sock: &UdpSocket, sim: Option<SimQueue>, auto: Option<&Auto>) -> Option<SimQueue> {
     let mut sim = sim;
     let start = Instant::now();
@@ -508,7 +492,7 @@ fn run_loop(sock: &UdpSocket, sim: Option<SimQueue>, auto: Option<&Auto>) -> Opt
     let mut last_reprobe = 0u64;
     let mut traffic = Traffic::default();
     let mut traffic_since = 0u64;
-    // a client without a host: when it started waiting and how long it may
+    // client without a host: (waiting since, limit)
     let mut lost: Option<(u64, u64)> = SESSION.lock().ok().and_then(|g| g.as_ref().map(|s| !s.is_host())).unwrap_or(false).then_some((0, FIRST_CONNECT_US));
     loop {
         let now = start.elapsed().as_micros() as u64;
@@ -569,7 +553,6 @@ fn run_loop(sock: &UdpSocket, sim: Option<SimQueue>, auto: Option<&Auto>) -> Opt
     }
 }
 
-/// Every datagram waiting on the socket.
 fn receive(sock: &UdpSocket, t: &mut Traffic) -> Vec<(SocketAddr, Vec<u8>)> {
     let mut buf = [0u8; 1500];
     let mut v = Vec::new();
@@ -581,7 +564,7 @@ fn receive(sock: &UdpSocket, t: &mut Traffic) -> Vec<(SocketAddr, Vec<u8>)> {
     v
 }
 
-/// Sends `out` (through the simulated link when there is one) and whatever the link releases now.
+/// Also flushes whatever the simulated link releases now.
 fn send(sock: &UdpSocket, out: Vec<(SocketAddr, Vec<u8>)>, sim: Option<&mut SimQueue>, now_us: u64, t: &mut Traffic) {
     let mut put = |to: SocketAddr, bytes: &[u8]| {
         t.pkts_out += 1;
@@ -605,7 +588,7 @@ fn send(sock: &UdpSocket, out: Vec<(SocketAddr, Vec<u8>)>, sim: Option<&mut SimQ
     }
 }
 
-/// One loop pass on a session the caller owns (tests): receive, advance the clock, send.
+/// `step` for a session the test owns.
 #[cfg(test)]
 fn pump(sock: &UdpSocket, s: &mut Session, now_us: u64, sim: Option<&mut SimQueue>) -> Vec<Event> {
     let mut t = Traffic::default();
@@ -735,7 +718,6 @@ mod tests {
         let (pa, pb) = (free_port(), free_port());
         let a = AutoOpts { bind_port: pa, probe_port: pb, peers: vec!["127.0.0.1".into()], probe: Duration::from_millis(700), tailscale: false };
         let b = AutoOpts { bind_port: pb, probe_port: pa, peers: vec!["127.0.0.1".into()], probe: Duration::from_millis(700), tailscale: false };
-        // A finds nobody and hosts; its loop runs on a thread
         let (sa, host, _ctx_a) = auto_join(&a, &opts(1), 7).expect("a joins");
         assert!(host.is_host());
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -749,7 +731,6 @@ mod tests {
             }
             host.roster()
         });
-        // B probes A, finds the host and becomes its client
         let (sb, mut client, _ctx_b) = auto_join(&b, &opts(2), 7).expect("b joins");
         assert!(!client.is_host());
         let start = Instant::now();
@@ -822,7 +803,7 @@ mod tests {
         set_role(Role::Host);
         set_save(SaveState::Ready);
         assert_eq!(wait_decision(Duration::from_secs(5)), Decision::Normal); // a host keeps its folder
-        // an open menu stops the clock: a role still pending after the timeout would have given up
+        // an open menu stops the clock
         set_role(Role::Pending);
         set_save(SaveState::Waiting);
         set_menu_open(true);
@@ -833,7 +814,7 @@ mod tests {
         set_save(SaveState::Ready);
         set_menu_open(false);
         assert_eq!(h.join().unwrap_or(Decision::Normal), Decision::Session);
-        // closing the menu without a decision starts the timeout from then on
+        // closing the menu starts the timeout
         set_role(Role::Pending);
         set_menu_open(true);
         let h = std::thread::spawn(|| wait_decision(Duration::from_millis(150)));

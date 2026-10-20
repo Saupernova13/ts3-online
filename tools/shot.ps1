@@ -1,7 +1,6 @@
-# Screenshot the game window (scaled down) to a PNG.
+# Screenshot a game window (scaled down) to a PNG; -ProcessId picks the copy.
 #   powershell -File tools/shot.ps1 <out.png> [scale=3] [-ProcessId <pid>]
-# Also prints foreground=True|False (true when any copy of the game is in front): drive virtual pads
-# only while the game is in front. With several copies running, -ProcessId picks the window to capture.
+# Also prints foreground=True|False (any copy in front): drive virtual pads only when True.
 param([Parameter(Mandatory = $true)][string]$Out, [int]$Scale = 3, [int]$ProcessId = 0)
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
@@ -23,7 +22,7 @@ $r = New-Object TsWin+RECT
 $w = $r.R - $r.L; $h = $r.B - $r.T
 $bmp = New-Object System.Drawing.Bitmap $w, $h
 $g = [System.Drawing.Graphics]::FromImage($bmp)
-# PrintWindow with PW_RENDERFULLCONTENT captures the window even when another window covers it
+# PW_RENDERFULLCONTENT (2) captures the window even when it is covered
 $hdc = $g.GetHdc()
 $ok = [TsWin]::PrintWindow($p.MainWindowHandle, $hdc, 2)
 $g.ReleaseHdc($hdc)

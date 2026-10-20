@@ -1,13 +1,8 @@
-# Start another copy of Toy Story 3 next to a running one (phase H0 of docs/NETCODE.md).
-#
+# Start another copy of Toy Story 3 next to a running one.
 #   powershell -File tools\launch_copy.ps1 [-Copy 2] [-CopySave]
-#
-# -Copy n     copy number 2-4 (informational: the loader picks the copy number itself, first free wins).
-#             Its saves live in %LOCALAPPDATA%\ts3online\copy<n>.
-# -CopySave   first copy the real savegames into that folder (overwrites what is there).
-#
-# Game folder: $env:TS3_DIR if set, else found through Steam (HKCU:\Software\Valve\Steam SteamPath and
-# steamapps\libraryfolders.vdf). The game is started through explorer.exe so it runs in your desktop session.
+# -Copy is informational: the loader takes the first free copy number. Copy n saves to
+# %LOCALAPPDATA%\ts3online\copy<n>; -CopySave first copies the real saves there, overwriting.
+# Started through explorer.exe so it runs in the desktop session.
 param(
     [ValidateRange(2, 4)][int]$Copy = 2,
     [switch]$CopySave
@@ -29,7 +24,7 @@ function Find-GameDir {
         if ($line -match '^\s*"path"\s*"(.*)"') { $libs += ($Matches[1] -replace '\\\\', '\') }
     }
     foreach ($lib in $libs) {
-        # [IO.Path]::Combine, not Join-Path: a library on an unplugged drive must not throw
+        # not Join-Path: it throws for a library on an unplugged drive
         $dir = [System.IO.Path]::Combine($lib, "steamapps\common\$game")
         if (Test-Path -LiteralPath $dir -PathType Container) { return $dir }
     }

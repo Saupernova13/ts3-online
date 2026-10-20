@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-  Installs or removes the ts3-online loader (dinput8.dll) for the Steam version of
-  Toy Story 3 Complete Edition, and writes a starter ts3online.ini for online play.
+  Installs or removes the ts3-online loader (dinput8.dll) in the Steam copy of Toy Story 3,
+  and writes a starter ts3online.ini.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File install.ps1 -Name Alice
@@ -12,10 +12,9 @@
   powershell -ExecutionPolicy Bypass -File install.ps1 -Update    (what Update.cmd runs)
 
 .NOTES
-  The DLL is taken from next to this script (release zip), else from loader\target\release.
-  Set -GameDir (or TS3_DIR) when Steam's library list cannot be read.
-  Only dinput8.dll and ts3online.ini in the game folder are written, and the DLL is only
-  replaced or removed when it is ours.
+  DLL source: next to this script (release zip), else loader\target\release.
+  Set -GameDir (or TS3_DIR) if Steam's library list cannot be read.
+  Writes only dinput8.dll and ts3online.ini, and touches the DLL only when it is ours.
 #>
 [CmdletBinding()]
 param(
@@ -29,7 +28,7 @@ param(
     [switch]$Setup,
     # only add the firewall rule (Setup relaunches itself elevated with this)
     [switch]$FirewallOnly,
-    # download the latest release from GitHub and install its DLL (and refresh these scripts)
+    # install the latest GitHub release's DLL (and refresh these scripts)
     [switch]$Update
 )
 $ErrorActionPreference = 'Stop'
@@ -49,21 +48,19 @@ function Find-GameDir {
         }
     }
     foreach ($lib in $libs) {
-        # [IO.Path]::Combine, not Join-Path: a library on an unplugged drive must not throw
+        # not Join-Path: it throws for a library on an unplugged drive
         $dir = [IO.Path]::Combine($lib, "steamapps\common\$Game")
         if (Test-Path -LiteralPath ([IO.Path]::Combine($dir, $Exe)) -PathType Leaf) { return $dir }
     }
     throw "Cannot find $Game in the Steam libraries. Pass -GameDir `"<game folder>`"."
 }
 
-# Our DLL carries the ASCII marker "ts3online"; anything else named dinput8.dll is left alone.
 function Test-OurDll([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
     $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($Path))
     return $text.Contains('DirectInput8Create') -and $text.Contains('ts3online')
 }
 
-# The release a DLL of ours was built as (from its "ts3online-version=X.Y.Z;" marker), else $null.
 function Get-DllVersion([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
     $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($Path))
@@ -71,7 +68,6 @@ function Get-DllVersion([string]$Path) {
     return $null
 }
 
-# Installs the latest GitHub release over our DLL, and refreshes the scripts next to this one.
 function Update-Loader {
     if ((Test-Path -LiteralPath $dll) -and -not (Test-OurDll $dll)) { throw "$dll is not ours (another mod?). Move it away first." }
     $installed = Get-DllVersion $dll
@@ -128,7 +124,6 @@ function Add-FirewallRule([string]$ExePath) {
     }
 }
 
-# Copies the game's save folder to Documents\ts3-online save backup\<date>, once per day.
 function Backup-Saves {
     $src = Join-Path $env:APPDATA "Disney\$Game"
     if (-not (Test-Path -LiteralPath $src)) { Write-Host 'No saves yet; nothing to back up.'; return }
@@ -139,7 +134,7 @@ function Backup-Saves {
     Write-Host "Backed up your saves to $dst"
 }
 
-# Says whether Tailscale is installed and connected; online play needs it unless both PCs share a LAN.
+# Online play needs Tailscale unless both PCs share a LAN.
 function Show-Tailscale {
     $exe = (Get-Command tailscale -ErrorAction SilentlyContinue).Source
     if (-not $exe) {

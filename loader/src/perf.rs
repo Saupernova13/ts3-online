@@ -1,12 +1,10 @@
-//! Performance counters: per-frame cost of our game-thread work, the game's frame rate and the
-//! session thread's traffic, each logged as one line every `WINDOW`.
+//! Our per-frame cost, the game's frame rate and session traffic, each logged once per `WINDOW`.
 use crate::log;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub const WINDOW: Duration = Duration::from_secs(30);
 
-/// Count, sum and maximum of durations in microseconds.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub n: u64,
@@ -26,7 +24,7 @@ impl Span {
     }
 }
 
-/// Game thread: our work per frame and the time between frames.
+/// Our work per frame and the gap between frames.
 #[derive(Debug, Default)]
 pub struct Frames {
     pub work: Span,
@@ -35,7 +33,6 @@ pub struct Frames {
 }
 
 impl Frames {
-    /// One frame whose loader work took `work`, seen at `now`.
     pub fn frame(&mut self, now: Instant, work: Duration) {
         self.work.add(work.as_micros() as u64);
         if let Some(prev) = self.last {
@@ -44,7 +41,7 @@ impl Frames {
         self.last = Some(now);
     }
 
-    /// The log line for the window, and a fresh window (the frame clock carries over).
+    /// Resets the window; the frame clock carries over.
     pub fn report(&mut self, secs: f64) -> String {
         let (w, g) = (self.work, self.gap);
         self.work = Span::default();
@@ -54,7 +51,7 @@ impl Frames {
     }
 }
 
-/// Session thread: loop passes and datagrams, plus how long the session lock was held per pass.
+/// Session thread; `locked` is how long the session lock was held per pass.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Traffic {
     pub passes: u64,
@@ -84,7 +81,7 @@ impl Traffic {
 
 static FRAMES: Mutex<Option<(Frames, Instant)>> = Mutex::new(None);
 
-/// Game thread, once per frame: records our work and logs the window when it is over.
+/// Call once per frame on the game thread.
 pub fn frame(work: Duration) {
     let now = Instant::now();
     let Ok(mut g) = FRAMES.lock() else { return };

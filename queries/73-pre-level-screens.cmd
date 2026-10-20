@@ -1,5 +1,4 @@
-# Pre-level avatar select / ready screens (do they wait for every joined player?) and the
-# full-screen UI signal ScreenHideMPForFullScreen
+# Pre-level avatar select / ready screens (wait for every player?) and ScreenHideMPForFullScreen
 maxlen 6000
 vt ScreenBGAvatarSelect2
 vt ScreenBGReadyGo

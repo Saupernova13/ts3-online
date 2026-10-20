@@ -50,7 +50,7 @@ run_headless() {
   local headless; headless="$(find_headless)"
   check_java
   if is_windows; then
-    # cmd.exe splits on , ; = and treats | as a pipe: keep those characters out of the args
+    # cmd.exe splits on , ; = and pipes on |: keep those out of the args
     cmd //c "$(cygpath -w "$headless")" "$@"
   else
     "$headless" "$@"

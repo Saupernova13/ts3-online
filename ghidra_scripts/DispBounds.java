@@ -1,8 +1,7 @@
-// For every load through a given displacement (e.g. [reg + 0xd8]), lists the small-immediate
-// compares (1..3) in the preceding instructions of the same function, with raw bytes and the jump.
-// Used to find inline `idx < 2` guards on per-player arrays that are not indexed by IMUL.
+// Lists compares against 1..3 just before each load through <disp> (e.g. [reg + 0xd8]),
+// to find inline `idx < 2` guards on per-player arrays not indexed by IMUL.
 //
-// args: <outfile> <disp> [window=24] [after=0]   after>0 also scans that many instructions after the load
+// args: <outfile> <disp> [window=24] [after=0]   after>0 also scans that many instructions after
 //
 // @category ts3-online
 import ghidra.app.script.GhidraScript;

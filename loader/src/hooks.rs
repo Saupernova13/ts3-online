@@ -4,7 +4,6 @@ use crate::log;
 use std::ffi::{c_char, CStr};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Address of the Rust function behind a hook name, or None if unknown.
 pub fn resolve(name: &str) -> Option<u64> {
     Some(match name {
         "bind_joining_avatar" => bind_joining_avatar as *const () as u64,
@@ -22,7 +21,7 @@ pub fn resolve(name: &str) -> Option<u64> {
     })
 }
 
-/// The player index that is joining: first pad-assigned player 1..=3 without an avatar (1 if none).
+/// The joining player: first pad-assigned 1..=3 without an avatar, else 1.
 unsafe fn joining_index() -> u32 {
     let mgr = global(MGR_PTR);
     let input = global(INPUT_PTR);
@@ -39,9 +38,8 @@ unsafe fn joining_index() -> u32 {
     idx
 }
 
-/// Level setup only prepares slots 0/1: index and empty slot init. Slots 2/3 keep the ctor's index
-/// -1 (slot init would drain control stack -1 forever), so do the same for them the first time they
-/// are used (FINDINGS 5b). Their views were already set up by `level_player_setup`.
+/// Level setup inits slots 0/1 only, so 2/3 are set up here on first use. Their ctor index is -1
+/// and slot init on -1 drains control stack -1 forever: set the index first (FINDINGS 5b).
 unsafe fn ensure_player_setup(mgr: u64, idx: u32) {
     let slot = mgr + SLOT_INDEX_BASE + idx as u64 * SLOT_STRIDE;
     if rd_i32(slot) != -1 {
@@ -52,10 +50,8 @@ unsafe fn ensure_player_setup(mgr: u64, idx: u32) {
     log!("hook ensure_player_setup idx={idx}: slot index set, slot init");
 }
 
-/// Replaces the end of level setup (0x1405aee38), which runs per-player view setup for players 0/1
-/// only. Views 2/3 then had camera groups with no state, and the ShowDown (conversation) camera,
-/// which pushes a state on every view, crashed on them (FINDINGS 5f). Set up views 1..=3 the same
-/// way, then finish the view array as the original does.
+/// Replaces the end of level setup (0x1405aee38), which sets up views 0/1 only. The ShowDown
+/// (conversation) camera pushes a state on every view and crashes on a stateless one (FINDINGS 5f).
 pub unsafe extern "system" fn level_player_setup(mgr: u64, views: u64) {
     for i in 1..4 {
         player_setup(mgr, i);
@@ -64,10 +60,10 @@ pub unsafe extern "system" fn level_player_setup(mgr: u64, views: u64) {
     log!("hook level_player_setup: views 1..3 set up");
 }
 
-/// Replaces the three per-frame calls in the input dispatch (0x140280c18): the same calls, then
-/// the co-op partner update while a session exists (FINDINGS 9).
 static FRAMES: AtomicU64 = AtomicU64::new(0);
 
+/// Replaces the three per-frame calls in the input dispatch (0x140280c18); adds the co-op update
+/// while a session exists (FINDINGS 9).
 pub unsafe extern "system" fn frame_tick() {
     frame_a();
     frame_b();
@@ -86,7 +82,7 @@ pub unsafe extern "system" fn frame_tick() {
     crate::devcmd::tick();
 }
 
-// ---- detours with a call-through to the original (FINDINGS 10) ----
+// ---- detours that call the original (FINDINGS 10) ----
 
 static ORIG_POST_BROADCAST: AtomicU64 = AtomicU64::new(0);
 static ORIG_POST_ACTOR: AtomicU64 = AtomicU64::new(0);
@@ -101,14 +97,14 @@ fn original_slot(name: &str) -> Option<&'static AtomicU64> {
     })
 }
 
-/// Records the trampoline of a detour hook; called by the loader before the detour is applied.
+/// Called by the loader before the detour is applied.
 pub fn set_original(name: &str, trampoline: u64) {
     if let Some(s) = original_slot(name) {
         s.store(trampoline, Ordering::Release);
     }
 }
 
-/// Address of the trampoline that runs the original of a detour hook, if it was set up.
+/// Trampoline that runs the hooked original, once set.
 pub fn original(name: &str) -> Option<u64> {
     original_slot(name).map(|s| s.load(Ordering::Acquire)).filter(|a| *a != 0)
 }
@@ -116,13 +112,13 @@ pub fn original(name: &str) -> Option<u64> {
 type Post4 = unsafe extern "system" fn(u64, u64, u64, u64) -> u8;
 type Post5 = unsafe extern "system" fn(u64, u64, u64, u64, u64) -> u8;
 
-/// The event name at `name` is "SwitchLevel"; compares in place and stops at the first differing byte.
+/// Compares in place and stops at the first differing byte.
 unsafe fn is_switch_level(name: u64) -> bool {
     const NAME: &[u8] = b"SwitchLevel\0";
     name >= 0x1_0000 && NAME.iter().enumerate().all(|(i, c)| rd_u8(name + i as u64) == *c)
 }
 
-/// Detour of the event post broadcast (0x14049e160): records the name, then runs the original.
+/// Detour of the event post broadcast (0x14049e160).
 pub unsafe extern "system" fn post_broadcast(events: u64, name: u64, a: u64, b: u64) -> u8 {
     crate::evlog::record(name, a, b, None);
     if a != 0 && is_switch_level(name) {
@@ -134,7 +130,7 @@ pub unsafe extern "system" fn post_broadcast(events: u64, name: u64, a: u64, b: 
     }
 }
 
-/// Detour of the targeted event post (0x14049e0b0, the actor id is the fifth argument).
+/// Detour of the targeted event post (0x14049e0b0); `actor` is an actor id.
 pub unsafe extern "system" fn post_actor(events: u64, name: u64, a: u64, b: u64, actor: u64) -> u8 {
     crate::evlog::record(name, a, b, Some(actor));
     crate::world::on_post(name, a, b, actor);
@@ -154,12 +150,12 @@ pub unsafe extern "system" fn post_broadcast2(events: u64, name: u64, a: u64, b:
     }
 }
 
-/// Posts an event through the original broadcast, past the logging detour.
+/// Posts through the original, bypassing the detour.
 pub unsafe fn call_broadcast(events: u64, name: u64, a: u64, b: u64) -> Option<u8> {
     original("post_broadcast").map(|o| std::mem::transmute::<u64, Post4>(o)(events, name, a, b))
 }
 
-/// Posts an event to an actor through the original, past the logging detour.
+/// Posts to an actor through the original, bypassing the detour.
 pub unsafe fn call_post_actor(events: u64, name: u64, a: u64, b: u64, actor: u64) -> Option<u8> {
     original("post_actor").map(|o| std::mem::transmute::<u64, Post5>(o)(events, name, a, b, actor))
 }
@@ -204,7 +200,7 @@ pub unsafe extern "system" fn bind_joining_avatar(avatar: u64, level_info: u64, 
     }
 }
 
-/// Replaces 0x1400fe910 (ScreenJoinIn cancel): release the joining pad, then the shared tail.
+/// Replaces 0x1400fe910 (ScreenJoinIn cancel).
 pub unsafe extern "system" fn join_cancel(screen: u64) -> u64 {
     let idx = joining_index();
     log!("hook join_cancel screen={screen:#x} release idx={idx}");
@@ -212,7 +208,7 @@ pub unsafe extern "system" fn join_cancel(screen: u64) -> u64 {
     join_cancel_tail(screen)
 }
 
-/// Levels where joining asks to restart the level first.
+/// Levels where joining first asks to restart.
 const RESTART_LEVELS: [&str; 14] = [
     "st_train",
     "trainstub",
@@ -234,7 +230,7 @@ pub fn needs_restart(level: &str) -> bool {
     RESTART_LEVELS.iter().any(|l| l.eq_ignore_ascii_case(level))
 }
 
-/// Replaces 0x1400eb6f0: a pad asks to join. Uses the first free player index throughout.
+/// Replaces 0x1400eb6f0 (a pad asks to join), using the first free player index throughout.
 pub unsafe extern "system" fn join_request(pad: u32) {
     let ui = global(UI_PTR);
     if vt_u8(ui, 0xa0) == 0 && pad != 1 {
@@ -268,7 +264,7 @@ pub unsafe extern "system" fn join_request(pad: u32) {
     }
 }
 
-/// Replaces 0x1405bae40: avatar-by-class lookup; pick-handler calls skip avatars that belong to a player.
+/// Replaces 0x1405bae40 (avatar by class); calls from the pick handler skip player-owned avatars.
 pub unsafe extern "system" fn find_avatar_by_class(mgr: u64, class: u64, ret: u64) -> u64 {
     let pick = va(0x1_4010_4190);
     let from_pick = ret >= pick && ret < pick + 0x577;
@@ -309,10 +305,9 @@ mod tests {
     }
 }
 
-/// Replaces the slot-1 block of the two global "controls disabled" refreshers (0x1405f8a70,
-/// 0x1405d3200), which only update slots 0/1. Same rule for slots 1..=3: controls are on when the
-/// slot's own disable list (`slot+0x50`) and the global one (0x1409582a8) are both empty; when the
-/// avatar's flag (`+0x428`) disagrees, set it through `vtable+0x148(avatar, enabled)` (FINDINGS 5d).
+/// Replaces the slot-1 block of both "controls disabled" refreshers (0x1405f8a70, 0x1405d3200),
+/// which cover slots 0/1 only (FINDINGS 5d). `slot+0x50`: slot disable list; 0x1409582a8: global
+/// list; avatar `+0x428`: controls flag, set via `vtable+0x148(avatar, enabled)`.
 pub unsafe extern "system" fn refresh_player_controls(mgr: u64) {
     let global_clear = rd_u64(va(0x1_4095_82a8)) == 0;
     for i in 1..4u64 {
@@ -328,11 +323,9 @@ pub unsafe extern "system" fn refresh_player_controls(mgr: u64) {
     }
 }
 
-/// Replaces the slot-1 block of level teardown (0x1405b0ea0), which resets slots 0/1 only, so
-/// slots 2/3 kept a dangling avatar after a level change (FINDINGS 5e). Same reset for slots
-/// 1..=3: pop the avatar's mapper off the player's control stack, detach its camera state, drop
-/// the view's "Avatar" camera, then clear the slot. Slots 2/3 also release their pad, since level
-/// setup only brings back players 0/1; those players join again with Start.
+/// Replaces the slot-1 block of level teardown (0x1405b0ea0), which resets slots 0/1 only (2/3
+/// would keep a dangling avatar, FINDINGS 5e). Slots 2/3 also release their pad: level setup
+/// restores players 0/1 only, so the others rejoin with Start.
 pub unsafe extern "system" fn reset_player_slots(mgr: u64) {
     let stacks = va(CONTROL_STACKS);
     for i in 1..4u32 {

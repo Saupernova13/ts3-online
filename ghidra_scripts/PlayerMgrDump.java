@@ -1,9 +1,5 @@
-// Decompiles every function that touches the player manager and every "method" it is passed
-// to, and writes them to one file for tools/scan_player_mgr.py to classify.
-//
-// Seeds: references to the manager pointer global and to the static object itself. A callee
-// counts as a method when the manager expression is its first argument; methods are followed
-// transitively through param_1.
+// Decompiles every function referencing the player manager (pointer global or static object),
+// plus, transitively, every callee passed it as param_1, for tools/scan_player_mgr.py.
 //
 // args: <outfile> [ptrGlobal] [objStart] [objLen]
 //

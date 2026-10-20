@@ -23,13 +23,13 @@ pub const FLAGS: u64 = 0x1_40b2_ac90;
 pub const RIDES: u64 = 0x1_4099_b8b0;
 pub const STREAMING: u64 = 0x1_40b2_ef20;
 pub const UI_PTR: u64 = 0x1_40b2_ef10;
-/// Game stats table pointer: entries of 0x60 bytes at `+8`, count at `+0x10`.
+/// Stats table: 0x60-byte entries at `+8`, count at `+0x10`.
 pub const STATS_PTR: u64 = 0x1_40b2_fdb8;
 
 pub const SLOT_AVATAR_BASE: u64 = 0x1a0;
 pub const SLOT_STRIDE: u64 = 0x58;
 
-/// A NUL-terminated copy that is never freed, so the game may keep the pointer.
+/// Never freed, so the game may keep the pointer.
 pub fn leak_cstr(s: &str) -> u64 {
     let c = CString::new(s.replace('\0', "")).unwrap_or_default();
     Box::leak(c.into_boxed_c_str()).as_ptr() as u64
@@ -55,7 +55,6 @@ pub unsafe fn rd_u8(addr: u64) -> u8 {
     std::ptr::read(addr as *const u8)
 }
 
-/// Calls `this->vtable[off](this, a)` with a byte argument in DL.
 pub unsafe fn vcall_u8(this: u64, off: u64, a: u8) {
     let f: extern "system" fn(u64, u8) = std::mem::transmute(rd_u64(rd_u64(this) + off) as usize);
     f(this, a)
@@ -76,12 +75,11 @@ pub unsafe fn wr_u64(addr: u64, v: u64) {
 /// Player-index field at the start of each manager slot; level setup only fills slots 0 and 1.
 pub const SLOT_INDEX_BASE: u64 = 0x198;
 
-/// Value of a game global (a pointer stored at the given VA).
 pub unsafe fn global(v: u64) -> u64 {
     rd_u64(va(v))
 }
 
-/// Avatar pointer in player slot `i` of the manager (0 if none).
+/// 0 if the slot has no avatar.
 pub unsafe fn slot_avatar(mgr: u64, i: u64) -> u64 {
     rd_u64(mgr + SLOT_AVATAR_BASE + i * SLOT_STRIDE)
 }
@@ -133,15 +131,14 @@ game_fn!(find_actor_by_ref, 0x1_4055_7f60, fn(mgr: u64, name: *const c_char) -> 
 game_fn!(component, 0x1_4055_8fb0, fn(actor: u64, name: *const c_char) -> u64);
 game_fn!(exploder_break, 0x1_4065_2ac0, fn(exploder: u64) -> ());
 
-/// The actor manager pointer (the actor-name lookups take it).
+/// Actor manager pointer, taken by the actor-name lookups.
 pub const ACTOR_MGR: u64 = 0x1_40b2_bb70;
 
-/// Address of stat entry `idx` (its value is the i32 at `+0x4c`).
 pub unsafe fn stat_entry(stats: u64, idx: i32) -> u64 {
     rd_u64(stats + 8) + idx as u64 * 0x60
 }
 
-/// Offset of the value inside a stat entry.
+/// The entry's i32 value.
 pub const STAT_VALUE: u64 = 0x4c;
 
 game_fn!(frame_a, 0x1_4022_7920, fn() -> ());
@@ -159,51 +156,45 @@ game_fn!(node_dirty, 0x1_4056_dab0, fn(node: u64) -> ());
 game_fn!(quat_to_mat, 0x1_4025_6d00, fn(mat: *mut f32, quat: *const f32) -> ());
 game_fn!(node_set_rot, 0x1_4056_8b50, fn(node: u64, mat: *const f32) -> ());
 
-/// Per-player control stacks (`0x140ac61c0`).
+/// Per-player control stacks.
 pub const CONTROL_STACKS: u64 = 0x1_40ac_61c0;
 pub const STR_CONTROL_MAPPER: u64 = 0x1_4076_59d8;
 pub const STR_CAMERA_STATE: u64 = 0x1_4075_e5a0;
 pub const STR_AVATAR: u64 = 0x1_4076_d098;
 
-/// Calls `this->vtable[off](this)`.
 pub unsafe fn vt_call(this: u64, off: u64) {
     let f: extern "system" fn(u64) = std::mem::transmute(rd_u64(rd_u64(this) + off) as usize);
     f(this)
 }
 
-/// Calls `this->vtable[off](this)` returning AL.
 pub unsafe fn vt_u8(this: u64, off: u64) -> u8 {
     let f: extern "system" fn(u64) -> u8 = std::mem::transmute(rd_u64(rd_u64(this) + off) as usize);
     f(this)
 }
 
-/// Calls `this->vtable[off](this)` returning EAX.
 pub unsafe fn vt_u32(this: u64, off: u64) -> u32 {
     let f: extern "system" fn(u64) -> u32 = std::mem::transmute(rd_u64(rd_u64(this) + off) as usize);
     f(this)
 }
 
-/// Input driver vtable +0x80: assign(this, player, device).
 pub unsafe fn input_assign(input: u64, player: u32, device: u32) {
     let f: extern "system" fn(u64, u32, u32) = std::mem::transmute(rd_u64(rd_u64(input) + 0x80) as usize);
     f(input, player, device)
 }
 
-/// Input driver vtable +0x88: release(this, player).
 pub unsafe fn input_release(input: u64, player: u32) {
     let vt = rd_u64(input);
     let f: extern "system" fn(u64, u32) = std::mem::transmute(rd_u64(vt + 0x88) as usize);
     f(input, player)
 }
 
-/// Input driver vtable +0x90: is_assigned(this, player) -> AL.
 pub unsafe fn input_is_assigned(input: u64, player: u32) -> u8 {
     let vt = rd_u64(input);
     let f: extern "system" fn(u64, u32) -> u8 = std::mem::transmute(rd_u64(vt + 0x90) as usize);
     f(input, player)
 }
 
-/// The game's imported `_stricmp` (pointer stored in its IAT at VA 0x140759a00).
+/// The game's imported `_stricmp`, read from its IAT slot.
 pub unsafe fn stricmp(a: *const c_char, b: *const c_char) -> i32 {
     let f: extern "C" fn(*const c_char, *const c_char) -> i32 = std::mem::transmute(rd_u64(va(0x1_4075_9a00)) as usize);
     f(a, b)

@@ -7,7 +7,6 @@ pub fn mutex_name(n: u32) -> String {
     format!("Local\\ts3online-copy-{n}")
 }
 
-/// Copy 1 keeps `ts3online.log`; the others get `ts3online.copy<n>.log`.
 pub fn log_name(n: u32) -> String {
     if n <= 1 {
         "ts3online.log".to_string()
@@ -16,22 +15,21 @@ pub fn log_name(n: u32) -> String {
     }
 }
 
-/// `<local app data>\ts3online\copy<n>`: the redirected save root of copy n.
+/// Redirected save root of copy n.
 pub fn save_root(local_app_data: &str, n: u32) -> PathBuf {
     PathBuf::from(local_app_data).join("ts3online").join(format!("copy{n}"))
 }
 
-/// `<local app data>\ts3online\session`: the app data root a client uses to play the host save.
+/// App data root a client uses to play the host's save.
 pub fn session_root(local_app_data: &str) -> PathBuf {
     PathBuf::from(local_app_data).join("ts3online").join("session")
 }
 
-/// The game folder holding `Saved Game` and `newsettings.bin` below an app data root.
+/// Holds `Saved Game` and `newsettings.bin`.
 pub fn savedata_dir(root: &std::path::Path) -> PathBuf {
     root.join("Disney").join("Toy Story 3 Complete Edition").join("savedata")
 }
 
-/// The app data root copy `n` normally uses: the real one for copy 1, the redirected one otherwise.
 pub fn normal_root(app_data: &str, local_app_data: &str, n: u32) -> PathBuf {
     if n <= 1 {
         PathBuf::from(app_data)
@@ -40,12 +38,12 @@ pub fn normal_root(app_data: &str, local_app_data: &str, n: u32) -> PathBuf {
     }
 }
 
-/// First copy number whose claim succeeds; 4 when all are taken.
+/// 4 when 1-3 are taken.
 pub fn choose(mut claim: impl FnMut(u32) -> bool) -> u32 {
     (1..MAX_COPIES).find(|&n| claim(n)).unwrap_or(MAX_COPIES)
 }
 
-/// Claims the first free copy number. The winning mutex handle is leaked on purpose: it lives as long as the process.
+/// The winning mutex handle is leaked on purpose: it must live as long as the process.
 #[cfg(windows)]
 pub fn claim() -> u32 {
     use crate::win::wide;

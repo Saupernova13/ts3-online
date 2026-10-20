@@ -1,9 +1,5 @@
-// Finds small player-count compares applied to a player index that does not come from a slot IMUL
-// (those are SlotBounds.java's job): the result of a call to a player-index getter, or a direct
-// read of the actor's player-index field.
-//
-// For each source it follows the value forward through register moves for a few instructions and
-// prints every `CMP reg, 1|2|3` on it with the conditional jump that follows.
+// Finds `CMP reg, 1|2|3` on player indices not from a slot IMUL (see SlotBounds.java): getter
+// results and reads of the actor's player-index field, followed through register moves.
 //
 // args: <outfile> <getter-addr>[+<getter-addr>...] [field=0x484] [window=14]
 //

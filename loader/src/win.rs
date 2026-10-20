@@ -34,7 +34,7 @@ pub fn main_module_base() -> u64 {
     unsafe { GetModuleHandleW(null()) as u64 }
 }
 
-/// Process memory via ReadProcessMemory (bad addresses fail instead of faulting) and VirtualProtect writes.
+/// Reads use ReadProcessMemory so bad addresses fail instead of faulting.
 pub struct ProcMem;
 
 impl Mem for ProcMem {
@@ -73,8 +73,7 @@ fn query(addr: u64) -> Option<MEMORY_BASIC_INFORMATION> {
     (n != 0).then_some(mbi)
 }
 
-/// Candidate buffer addresses on 64 KiB granularity: downward from below the module, then upward from above it.
-/// Each free candidate is offered to `accept`; the first accepted one is allocated and returned.
+/// Searches down from the module, then up, and allocates the first free 64 KiB-aligned address `accept` takes.
 pub fn alloc_near(module_base: u64, image_size: u64, size: usize, accept: &dyn Fn(u64) -> bool) -> Option<u64> {
     let size = size as u64;
     let try_alloc = |addr: u64| -> Option<u64> {
@@ -85,7 +84,6 @@ pub fn alloc_near(module_base: u64, image_size: u64, size: usize, accept: &dyn F
         (!p.is_null()).then_some(p as u64)
     };
 
-    // downward
     let lowest = module_base.saturating_sub(SEARCH_RANGE).max(GRANULARITY);
     let mut cur = module_base.saturating_sub(size) & !(GRANULARITY - 1);
     while cur >= lowest {
@@ -110,7 +108,6 @@ pub fn alloc_near(module_base: u64, image_size: u64, size: usize, accept: &dyn F
         }
     }
 
-    // upward
     let end = module_base + image_size;
     let highest = end + SEARCH_RANGE;
     let mut cur = (end + GRANULARITY - 1) & !(GRANULARITY - 1);
@@ -131,13 +128,12 @@ pub fn alloc_near(module_base: u64, image_size: u64, size: usize, accept: &dyn F
     None
 }
 
-/// Small RWX allocation anywhere (hook thunks).
 pub fn alloc_exec(size: usize) -> Option<u64> {
     let p = unsafe { VirtualAlloc(null(), size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE) };
     (!p.is_null()).then_some(p as u64)
 }
 
-/// Copies `data` into our own buffer (RW, allocated by us).
+/// Only for buffers we allocated writable; no protection change.
 pub fn fill(buffer: u64, data: &[u8]) {
     unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), buffer as *mut u8, data.len()) };
 }
@@ -146,7 +142,7 @@ pub fn wide(s: &std::ffi::OsStr) -> Vec<u16> {
     s.encode_wide().chain(std::iter::once(0)).collect()
 }
 
-/// Resolves `DirectInput8Create` in `<system dir>\dinput8.dll`, never in our own copy.
+/// From the system directory, never our own proxy.
 pub fn load_real_dinput8() -> Option<usize> {
     let mut buf = vec![0u16; 520];
     let n = unsafe { GetSystemDirectoryW(buf.as_mut_ptr(), buf.len() as u32) } as usize;
@@ -164,7 +160,6 @@ pub fn load_real_dinput8() -> Option<usize> {
 }
 
 impl ProcMem {
-    /// First page of a loaded module (its PE headers).
     pub fn read_headers(&self, base: u64) -> Vec<u8> {
         self.read(base, 0x1000).unwrap_or_default()
     }

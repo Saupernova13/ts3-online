@@ -1,4 +1,4 @@
-# Netcode feasibility: frame timer update (timer struct 0x140954820) and the clock variant 0x14025a470
+# Netcode feasibility: frame timer update (timer struct 0x140954820), clock variant 0x14025a470
 maxlen 5000
 func 14047fee0
 func 1404800a0

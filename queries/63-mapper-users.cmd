@@ -1,4 +1,4 @@
-# Other users of the avatar's ControlMapper (0x140559010) and callers of the per-player key table (0x1405bb170)
+# Other avatar ControlMapper (0x140559010) users and per-player key table (0x1405bb170) callers
 maxlen 9000
 func 1405b0ea0
 func 1401b5bc0

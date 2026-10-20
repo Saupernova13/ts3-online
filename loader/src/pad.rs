@@ -1,5 +1,5 @@
 //! `pad = N`: the game's XInput index 0 reads physical pad N-1, every other index reads as unplugged.
-//! With `net=` (`install_net`), indices 1-3 are always-connected virtual pads fed from network pad states.
+//! With `net=`, indices 1-3 are always-connected virtual pads fed from the network.
 use crate::iat::{self, Entry};
 use crate::log;
 use crate::net::proto::Pad;
@@ -20,10 +20,8 @@ static PAD: AtomicU32 = AtomicU32::new(0);
 static ORIG_GET_STATE: AtomicUsize = AtomicUsize::new(0);
 static ORIG_GET_CAPS: AtomicUsize = AtomicUsize::new(0);
 static ORIG_SET_STATE: AtomicUsize = AtomicUsize::new(0);
-/// Indices 1-3 are virtual pads (`install_net`).
 static VIRTUAL: AtomicBool = AtomicBool::new(false);
 static PADS: Mutex<Pads> = Mutex::new(Pads::new());
-/// Last logged `wButtons`, or u32::MAX before the first read.
 static LAST_BUTTONS: AtomicU32 = AtomicU32::new(u32::MAX);
 
 type GetStateFn = unsafe extern "system" fn(u32, *mut c_void) -> u32;
@@ -50,21 +48,19 @@ impl Pads {
         Pads { latest: NEUTRAL, accum: 0, cur: [NEUTRAL; 4], latch: [0; 4], out: [NEUTRAL; 4], packet: [0; 4] }
     }
 
-    /// A successful read of the physical pad.
     fn record_local(&mut self, pad: Pad) {
         self.latest = pad;
         self.accum |= pad.buttons;
     }
 
-    /// Latest sticks and triggers with every button pressed since the last call; the history then
-    /// restarts from the buttons held now, so a held button stays and a tap is reported once.
+    /// Buttons pressed since the last call: a held button stays, a tap is reported once.
     fn take_local(&mut self) -> Pad {
         let pad = Pad { buttons: self.accum, ..self.latest };
         self.accum = self.latest.buttons;
         pad
     }
 
-    /// Sets the pad for a virtual index (1-3). New content latches its buttons until a read has seen them.
+    /// New content latches its buttons until a read has seen them.
     fn set_remote(&mut self, i: usize, pad: Option<Pad>) {
         if !(1..4).contains(&i) {
             return;
@@ -79,7 +75,6 @@ impl Pads {
         }
     }
 
-    /// What a read of virtual index `i` returns: packet number and pad.
     fn read_virtual(&mut self, i: usize) -> (u32, Pad) {
         if !(1..4).contains(&i) {
             return (0, NEUTRAL);
@@ -112,7 +107,7 @@ fn decode_gamepad(b: &[u8; 16]) -> Pad {
     Pad { buttons: u16::from_le_bytes([b[4], b[5]]), lt: b[6], rt: b[7], lx: i16_at(8), ly: i16_at(10), rx: i16_at(12), ry: i16_at(14) }
 }
 
-/// XINPUT_CAPABILITIES of a virtual pad: a gamepad with every button, axis and motor.
+/// XINPUT_CAPABILITIES: a gamepad with every button, axis and motor.
 fn virtual_caps() -> [u8; 20] {
     let mut o = [0u8; 20];
     o[0] = 1; // XINPUT_DEVTYPE_GAMEPAD
@@ -127,7 +122,7 @@ fn virtual_caps() -> [u8; 20] {
     o
 }
 
-/// Local pad for the network: sticks and triggers as last read, buttons pressed since the last call.
+/// Buttons are those pressed since the last call.
 pub fn take_local_pad() -> Pad {
     PADS.lock().map(|mut p| p.take_local()).unwrap_or_default()
 }
@@ -143,7 +138,6 @@ fn is_virtual(index: u32) -> bool {
     VIRTUAL.load(Ordering::Relaxed) && (1..=3).contains(&index)
 }
 
-/// Physical pad index for a game index, or None when the game index is not backed by a physical pad.
 pub fn map_index(pad: u32, game_index: u32) -> Option<u32> {
     (game_index == 0 && (1..=4).contains(&pad)).then(|| pad - 1)
 }
@@ -171,8 +165,7 @@ unsafe extern "system" fn get_state(index: u32, state: *mut c_void) -> u32 {
     }
 }
 
-/// Logs each change of the pad's buttons with whether this copy is in the foreground, to show
-/// whether an unfocused copy is handed neutral input by XInput itself (FINDINGS 9).
+/// Logs button changes with focus state: does XInput blank an unfocused copy? (FINDINGS 9)
 unsafe fn log_buttons(result: u32, state: *mut c_void) {
     let buttons = if result == 0 { std::ptr::read_unaligned((state as *const u8).add(4) as *const u16) as u32 } else { 0x1_0000 };
     if LAST_BUTTONS.swap(buttons, Ordering::Relaxed) != buttons {
@@ -203,7 +196,7 @@ unsafe extern "system" fn set_state(index: u32, vibration: *mut c_void) -> u32 {
     }
 }
 
-/// `install`, plus virtual pads at indices 1-3 and the vibration import (`net=`). `pad` is 1 when unset.
+/// `install` plus virtual pads at indices 1-3 and the vibration hook (`net=`).
 pub fn install_net(base: u64, pad: Option<u32>) {
     VIRTUAL.store(true, Ordering::Relaxed);
     install(base, pad.unwrap_or(1));
@@ -213,8 +206,7 @@ pub fn install_net(base: u64, pad: Option<u32>) {
 
 static BASE: AtomicU64 = AtomicU64::new(0);
 
-/// Re-installs the import hooks the Steam overlay replaces a few seconds after start (FINDINGS 10).
-/// Cheap; call it every second or so from the game thread.
+/// The Steam overlay replaces these hooks a few seconds after start (FINDINGS 10); call about once a second.
 pub fn reassert() {
     let base = BASE.load(Ordering::Relaxed);
     if base == 0 {
@@ -229,7 +221,6 @@ pub fn reassert() {
     }
 }
 
-/// Hooks both imports of the main module.
 pub fn install(base: u64, pad: u32) {
     PAD.store(pad, Ordering::Relaxed);
     BASE.store(base, Ordering::Relaxed);

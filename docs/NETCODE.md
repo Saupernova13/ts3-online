@@ -180,6 +180,14 @@ the local player could wait for the rest of the level. When the local player has
 point that is not there, `respawn.rs` writes one: the checkpoint the local player itself last
 reached, else where the partner stands. The game then respawns the player as it would have.
 
+**Riding.** The owner sends `flags::RIDING` while its avatar is in the game's `Riding` state (a
+summoned horse, or a story level's horse that runs by itself). A story level mounts each copy's own
+player at its start, before partners are bound, so a partner whose owner rides gets a Bullseye of
+its own, made the way the game's summon makes one (FINDINGS 10). That horse does not answer its
+rider's stick, so while owner and partner ride, the horse and the partner are placed on the owner's
+position and heading every frame (`coop::ride`). A partner is also bound with player 1's level
+region and P2 start locator, as a local join is, so vehicle levels can auto-drive it.
+
 **Wallets (H6a).** The host owns the two HUD counters, `Stat_GOLD_COLLECTED` and
 `Stat_IMAGINATION_POINTS_COLLECTED` (`wallet::WALLETS`). It sends `Wallet { values, acked }` to each
 client when a value changes and once a second; the client writes the values into its stats table (the

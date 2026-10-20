@@ -228,6 +228,18 @@ Start as for T20 and play into Train Rescue; let one player stand idle until it 
    full health.
 3. Put the host save back.
 
+## T22: a partner rides with its owner (passed 2026-10-20)
+
+Start as for T20 and play into Train Rescue.
+
+1. Each log shows `coop: local player riding true` at the start, and right after the partner is
+   bound, `coop: player N rides; spawned horse 0x... for its partner`.
+2. The partner's drift lines read 0.0 m while both ride; each screen shows the partner on a horse
+   where its owner is.
+3. In Toy Box, `horse 0` in one copy's command file mounts that copy's player; within 3 s the other
+   copy logs `spawned horse` and shows the partner on a horse.
+4. Put the host save back.
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

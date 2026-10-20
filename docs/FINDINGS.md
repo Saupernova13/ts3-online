@@ -611,6 +611,33 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `ShowRespawnTip` and no `FinishedRespawn` (90 s in the run of T20). Filling player 0's point
   (`+0x40` from the `+9` block, or the partner's position with an identity rotation) after 2 s of
   state 6 respawned the player within a frame (`FinishedRespawn`), twice in two runs.
+- **[obs] Actor interfaces by type id (`queries/150`).** An actor's `vt+0x48` (TS3Avatar
+  `0x1405598e0`) takes a type id in `edx` and returns its interface of that type, from the
+  component set at `actor+0x368` or `actor+0x370`. Type ids are numbered on first use from the
+  counter `0x140b2a448` and kept in a global per type (the decompiler hides the argument: it shows
+  the inline `if (id == 0) id = ++counter` before the call). The state machine is type
+  `0x140b2a44c`: `vt+0x8(name, 0)` requests a state, `vt+0x60(name)` and `vt+0x18(name)` test one.
+- **[obs] Riding Bullseye (2026-10-20, `queries/141`-`149`, in game).** A rider is in the state
+  `Riding` (`vt+0x60` true), both on a summoned horse in Toy Box and on Train Rescue's horse, which
+  runs by itself (`BullseyeAutoRide`, true only under `vt+0x18`). The game's summon (`0x140220db0`,
+  case 6) spawns a Bullseye from the property string `0x14078f520` with `0x140554a80(props, &pos,
+  yaw, 0, 0)`, sets the rider's blackboard `mountActor` (`0x140561ae0(actor, 0)`, `0x14054c420`) to
+  its id and requests `BullseyeForceRide`; done for a partner, it sat on the horse in `Riding`, in
+  Toy Box and in Train Rescue. That horse did not move with the rider's stick, and placing it
+  (`+0x80`) did not carry the rider, so both have to be placed. The script binding
+  `CreateJessieRidingBullseye` (`0x1400b48d0`), the game's own second player on a horse, spawns
+  `Bullseye2` (props `0x140774390`), sets `myBullseye` and `bullseyeAutoRideMode` and requests
+  `BullseyeAutoRide`; done for a partner in Train Rescue, the horse followed the local player as a
+  companion and the partner stayed on foot.
+- **[obs] Auto-drive and the join's level region (`queries/141`-`143`).** The join menu's pick
+  handler passes the bind `*0x1405bc790(streaming, 0)` (player 1's level region; its first field is
+  the level info, region name at `+0x10`) and a game string `StartPosition_P2_<region>`
+  (`0x140023fb0(&out, cstr, allocator)`). The bind auto-drives the joining player
+  (`0x14019b110`) only in levels with flag `0x1f1`, `0x1f6` or `0x1f8`: it takes player 1's ride
+  from its `RideController` (`+0x30`, the ride's id), the matching ride of the other group in
+  `[0x14099b8b0]` (`+0x188` groups of three ids, `+0x190` count), places it at the start locator
+  and posts `ForceRide(ride, 0, avatar)`. Train Rescue has no region for player 0 and no ride
+  groups: its horse is the NPC `BullseyeNPC`, mounted by the level at its start.
 - **[obs] Removing an avatar mid-level can crash later (2026-10-19, in game).** In `wt_stuntpark`, with
   2 players, removing the partner (`assign_avatar(slot, 0)` + `remove_avatar`) dropped the player
   count to 1 and the copy crashed about 4 s later (c0000005 at `0x1401bdc5e`). The faulting function

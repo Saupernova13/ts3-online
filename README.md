@@ -27,6 +27,7 @@ your own install.
 | Online: follow each other between levels | working |
 | Online: shared gold, breakable crates, townspeople positions, thrown objects, pick-up targets | working (tested with 2 copies) |
 | Online: a story level starts on every PC at once (the first to load waits for the others) | working (tested with 2 copies) |
+| Online: a downed player respawns; partners ride Bullseye with their owner | working (tested with 2 copies) |
 | Online: shared enemies and mission state | not yet (each PC runs its own world) |
 | Streaming each quarter to a remote player (fallback) | designed, not built ([PLAN, phase 6](docs/PLAN.md)) |
 

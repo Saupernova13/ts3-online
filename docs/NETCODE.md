@@ -154,6 +154,25 @@ if it is in another level. Our own posts bypass the detour, so following never e
 its slot, idle ("parked"), until the owner returns or the level ends: removing an avatar mid-level
 can crash the game (FINDINGS 10). A newcomer takes over a parked avatar of a player who left.
 
+**Level start hold.** Story levels are scripted from their first frame (intro movie, then a
+scripted opening with enemies), and copies load at different speeds: in testing the host loaded
+Train Rescue in 3 s and the client, following from Toy Box, in 65-75 s, so the host's opening ran
+and its idle player was shot down before the client arrived. A copy sets `flags::LOADING` in its
+state from the moment it switches to a play level until the level has loaded: the game posted
+`LevelLoadComplete` and, since the level's intro movie plays in that same update and blocks the
+game loop (FINDINGS 10), the loader runs a frame after it with an avatar in slot 0 (or the avatar
+has been up 60 s without that event). A copy whose level has loaded and that sees a partner still
+on the way (loading, or in another play level it will follow from) pauses the way the pause menu
+does, without the menu (FINDINGS 10): the game timer goes to speed 0, which stops gameplay and the
+scripted sequences, and the sound pauses, while frames and the network keep running. It resumes
+(speed 9, sound back) when no partner is on the way any more, or after 120 s. A partner in a menu does not
+follow and is not waited for. A level is held at most once, when it has just loaded. A client
+follows a loading host to the level it loads (the host's `Level` name), so both load at once,
+and a partner whose owner is loading is parked rather than spawned at the old level's
+coordinates. Two other ways to pause failed in testing: the raw clock override (FINDINGS 8) zeroes
+the frame delta but the scripted opening kept running and shot the held player down, and a posted
+`Pause` of kind 4 changed nothing.
+
 **Wallets (H6a).** The host owns the two HUD counters, `Stat_GOLD_COLLECTED` and
 `Stat_IMAGINATION_POINTS_COLLECTED` (`wallet::WALLETS`). It sends `Wallet { values, acked }` to each
 client when a value changes and once a second; the client writes the values into its stats table (the

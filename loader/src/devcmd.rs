@@ -19,6 +19,8 @@ pub enum Cmd {
     EventActor { name: String, actor: u64, arg: Option<String> },
     Post5 { name: String, a: u64, b: u64, actor: u64 },
     Log(String),
+    /// the level start hold's pause
+    Pause(bool),
 }
 
 pub fn enable(copy: u32) {
@@ -68,6 +70,11 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
             Ok(Cmd::Post5 { name: name.into(), a, b, actor })
         }
         "log" => Ok(Cmd::Log(rest.to_string())),
+        "pause" => match rest {
+            "on" => Ok(Cmd::Pause(true)),
+            "off" => Ok(Cmd::Pause(false)),
+            _ => Err("pause needs on or off".into()),
+        },
         "" => Err("empty line".into()),
         v => Err(format!("unknown command {v:?}")),
     }
@@ -108,6 +115,10 @@ unsafe fn run(cmd: &Cmd) {
             None => log!("dev: post5 {name}: the post detour is not installed"),
         },
         Cmd::Log(t) => log!("dev: log {t}"),
+        Cmd::Pause(on) => {
+            log!("dev: pause {on}");
+            crate::hold::pause(*on);
+        }
     }
 }
 
@@ -153,6 +164,8 @@ mod tests {
         assert_eq!(parse("post SwitchLevel westerntown"), Ok(Cmd::Post { name: "SwitchLevel".into(), arg: Some("westerntown".into()) }));
         assert_eq!(parse("log hello world"), Ok(Cmd::Log("hello world".into())));
         assert_eq!(parse("log"), Ok(Cmd::Log(String::new())));
+        assert_eq!(parse("pause on"), Ok(Cmd::Pause(true)));
+        assert!(parse("pause").is_err());
     }
 
     #[test]

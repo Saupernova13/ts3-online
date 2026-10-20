@@ -387,6 +387,13 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
 - **[obs] A built-in clock override.** Both functions return a stored time (`0x1409c2918`) instead of
   reading the counter when the byte `0x1409c27b9` is set. Nothing in the exe writes either, so it is
   a dormant debug or capture mode the loader can turn on and drive frame by frame.
+- **[obs] The override pauses the game (2026-10-20, `queries/126`, `129`, in game).** The stored time
+  is a u32 of milliseconds; `0x1409c291c` holds the last real reading. With the stored time set to
+  that reading and the byte set, frames keep running at 60/s (counter `0x1409c2928`) with a frame
+  delta (`0x14094ecf0`) of 0; clearing the byte gives one frame of the 0.1 s clamp. The real clock
+  is `(QPC - [0x1409c2dc0]) * 1000 / [0x1409c2db8]` (i64 base and frequency, set once by
+  `0x14025a540`). [inf] Adding the time held to the base makes the clock carry on from the stored
+  time. Gameplay does not stop with it (§10, the game's pause), so the loader does not use it.
 - **[obs] RNG.** The CRT `rand` has 6 callers (`0x1400c4660` town-person spawn, `0x140189bd0`,
   `0x140268470`, `0x14046a660`, `0x140522f70`, `0x1407127a0`) and `srand` is never called, so it runs
   from the CRT's default seed. The UCRT keeps `rand` state per thread. One more generator: an LCG
@@ -549,6 +556,39 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   stunt park; a fresh board launch can pass through `st_train`. The name changes the moment
   `SwitchLevel` is posted, before the old level is torn down. Follow treats `gui_*` and `frontend`
   as menus.
+- **[obs] Level load completion and intro movies (2026-10-20, `queries/130`-`131`, in game).** The
+  level update `0x1405dd410` posts `LevelLoadComplete` (broadcast, no arguments) when streaming is
+  done, then, when the level's `postLoadMovie` property is set (flag `+0x2a9`, set by
+  `0x1405d81a0` after `LevelPublishDone`), plays that movie in the same call through the Bink
+  player `0x14047f390` (`FMVPlayer`; `BinkOpen`/`BinkWait`/`BinkClose`), which blocks the game loop
+  until the movie ends. The avatar is up before either: Train Rescue showed `LevelPublishDone` and
+  the avatar, `LevelLoadComplete` 0.05-7 s later, then a single 62 s frame (its intro movie).
+  Toy Box after a fresh start took 26 s from `LevelPublishDone` to `LevelLoadComplete`.
+- **[obs] A story level from Toy Box loads slowly (2026-10-20).** On one PC with two copies, the host
+  loaded Train Rescue from the story board in 3 s; the client, following from Toy Box, needed 65-75 s
+  to its avatar. [unk] How much of that is the second copy sharing the disk.
+- **[obs] The game's pause (2026-10-20, `queries/132`-`135`, in game).** The pause menu posts
+  `Pause` with a pointer to `{i32 kind @0, char* screen @8, u8 pause_audio @0x10, u8 @0x11,
+  i32 result @0x14, i32 player @0x18}`; listeners dereference it (`0x1405beba0` reads `kind`), so a
+  null argument crashes the game (c0000005 at `0x1405beba0`, seen). The handler `0x1405d6360` sets
+  the game timer `0x140954820` to speed 0 (`0x140479c00(timer, speed, 0)`; speed 9 is normal, and
+  the timer also sets the audio timer rate), posts `SyncTimer`, pauses audio when `pause_audio`,
+  locks controls (`GameCommonLoopLock`), opens `screen` when given, sets `0x140b2c5a6` and posts
+  `PauseChanged 1`. `Unpause` (handler `0x1405f8d60`) posts `RequestUnpauseSpeed` (9 unless a
+  listener changes it), restores the speed and audio, unlocks controls and posts `PauseChanged 0`.
+  `0x1405bf660` posts kind 4 with no screen and `0x101` in the audio bytes; posted by the loader
+  in Toy Box, that changed nothing (the `Pause` listener `0x1405beba0` routes kind 3 and kind 4 to
+  different calls of the front end, so kind 4 is a request). Calling the handler's own steps
+  pauses: `0x140479c00(timer, 0, 0)` put the timer in mode 0 (rate 0) as the pause menu does, and
+  2 s of stick moved the player 0 m (13 m after speed 9). Scripted sequences run on this timer,
+  not on the raw clock: with the clock override of FINDINGS 8 holding the frame delta at 0, Train
+  Rescue's opening still shot the idle player down.
+- **[obs] A player down alone in a story level waits (2026-10-20, `queries/124`-`128`).** The host's
+  idle Woody, shot down in Train Rescue while the client was still loading, sat on a black screen
+  with its health bar for minutes; the pause menu did not open. `Respawn` (component, handlers
+  `ManDown` `0x140657ce0`, `RespawnAvatar` `0x140658f10`) sets its down flag and a
+  `RespawnControlLock` on `ManDown`; a menu screen named `SCN_multiplayerRespawn_wait` exists.
+  [unk] What ends the wait in two-player story mode.
 - **[obs] Removing an avatar mid-level can crash later (2026-10-19, in game).** In `wt_stuntpark`, with
   2 players, removing the partner (`assign_avatar(slot, 0)` + `remove_avatar`) dropped the player
   count to 1 and the copy crashed about 4 s later (c0000005 at `0x1401bdc5e`). The faulting function

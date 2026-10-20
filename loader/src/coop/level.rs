@@ -1,6 +1,6 @@
 //! Level sync: a client follows the host's level, the host follows a client's switch.
 use crate::game::*;
-use crate::net::proto::level_hash;
+use crate::net::proto::{flags, level_hash, State};
 use crate::{hooks, log, net};
 use std::ffi::{c_char, CStr};
 use std::sync::Mutex;
@@ -23,6 +23,15 @@ pub(super) unsafe fn local_level_name() -> String {
     CStr::from_ptr(name as *const c_char).to_string_lossy().into_owned()
 }
 
+/// Without a `LevelLoadComplete`, a level counts as loaded once its avatar has been up this long.
+const LOAD_CAP: Duration = Duration::from_secs(60);
+
+/// The game posts `LevelLoadComplete` once streaming is done, then plays the level's
+/// `postLoadMovie` in the same update (FINDINGS 10), so the next frame after it is a playing level.
+pub(super) fn level_loaded(complete: bool, avatar_up_for: Option<Duration>) -> bool {
+    avatar_up_for.is_some_and(|t| complete || t >= LOAD_CAP)
+}
+
 /// The front end and `gui_*` levels (such as the story game board) are menus.
 pub fn is_play_level(name: &str) -> bool {
     !name.is_empty() && !name.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("gui_")) && !name.eq_ignore_ascii_case("frontend")
@@ -35,6 +44,15 @@ fn decide_follow(local_hash: u32, host_hash: u32, host_name: Option<&str>, misma
     }
     let name = host_name.filter(|n| level_hash(n) == host_hash)?;
     (mismatch_for >= FOLLOW_AFTER && since_switch >= FOLLOW_COOLDOWN).then(|| name.to_string())
+}
+
+/// The host's level hash; while the host loads, the level it is loading, so both load at once.
+fn host_level(st: Option<&State>, name: Option<&str>) -> u32 {
+    match st {
+        Some(s) if s.flags & flags::LOADING != 0 => name.map_or(0, level_hash),
+        Some(s) => s.level,
+        None => 0,
+    }
 }
 
 fn note_switch() {
@@ -70,10 +88,11 @@ fn mismatch_duration(local: u32, host: u32, now: Instant) -> Duration {
 pub(super) unsafe fn follow_levels(local: u32) {
     let now = Instant::now();
     if net::is_client() {
-        let host = net::remote_states().into_iter().find(|(id, _)| *id == 0).map_or(0, |(_, s)| s.level);
+        let host_name = net::host_level_name();
+        let host_state = net::remote_states().into_iter().find(|(id, _)| *id == 0).map(|(_, s)| s);
+        let host = host_level(host_state.as_ref(), host_name.as_deref());
         let mismatch = mismatch_duration(local, host, now);
         let since_switch = LAST_SWITCH.lock().ok().and_then(|t| *t).map_or(Duration::MAX, |t| now.saturating_duration_since(t));
-        let host_name = net::host_level_name();
         if let Some(name) = decide_follow(local, host, host_name.as_deref(), mismatch, since_switch) {
             log!("coop: following the host to level {name}");
             note_switch();
@@ -94,6 +113,26 @@ pub(super) unsafe fn follow_levels(local: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loaded_after_the_load_complete_event_with_an_avatar() {
+        let up = |s| Some(Duration::from_secs(s));
+        assert!(level_loaded(true, up(0)));
+        assert!(!level_loaded(true, None));
+        assert!(!level_loaded(false, up(59)));
+        assert!(level_loaded(false, up(60)));
+    }
+
+    #[test]
+    fn a_loading_host_is_followed_to_the_level_it_loads() {
+        let st = |level, f| State { id: 0, seq: 1, level, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Default::default(), flags: f, target: 0, proj: Default::default() };
+        let train = level_hash("st_train");
+        assert_eq!(host_level(Some(&st(0, flags::LOADING)), Some("st_train")), train);
+        assert_eq!(host_level(Some(&st(0, flags::LOADING)), None), 0);
+        assert_eq!(host_level(Some(&st(train, 0)), Some("westerntown")), train);
+        assert_eq!(host_level(Some(&st(0, 0)), Some("st_train")), 0);
+        assert_eq!(host_level(None, Some("st_train")), 0);
+    }
 
     #[test]
     fn menus_are_not_play_levels() {

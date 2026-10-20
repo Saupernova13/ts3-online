@@ -252,3 +252,17 @@ town.
   log before the abort; the save folder redirect converts the path to the ANSI code page and falls
   back to the 8.3 short name, and logs why when it cannot redirect instead of silently sharing the
   real folder. Code standards recorded in `CLAUDE.md`.
+
+- 2026-10-20, story levels start together (protocol 14): first online run of a story level (Train
+  Rescue, host from the story board, client following from Toy Box). The host loaded in 3 s, the
+  client in 65-75 s, so the host's opening ran alone and its idle player was shot down; once both
+  were in, each copy's partner stood where its owner's was. Now a copy sends `flags::LOADING` until
+  its level has loaded (`LevelLoadComplete`, then the intro movie, which blocks the game loop in the
+  same update), a client follows a loading host at once, and a copy whose level has loaded pauses
+  the game timer (as the pause menu does, without the menu) until no partner is on the way, at most
+  120 s (`hold.rs`). Two pauses that did not work are recorded: the raw clock override (the opening
+  kept running) and a posted `Pause` of kind 4 (a request only). In game (T20): the host paused for
+  64.8 s and resumed 28 ms after the client's `loaded` line; both copies then showed the same
+  opening line by line. A posted `Pause` with no argument crashes the game (FINDINGS 10). Open: a
+  partner does not ride (Bullseye) on the other copy; a player downed while its partner stands idle
+  can wait on a black screen.

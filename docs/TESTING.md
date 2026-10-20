@@ -203,6 +203,21 @@ copy's player there by short stick pushes; Toy Box town waypoints from the start
 4. Host: open the missions menu (BACK) and push the stick: the host's Woody on the client stays put.
 5. Put the host save back.
 
+## T20: a story level starts together (level start hold)
+
+Start as for T11 with the client in Toy Box and the host on the story board (pause, Exit to Game
+Board; this saves the host save, so back it up first). On the board the cursor moves with the
+left stick, not the d-pad; Train Rescue is the train piece next to space 3.
+
+1. Host: pick Train Rescue, Enter, Go. Expect the client's `coop: following the host to level
+   st_train` within 2 s (both load at once), then each copy's `coop: level st_train loaded` after its
+   intro movie.
+2. The copy that finishes first logs `hold: st_train loaded; game paused until 1 player(s)...` and
+   its screen stands still; the other's `loaded` line is followed within a frame by
+   `hold: game resumed after N s: everyone has loaded the level`.
+3. Both players start the opening ride together; neither is shot down while the other loads.
+4. Put the host save back.
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

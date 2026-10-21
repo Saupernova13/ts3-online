@@ -41,6 +41,10 @@ pub enum Cmd {
     Progress,
     /// set a mission or unlock (by name) through the game's own setter
     SetProgress { name: String, state: u8 },
+    /// log the Toy Box lots and the building kinds
+    Lots,
+    /// build a building (short name) on a lot (reference name) the way the lot selector does
+    Build { lot: String, building: String },
     /// log every input device's kind and which device each player reads
     Devices,
     /// place a slot's avatar 1.5 m from an actor (by id), facing it
@@ -127,6 +131,11 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
         "down" => Ok(Cmd::Down),
         "screen" if !rest.is_empty() => Ok(Cmd::Screen(rest.to_string())),
         "progress" => Ok(Cmd::Progress),
+        "lots" => Ok(Cmd::Lots),
+        "build" => {
+            let (lot, building) = rest.split_once(char::is_whitespace).ok_or("build needs LOT BUILDING")?;
+            Ok(Cmd::Build { lot: lot.to_string(), building: building.trim().to_string() })
+        }
         "setprogress" => {
             let (name, state) = rest.split_once(char::is_whitespace).ok_or("setprogress needs NAME STATE")?;
             Ok(Cmd::SetProgress { name: name.to_string(), state: state.trim().parse().map_err(|_| "setprogress needs a state 0-255")? })
@@ -228,6 +237,8 @@ unsafe fn run(cmd: &Cmd) {
             }
         }
         Cmd::Progress => crate::progress::dev_list(),
+        Cmd::Lots => crate::lots::dev_list(),
+        Cmd::Build { lot, building } => crate::lots::dev_build(lot, building),
         Cmd::SetProgress { name, state } => crate::progress::dev_set(name, *state),
         Cmd::Devices => {
             let input = global(INPUT_PTR);
@@ -316,6 +327,9 @@ mod tests {
         assert_eq!(parse("horse 1"), Ok(Cmd::Horse { slot: 1 }));
         assert_eq!(parse("autoride off"), Ok(Cmd::AutoRide(false)));
         assert!(parse("horse x").is_err());
+        assert_eq!(parse("lots"), Ok(Cmd::Lots));
+        assert_eq!(parse("build LOT_HatShop  HatShop "), Ok(Cmd::Build { lot: "LOT_HatShop".into(), building: "HatShop".into() }));
+        assert!(parse("build LOT_HatShop").is_err());
     }
 
     #[test]

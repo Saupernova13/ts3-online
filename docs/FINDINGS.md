@@ -783,7 +783,19 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   event's properties (`EventName=PurchaseBuilding`) under it, so the id differs between copies.
   `FrontEndShowScreen` (`0x1404c53e0([0x140b2ef10], name, -1)`) opens `Catalog2` (the Toy Store) from
   the loader, but it takes no input opened that way; the in-world trigger is in the level scripts.
-  [unk] The trigger, and what the lot does with the event.
+  [unk] The trigger.
+- **[obs] Lots and buildings (2026-10-21, `queries/183`-`188`, in game).** The lot table
+  `[0x14099b878]` holds lot pointers at `+0x110`, count (i32) `+0x118`; a lot's reference name
+  (`LOT_<site>`, `char*`) is at `+8`, its actor's id at `+0x10`, its building at `+0x38` (an entry of
+  the building table, null while empty). The building table `[0x14099b880]` holds 21 kinds at
+  `+0x48`, count `+0x50`: index (i32) `+0`, short name `+8` (`BarberShop`), key `+0x18`
+  (`BL_BarberShop`), built (u8) `+0x70`. Toy Box on the test save has 22 lots, 6 built. The lot
+  selector's OK (`0x140114440`) reads only its screen's vtable slot `+0x1e0` (close) and three fields:
+  `+0x260` the building's key, `+0x268` the buying avatar (must be set), `+0x270` the lot actor's
+  id. It allocates an event id with `EventName=PurchaseBuilding` and `BuildingName`, puts the
+  building on the lot (`0x1401b3790`), sets built, posts `WorldEvent` to the lot and frees the id.
+  Called with a stand-in screen it builds as a purchase does: barriers and a builder, then
+  `BuildingContructionComplete` and the new townsperson's arrival, on whichever copy calls it.
 - **[obs] Checkpoints (2026-10-21, `queries/171`, `175`-`177`, in game).** `CheckpointSystem`
   `[0x140b2bb78]`: up to 32 entries of 16 bytes from `+8` (interned name `char*`, started byte,
   finished byte), the current index (i32, 32 for none) at `+0x224`. `StartCheckpoint`'s worker

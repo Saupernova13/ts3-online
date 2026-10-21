@@ -1,12 +1,15 @@
-//! Story progress shared by the copies: missions (the game's challenges) and unlocks (catalog
-//! items, hats, buildings), both named tables the game keeps for the whole session. The host pages
-//! both tables to clients; a client takes the host's state where it is behind and reports its own
-//! changes, which the host takes in turn. Entries are named by the hash of their name.
+//! Story progress shared by the copies: missions (the game's challenges), unlocks (catalog items,
+//! hats, buildings) and the buildings on Toy Box's lots, named tables the game keeps for the whole
+//! session. The host pages the tables to clients; a client takes the host's state where it is
+//! behind and reports its own changes, which the host takes in turn. Entries are named by the hash
+//! of their name.
 use std::collections::HashMap;
 
 pub const CHALLENGE: u8 = 0;
 pub const LOCK: u8 = 1;
-pub const KINDS: usize = 2;
+/// a lot's state is its building's index + 1, 0 while empty
+pub const LOT: u8 = 2;
+pub const KINDS: usize = 3;
 /// Entries per page.
 pub const PAGE: usize = crate::net::proto::MAX_PROGRESS;
 /// Host: one page goes out this often even when nothing changed, so a client learns both tables.
@@ -24,10 +27,12 @@ pub type Id = (u8, u32);
 
 /// Whether a copy showing `local` should take `other`. Challenges only move forward to available
 /// (2), active (3) and passed (4), the states the game's setter takes; the rest pass by on their own.
-/// Unlocks are never locked again.
+/// Unlocks are never locked again. A building goes up only on an empty lot: the game has no way to
+/// pull one down.
 pub fn behind(kind: u8, local: u8, other: u8) -> bool {
     match kind {
         CHALLENGE => local < other && (2..=4).contains(&other),
+        LOT => local == 0 && other != 0,
         _ => local != other && other != 0,
     }
 }
@@ -182,8 +187,8 @@ pub use live::*;
 mod live {
     use super::*;
     use crate::game::*;
-    use crate::log;
     use crate::net::{self, proto::level_hash};
+    use crate::{log, lots};
     use std::ffi::{c_char, CStr};
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
@@ -275,8 +280,9 @@ mod live {
         let mut out = Vec::new();
         let challenges = challenges().into_iter().map(|c| (CHALLENGE, c.name, c.state, c.ptr));
         let locks = locks().into_iter().map(|l| (LOCK, l.name, l.state, l.ptr));
+        let lots = lots::lots().into_iter().map(|l| (LOT, l.name, l.building.map_or(0, |b| b + 1), l.ptr));
         let mut counts: HashMap<Id, u32> = HashMap::new();
-        for (kind, name, state, ptr) in challenges.chain(locks) {
+        for (kind, name, state, ptr) in challenges.chain(locks).chain(lots) {
             let Ok(state) = u8::try_from(state) else {
                 continue;
             };
@@ -290,28 +296,50 @@ mod live {
 
     /// The entry's state now: a force earlier in the same poll may have moved it (a pass unlocks more).
     unsafe fn current(id: Id, ptr: u64) -> u8 {
-        let s = rd_i32(ptr + if id.0 == CHALLENGE { CHALLENGE_STATE } else { LOCK_STATE });
+        let s = match id.0 {
+            CHALLENGE => rd_i32(ptr + CHALLENGE_STATE),
+            LOCK => rd_i32(ptr + LOCK_STATE),
+            _ => lots::building_on(ptr).map_or(0, |b| b + 1),
+        };
         u8::try_from(s).unwrap_or(u8::MAX)
     }
 
     /// Forces one entry to `state` through the game's own setters.
     unsafe fn force(id: Id, ptr: u64, state: u8) -> bool {
-        if id.0 == CHALLENGE {
-            let Some(slot) = set_state_slot(ptr) else {
-                return false;
-            };
-            let f: extern "system" fn(u64, i32) = std::mem::transmute(rd_u64(rd_u64(ptr) + slot * 8) as usize);
-            f(ptr, state as i32);
-        } else {
-            let f: extern "system" fn(u64, i32) = std::mem::transmute(va(LOCK_SET_STATE) as usize);
-            f(ptr, state as i32);
+        match id.0 {
+            CHALLENGE => {
+                let Some(slot) = set_state_slot(ptr) else {
+                    return false;
+                };
+                let f: extern "system" fn(u64, i32) = std::mem::transmute(rd_u64(rd_u64(ptr) + slot * 8) as usize);
+                f(ptr, state as i32);
+                true
+            }
+            LOCK => {
+                let f: extern "system" fn(u64, i32) = std::mem::transmute(va(LOCK_SET_STATE) as usize);
+                f(ptr, state as i32);
+                true
+            }
+            // the local player stands in as the buyer
+            _ => state > 0 && lots::build(ptr, state as i32 - 1, slot_avatar(global(MGR_PTR), 0)),
         }
-        true
+    }
+
+    fn kind_name(kind: u8) -> &'static str {
+        match kind {
+            CHALLENGE => "challenge",
+            LOCK => "lock",
+            _ => "lot",
+        }
     }
 
     unsafe fn describe(id: Id, ptr: u64) -> String {
-        let name = if id.0 == CHALLENGE { cstr(rd_u64(ptr + CHALLENGE_NAME)) } else { cstr(rd_u64(ptr + LOCK_NAME)) };
-        format!("{} {}", if id.0 == CHALLENGE { "challenge" } else { "lock" }, name.unwrap_or_default())
+        let name = match id.0 {
+            CHALLENGE => cstr(rd_u64(ptr + CHALLENGE_NAME)),
+            LOCK => cstr(rd_u64(ptr + LOCK_NAME)),
+            _ => cstr(rd_u64(ptr + LOT_NAME)),
+        };
+        format!("{} {}", kind_name(id.0), name.unwrap_or_default())
     }
 
     /// Game thread, per frame while in a loaded level with the local player in it.
@@ -353,7 +381,7 @@ mod live {
         for (id, s, _) in table {
             tables[id.0 as usize].push((id.1, *s));
         }
-        let pages = live.pager.pages(now, level, [&tables[0], &tables[1]]);
+        let pages = live.pager.pages(now, level, [&tables[0], &tables[1], &tables[2]]);
         net::send_progress(&pages);
         for (client, l, entries) in net::take_progress_reports() {
             if l != level {
@@ -361,7 +389,7 @@ mod live {
             }
             for (kind, hash, state) in entries {
                 if !live.reports.contains_key(&(kind, hash)) {
-                    log!("progress: player {client} reports {} {hash:#010x} at {state}", if kind == CHALLENGE { "challenge" } else { "lock" });
+                    log!("progress: player {client} reports {} {hash:#010x} at {state}", kind_name(kind));
                 }
                 live.reports.insert((kind, hash), (state, now));
             }
@@ -426,7 +454,7 @@ mod live {
                 let ok = force(id, ptr, state);
                 log!("dev: {} {before} -> {state}: {}", describe(id, ptr), if ok { "set" } else { "no setter" });
             }
-            None => log!("dev: no mission or unlock named {name}"),
+            None => log!("dev: no mission, unlock or lot named {name}"),
         }
     }
 
@@ -456,21 +484,23 @@ mod tests {
         assert!(!behind(CHALLENGE, 3, 3));
         assert!(behind(LOCK, 5, 1) && behind(LOCK, 0, 2) && !behind(LOCK, 2, 2));
         assert!(!behind(LOCK, 5, 0), "never locked again");
+        assert!(behind(LOT, 0, 2) && !behind(LOT, 0, 0));
+        assert!(!behind(LOT, 3, 2) && !behind(LOT, 2, 0), "a building is never replaced or pulled down");
     }
 
     #[test]
     fn the_pager_sends_everything_once_then_changes_at_once_and_one_page_in_turn() {
         let mut p = Pager::default();
         let big: Vec<(u32, u8)> = (0..(PAGE as u32 + 5)).rev().map(|h| (h, 0)).collect();
-        let first = p.pages(0, 1, [&big, &[(7, 1)]]);
+        let first = p.pages(0, 1, [&big, &[(7, 1)], &[]]);
         assert_eq!(first.len(), 3, "both pages of the challenges and the one of the locks");
         assert_eq!((first[0].page, first[0].pages, first[0].entries[0]), (0, 2, (0, 0)), "sorted by hash");
-        assert!(p.pages(10, 1, [&big, &[(7, 1)]]).is_empty(), "nothing changed and no refresh due");
-        let r = p.pages(REFRESH_MS, 1, [&big, &[(7, 1)]]);
+        assert!(p.pages(10, 1, [&big, &[(7, 1)], &[]]).is_empty(), "nothing changed and no refresh due");
+        let r = p.pages(REFRESH_MS, 1, [&big, &[(7, 1)], &[]]);
         assert_eq!(r.len(), 1, "one page in turn");
-        let next = p.pages(2 * REFRESH_MS, 1, [&big, &[(7, 1)]]);
+        let next = p.pages(2 * REFRESH_MS, 1, [&big, &[(7, 1)], &[]]);
         assert_ne!((r[0].kind, r[0].page), (next[0].kind, next[0].page), "the turn moves on");
-        let changed = p.pages(2 * REFRESH_MS + 1, 1, [&big, &[(7, 5)]]);
+        let changed = p.pages(2 * REFRESH_MS + 1, 1, [&big, &[(7, 5)], &[]]);
         assert_eq!(changed, vec![Page { level: 1, kind: LOCK, page: 0, pages: 1, entries: vec![(7, 5)] }]);
     }
 

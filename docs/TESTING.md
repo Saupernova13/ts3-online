@@ -310,6 +310,18 @@ stand-in's id. `hit ID AMOUNT SOURCE` damages an actor as if by `SOURCE`, `hit 0
 3. Obstacles still hurt each copy's own riders (`health: dropped` counts only enemy hits and
    stand-ins).
 
+## T29: a building bought on one copy goes up on all (passed 2026-10-21)
+
+Start as for T25 in Toy Box. `lots` logs every lot and building kind; `build LOT BUILDING` builds
+one the way the lot selector does.
+
+1. Host: `build LOT_TownMedium1 BarberShop`. About 3 s later the client logs `progress: lot
+   LOT_TownMedium1 0 -> 2 (the host's)`; both copies show the barriers, then the barber shop.
+2. Client: `build LOT_TownMedium2 CandyShop`: the client logs `reporting lot LOT_TownMedium2 at 6`,
+   the host `... 0 -> 6 (a client's change)` and builds it.
+3. Close the client and start it again: it builds both on joining.
+4. Put the host save back.
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

@@ -301,8 +301,11 @@ for locks), and retries every 2 s. Challenges only move forward to 2, 3 or 4; lo
 0. A client's own changes are reported (`ProgressReport`: level u32, count u8, up to 100 x (kind u8,
 hash u32, state u8)) until the host shows them, at most 10 s, and the host takes them the same way.
 Both messages carry the level and everything resets on a level change: the lock table is
-level-scoped, and copies change level at different times. What a purchase builds in town is not
-covered yet (FINDINGS 10: the lot's `WorldEvent` id is per copy).
+level-scoped, and copies change level at different times. Toy Box's lots are a third table
+(kind 2): a lot's state is its building's index + 1, 0 while empty, and a copy only builds on an
+empty lot, by calling the lot selector's OK with a stand-in screen and its own player as the buyer
+(FINDINGS 10), so each copy runs its own construction. The `WorldEvent` the selector posts is not
+replayed: its id is allocated per call.
 
 **Shared pause.** An owner sends `flags::PAUSED` while its game's own pause is on (`0x140b2c5a6`);
 other copies in the same level stop their game timer the way the level start hold does, without a

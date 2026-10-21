@@ -24,6 +24,7 @@ pub mod install;
 pub mod menu;
 pub mod menu_model;
 pub mod log;
+pub mod lots;
 pub mod math;
 pub mod net;
 pub mod npc;

@@ -137,6 +137,10 @@ the traffic but does not encrypt it (Tailscale encrypts it).
 ## Known limitations
 
 - Each PC runs its own world, kept in step by the host: players, what they carry and throw,
-  townspeople, broken crates and gold match. Enemies, missions, buildings and shop purchases made
-  during a session are simulated on each PC and can drift apart.
-- Only Toy Box has been tested.
+  townspeople, broken crates, gold, missions, unlocks and shop purchases, and the buildings on Toy
+  Box's lots (a client that joins later builds the host's on arrival).
+- Enemies are run by the host. On the client they move where the host's enemies are and do not
+  play their attacks; their hits arrive from the host, so a hit can land a moment late.
+- One player's pause pauses everyone, with the menu on that player's screen only. When every
+  player is down, everyone restarts at the checkpoint together.
+- Tested in Toy Box and the start of Train Rescue, with two players.

@@ -248,6 +248,27 @@ pub unsafe fn input_release(input: u64, player: u32) {
     f(input, player)
 }
 
+/// Input driver `vt+0x70(player)`: the controller device a player reads (FINDINGS 4), or 0.
+pub unsafe fn player_device(input: u64, player: u32) -> u64 {
+    let vt = rd_u64(input);
+    let f: extern "system" fn(u64, u32) -> u64 = std::mem::transmute(rd_u64(vt + 0x70) as usize);
+    f(input, player)
+}
+
+/// Controller device `vt+0x10`: its kind as a C string (`XInput` for a pad).
+pub unsafe fn device_kind(device: u64) -> u64 {
+    let f: extern "system" fn(u64) -> u64 = std::mem::transmute(rd_u64(rd_u64(device) + 0x10) as usize);
+    f(device)
+}
+
+/// Controller device: pointer to its u32 code per control id.
+pub const DEVICE_CODES: u64 = 0xb0;
+/// Controller device: code k's current state is the byte at `+0x11 + 2k` (previous at `+0x10 + 2k`).
+pub const DEVICE_CODE_STATE: u64 = 0x11;
+/// Controller device: left stick x and y, f32 in -1..1.
+pub const DEVICE_STICK_X: u64 = 0x68;
+pub const DEVICE_STICK_Y: u64 = 0x6c;
+
 pub unsafe fn input_is_assigned(input: u64, player: u32) -> u8 {
     let vt = rd_u64(input);
     let f: extern "system" fn(u64, u32) -> u8 = std::mem::transmute(rd_u64(vt + 0x90) as usize);

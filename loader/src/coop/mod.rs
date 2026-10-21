@@ -216,7 +216,9 @@ unsafe fn publish_local(mgr: u64, p0: u64, level: u32, own_class: Option<usize>,
     if LOCAL_RIDING.swap(riding, Ordering::Relaxed) != riding {
         log!("coop: local player riding {riding}");
     }
-    let state_flags = carry_flags(p0, true) | extra_flags | if controls { 0 } else { flags::CONTROLS_OFF } | if riding { flags::RIDING } else { 0 };
+    let carry = carry_flags(p0, true);
+    let held = pad::merge(held, device_pad(carry & flags::CARRYING != 0).unwrap_or_default());
+    let state_flags = carry | extra_flags | if controls { 0 } else { flags::CONTROLS_OFF } | if riding { flags::RIDING } else { 0 };
     let mut players: Vec<(u64, u8)> = partners.iter().filter(|(_, p)| p.avatar != 0).map(|(id, p)| (p.actor_id, *id)).collect();
     if let Some(me) = net::local_id() {
         players.push((actor::id(p0), me));
@@ -498,6 +500,28 @@ unsafe fn carry_flags(avatar: u64, log_raw: bool) -> u32 {
         }
     }
     (if by != 0 { flags::CARRYING } else { 0 }) | (if carried != 0 { flags::CARRIED } else { 0 })
+}
+
+/// Player 0's buttons when it plays on another device than a pad (the keyboard): the XInput hook
+/// sees only pads.
+unsafe fn device_pad(carrying: bool) -> Option<Pad> {
+    let input = global(INPUT_PTR);
+    let device = if input == 0 { 0 } else { player_device(input, 0) };
+    if device == 0 {
+        return None;
+    }
+    let kind = device_kind(device);
+    if kind == 0 || stricmp(kind as *const std::ffi::c_char, c"XInput".as_ptr()) == 0 {
+        return None;
+    }
+    let table = rd_u64(device + DEVICE_CODES);
+    if table == 0 {
+        return None;
+    }
+    let codes: Vec<u8> = (0..pad::PAD_LAYOUT.len() as u64).map(|c| rd_u32(table + c * 4)).map(|k| if k < 0x30 { k as u8 } else { 0 }).collect();
+    let active = |k: u8| rd_u8(device + DEVICE_CODE_STATE + 2 * k as u64) != 0;
+    let stick = (rd_f32(device + DEVICE_STICK_X), rd_f32(device + DEVICE_STICK_Y));
+    Some(pad::pad_from_controls(&codes, active, carrying, stick))
 }
 
 /// Mirrors the game's placing handler (0x1406a2010).

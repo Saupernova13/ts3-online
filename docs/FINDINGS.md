@@ -733,3 +733,19 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   companion did not keep it down. Toy Box's chickens (`Created_5`..`10`, reference names
   `Created_<n>Spawn Actor<m>_<k>`, equal on both copies, ids not) have plain trackers, take 10 from a
   punch, flee once hit and stay in the world at 0 health.
+- **[obs] Controller devices and keyboard input (#9, `queries/155`-`161`).** The input driver keeps up to
+  11 devices at `driver+0x460` (`+0x8c` qwords; `XInputInputDriver` per pad, `KeyControllerInputDriver`
+  for the keyboard), `vt+0x70(player)` returns a player's device and a device's `vt+0x10` its kind
+  (`XInput` for pads). Every device shares one layout: code k's state is a byte pair at `+0x10 + 2k`
+  (previous) and `+0x11 + 2k` (current), the left stick is f32 at `+0x68`/`+0x6c`, and `+0xb0` points
+  at the u32 code of each control id. The XInput poll (`0x14027c000`) fills codes 1-16 (dpad left,
+  down, right, up, X, A, B, Y, LB, RB, LT, RT, START, BACK, LS, RS); the keyboard device's update
+  (`0x14027ad90`) fills codes `0x13`-`0x25` from the keys bound to them (`0x140282570`), and the
+  driver update reads the keys through DirectInput. `0x1402150b0` sets a device's control table: on a
+  pad control 5 is A, 0/2/6 X, 1/7/9 B, 3/0x11 Y and the throw controls RT; on the keyboard several
+  controls share a code (attack and throw are one key), so a key cannot be replayed as one pad button
+  without context. `0x140281140` applies the per-player key rebinding (`0x140b2eaa8`) to the table.
+  [obs] In game (2026-10-21) the keyboard device is updated every frame while player 0 reads a pad,
+  but its control table is all zero (only an assigned device gets one): Space sets codes `0x15` and
+  `0x25`, E `0x14` and `0x16`, Q `0x19`, Z `0x1f`. Input driver `vt+0x80(player, 0)` did not move
+  player 0 off its pad.

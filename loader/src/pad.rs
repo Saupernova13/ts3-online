@@ -89,6 +89,74 @@ impl Pads {
     }
 }
 
+/// The game's pad layout (`0x1402150b0`): the controller code each control id reads on a pad.
+pub const PAD_LAYOUT: [u8; 39] = [
+    5, 7, 5, 8, 14, 6, 5, 7, 10, 7, 12, 4, 2, 1, 3, 11, 12, 8, 12, 12, 11, 9, 7, 10, 9, 7, 5, 12, 16, 3, 1, 2, 9, 16, 10, 9, 9, 10, 12,
+];
+/// The game's keyboard layout (`0x1402150b0`): the controller code each control id reads on the
+/// keyboard; a key feeds a code (rebinding changes the key, not this table).
+pub const KEY_LAYOUT: [u8; 39] = [
+    0x13, 0x16, 0x13, 0, 0x19, 0x15, 0x13, 0x17, 0x18, 0x16, 0x13, 0x1b, 0x1c, 0x1d, 0x1e, 0x1a, 0x13, 0x14, 0x16, 0x13, 0, 0x28, 0x16, 0, 0, 0x14, 0,
+    0x13, 0, 0, 0, 0, 0x1f, 0, 0, 0, 0, 0, 0,
+];
+const CODE_LT: u8 = 11;
+const CODE_RT: u8 = 12;
+const CODE_START: u8 = 13;
+const CODE_BACK: u8 = 14;
+
+/// XINPUT button of a pad controller code (FINDINGS 4); 0 for the triggers and unknown codes.
+fn code_button(code: u8) -> u16 {
+    match code {
+        1 => 0x0004,  // dpad left
+        2 => 0x0002,  // dpad down
+        3 => 0x0008,  // dpad right
+        4 => 0x0001,  // dpad up
+        5 => 0x4000,  // X
+        6 => 0x1000,  // A
+        7 => 0x2000,  // B
+        8 => 0x8000,  // Y
+        9 => 0x0100,  // LB
+        10 => 0x0200, // RB
+        15 => 0x0040, // left stick
+        16 => 0x0080, // right stick
+        _ => 0,
+    }
+}
+
+/// The pad an owner on another device (the keyboard) would press: each active code of the device
+/// (`codes`: the device's code per control id) becomes the pad code of the first control bound to it,
+/// or the throw trigger while carrying when one of those controls is on it. A keyboard key serves
+/// controls a pad splits over several buttons; START and BACK are left out so menus stay local.
+pub fn pad_from_controls(codes: &[u8], active: impl Fn(u8) -> bool, carrying: bool, stick: (f32, f32)) -> Pad {
+    let mut pad = NEUTRAL;
+    let mut done: Vec<u8> = Vec::new();
+    for (c, &k) in codes.iter().enumerate().take(PAD_LAYOUT.len()) {
+        if k == 0 || done.contains(&k) || !active(k) {
+            continue;
+        }
+        done.push(k);
+        let bound: Vec<u8> = codes.iter().zip(PAD_LAYOUT).skip(c).filter(|(dk, p)| **dk == k && !matches!(*p, CODE_START | CODE_BACK)).map(|(_, p)| p).collect();
+        let pick = if carrying && bound.contains(&CODE_RT) { Some(CODE_RT) } else { bound.first().copied() };
+        match pick {
+            Some(CODE_LT) => pad.lt = 255,
+            Some(CODE_RT) => pad.rt = 255,
+            Some(p) => pad.buttons |= code_button(p),
+            None => {}
+        }
+    }
+    let axis = |v: f32| if v.is_finite() { (v.clamp(-1.0, 1.0) * 32767.0) as i16 } else { 0 };
+    pad.lx = axis(stick.0);
+    pad.ly = axis(stick.1);
+    pad
+}
+
+/// Both pads at once: buttons and triggers combined, the stronger left stick.
+pub fn merge(a: Pad, b: Pad) -> Pad {
+    let mag = |p: &Pad| (p.lx as i32).pow(2) + (p.ly as i32).pow(2);
+    let (lx, ly) = if mag(&b) > mag(&a) { (b.lx, b.ly) } else { (a.lx, a.ly) };
+    Pad { buttons: a.buttons | b.buttons, lt: a.lt.max(b.lt), rt: a.rt.max(b.rt), lx, ly, ..a }
+}
+
 /// XINPUT_STATE: packet number, then the XINPUT_GAMEPAD.
 fn encode_state(packet: u32, p: &Pad) -> [u8; 16] {
     let mut o = [0u8; 16];
@@ -231,6 +299,53 @@ pub fn install(base: u64, pad: u32) {
         )
     };
     log!("pad: game player 1 -> physical pad {pad}; XInputGetState hooked: {g}, XInputGetCapabilities hooked: {c}");
+}
+
+#[cfg(test)]
+mod keyboard_tests {
+    use super::*;
+
+    const KEYS: [u8; 39] = KEY_LAYOUT;
+
+    fn press(keys: &[u8], carrying: bool) -> Pad {
+        pad_from_controls(&KEYS, |k| keys.contains(&k), carrying, (0.0, 0.0))
+    }
+
+    #[test]
+    fn keys_become_the_pad_buttons_of_their_first_control() {
+        assert_eq!(press(&[0x15], false).buttons, 0x1000, "jump is A");
+        assert_eq!(press(&[0x13], false).buttons, 0x4000, "attack is X");
+        assert_eq!(press(&[0x16], false).buttons, 0x2000);
+        assert_eq!(press(&[0x14], false).buttons, 0x8000);
+        assert_eq!(press(&[0x1c, 0x1d], false).buttons, 0x0006);
+        assert_eq!(press(&[0x1a], false).lt, 255);
+        assert_eq!(press(&[], false), NEUTRAL);
+    }
+
+    #[test]
+    fn the_attack_key_throws_while_carrying() {
+        let p = press(&[0x13], true);
+        assert_eq!((p.buttons, p.rt), (0, 255));
+        assert_eq!(press(&[0x15], true).buttons, 0x1000, "no trigger among its controls: unchanged");
+    }
+
+    #[test]
+    fn back_stays_local_and_unbound_codes_are_ignored() {
+        let mut codes = KEYS;
+        codes[4] = 0x30; // a key bound to the BACK control only
+        assert_eq!(pad_from_controls(&codes, |k| k == 0x30 || k == 0, false, (0.0, 0.0)), NEUTRAL);
+    }
+
+    #[test]
+    fn sticks_scale_and_pads_merge() {
+        let p = pad_from_controls(&KEYS, |_| false, false, (1.0, -2.0));
+        assert_eq!((p.lx, p.ly), (32767, -32767));
+        assert_eq!(pad_from_controls(&KEYS, |_| false, false, (f32::NAN, 0.5)).lx, 0);
+        let a = Pad { buttons: 0x1000, lx: 100, ..NEUTRAL };
+        let b = Pad { buttons: 0x4000, rt: 255, lx: -30000, ..NEUTRAL };
+        let m = merge(a, b);
+        assert_eq!((m.buttons, m.rt, m.lx), (0x5000, 255, -30000));
+    }
 }
 
 #[cfg(test)]

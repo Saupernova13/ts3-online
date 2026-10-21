@@ -22,7 +22,7 @@ The window remembers your name, password and last game, so next time it is two c
 
 - The Steam version of *Toy Story 3 Complete Edition* on every PC (the current Steam build; the
   loader leaves any other build untouched).
-- An Xbox-style controller on every PC. Keyboard input is not sent to the other players yet.
+- A controller or the keyboard on every PC. With the keyboard, Q (the game's BACK) and menu keys stay on your own screen.
 - A way for the PCs to reach each other: the same LAN, or [Tailscale](https://tailscale.com)
   (free for personal use) for PCs in different places.
 - The same ts3-online release on every PC ([Update](#update)).

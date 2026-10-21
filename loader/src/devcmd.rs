@@ -31,6 +31,8 @@ pub enum Cmd {
     AutoRide(bool),
     /// log every actor with a health interface
     Healths,
+    /// log every input device's kind and which device each player reads
+    Devices,
     /// place a slot's avatar 1.5 m from an actor (by id), facing it
     Goto { slot: u64, actor: u64 },
     /// damage an actor (by id) as the local player, through the game's take-damage
@@ -110,6 +112,7 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
             _ => Err("autoride needs on or off".into()),
         },
         "healths" => Ok(Cmd::Healths),
+        "devices" => Ok(Cmd::Devices),
         "hit" => {
             let (id, amount) = split_arg(rest);
             let actor = crate::hex::parse_u64(id).map_err(|e| format!("actor id: {e}"))?;
@@ -183,6 +186,20 @@ unsafe fn run(cmd: &Cmd) {
             crate::coop::set_auto_ride(*on);
         }
         Cmd::Healths => crate::health::dev_list(),
+        Cmd::Devices => {
+            let input = global(INPUT_PTR);
+            for i in 0..INPUT_DEVICE_COUNT {
+                let d = rd_u64(input + INPUT_DEVICES + i * 8);
+                if d != 0 {
+                    let k = device_kind(d);
+                    let kind = if k == 0 { String::new() } else { std::ffi::CStr::from_ptr(k as *const std::ffi::c_char).to_string_lossy().into_owned() };
+                    log!("dev: device {i} {d:#x} kind {kind:?}");
+                }
+            }
+            for p in 0..4u32 {
+                log!("dev: player {p} reads device {:#x} (map {})", player_device(input, p), rd_i32(input + INPUT_PLAYER_DEVICE + p as u64 * 4));
+            }
+        }
         Cmd::Hit { actor, amount } => crate::health::dev_hit(*actor, *amount as f32),
         Cmd::Goto { slot, actor } => {
             let avatar = slot_avatar(global(MGR_PTR), *slot);
@@ -240,6 +257,7 @@ mod tests {
         assert_eq!(parse("event_actor Hit 0x10 STR"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x10, arg: Some("STR".into()) }));
         assert_eq!(parse("post5 StartPickup 0 317 0x28c"), Ok(Cmd::Post5 { name: "StartPickup".into(), a: 0, b: 0x317, actor: 0x28c }));
         assert_eq!(parse("healths"), Ok(Cmd::Healths));
+        assert_eq!(parse("devices"), Ok(Cmd::Devices));
         assert_eq!(parse("goto 0 1f2"), Ok(Cmd::Goto { slot: 0, actor: 0x1f2 }));
         assert!(parse("goto 0").is_err());
         assert_eq!(parse("hit 404 10"), Ok(Cmd::Hit { actor: 0x404, amount: 10 }));

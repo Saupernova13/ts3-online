@@ -257,6 +257,17 @@ Start as for T20 and play into a level with enemies, both players near the same 
    flee before a placed player's punch lands.
 5. Put the host save back.
 
+## T24: a keyboard player's actions reach the partner (#9, passed 2026-10-21)
+
+Start as for T11, both copies in Toy Box with no menu open. Send keys to the host window as scancodes
+(`work/scratch/keys.ps1`-style `SendInput`; the game reads the keyboard through DirectInput).
+
+1. Space: the host log shows `coop: keyboard buttons 0x1000`, then `0x0000`; on the client's screen
+   the host's avatar jumps.
+2. E: `keyboard buttons 0xa000` (the game sets two codes for E: B and Y) and the client logs
+   `coop: player 0 press 0xa000`.
+3. Pad play is unchanged (T10).
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

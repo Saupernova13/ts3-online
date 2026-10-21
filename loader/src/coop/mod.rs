@@ -55,6 +55,8 @@ static LOAD_COMPLETE: AtomicBool = AtomicBool::new(false);
 static AVATAR_SINCE: Mutex<Option<Instant>> = Mutex::new(None);
 static LOADED: AtomicBool = AtomicBool::new(false);
 static LOCAL_RIDING: AtomicBool = AtomicBool::new(false);
+/// Last pad read from a non-pad device, for logging changes.
+static LOCAL_KEYS: AtomicU32 = AtomicU32::new(0);
 static AUTO_RIDE: AtomicBool = AtomicBool::new(true);
 
 /// `net_steer`, `net_steer_x`, `net_steer_y`.
@@ -216,7 +218,14 @@ unsafe fn publish_local(mgr: u64, p0: u64, level: u32, own_class: Option<usize>,
     if LOCAL_RIDING.swap(riding, Ordering::Relaxed) != riding {
         log!("coop: local player riding {riding}");
     }
-    let state_flags = carry_flags(p0, true) | extra_flags | if controls { 0 } else { flags::CONTROLS_OFF } | if riding { flags::RIDING } else { 0 };
+    let carry = carry_flags(p0, true);
+    let keys = device_pad(carry & flags::CARRYING != 0).unwrap_or_default();
+    let keys_now = keys.buttons as u32 | (keys.lt as u32) << 16 | (keys.rt as u32) << 24;
+    if LOCAL_KEYS.swap(keys_now, Ordering::Relaxed) != keys_now {
+        log!("coop: keyboard buttons {:#06x} lt {} rt {}", keys.buttons, keys.lt, keys.rt);
+    }
+    let held = pad::merge(held, keys);
+    let state_flags = carry | extra_flags | if controls { 0 } else { flags::CONTROLS_OFF } | if riding { flags::RIDING } else { 0 };
     let mut players: Vec<(u64, u8)> = partners.iter().filter(|(_, p)| p.avatar != 0).map(|(id, p)| (p.actor_id, *id)).collect();
     if let Some(me) = net::local_id() {
         players.push((actor::id(p0), me));
@@ -498,6 +507,27 @@ unsafe fn carry_flags(avatar: u64, log_raw: bool) -> u32 {
         }
     }
     (if by != 0 { flags::CARRYING } else { 0 }) | (if carried != 0 { flags::CARRIED } else { 0 })
+}
+
+/// The keyboard's buttons as a pad: the XInput hook sees only pads. The game updates the keyboard
+/// device every frame whichever device player 0 is assigned, and a copy has one local player.
+unsafe fn device_pad(carrying: bool) -> Option<Pad> {
+    let input = global(INPUT_PTR);
+    if input == 0 {
+        return None;
+    }
+    let is_pad = |d: u64| {
+        let kind = device_kind(d);
+        kind == 0 || stricmp(kind as *const std::ffi::c_char, c"XInput".as_ptr()) == 0
+    };
+    let device = (0..INPUT_DEVICE_COUNT).map(|i| rd_u64(input + INPUT_DEVICES + i * 8)).find(|d| *d != 0 && !is_pad(*d))?;
+    // an unassigned keyboard has no control table of its own (FINDINGS 4): the game's keyboard layout
+    let table = rd_u64(device + DEVICE_CODES);
+    let read: Vec<u8> = if table == 0 { Vec::new() } else { (0..pad::PAD_LAYOUT.len() as u64).map(|c| rd_u32(table + c * 4)).map(|k| if k < 0x30 { k as u8 } else { 0 }).collect() };
+    let codes = if read.iter().any(|k| *k != 0) { read } else { pad::KEY_LAYOUT.to_vec() };
+    let active = |k: u8| rd_u8(device + DEVICE_CODE_STATE + 2 * k as u64) != 0;
+    let stick = (rd_f32(device + DEVICE_STICK_X), rd_f32(device + DEVICE_STICK_Y));
+    Some(pad::pad_from_controls(&codes, active, carrying, stick))
 }
 
 /// Mirrors the game's placing handler (0x1406a2010).

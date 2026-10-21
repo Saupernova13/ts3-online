@@ -41,6 +41,8 @@ pub enum Cmd {
     Progress,
     /// set a mission or unlock (by name) through the game's own setter
     SetProgress { name: String, state: u8 },
+    /// a client's enemies think for themselves (on) or follow the host (off, the default)
+    EnemyAi(bool),
     /// log the Toy Box lots and the building kinds
     Lots,
     /// build a building (short name) on a lot (reference name) the way the lot selector does
@@ -132,6 +134,11 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
         "screen" if !rest.is_empty() => Ok(Cmd::Screen(rest.to_string())),
         "progress" => Ok(Cmd::Progress),
         "lots" => Ok(Cmd::Lots),
+        "enemyai" => match rest {
+            "on" => Ok(Cmd::EnemyAi(true)),
+            "off" => Ok(Cmd::EnemyAi(false)),
+            _ => Err("enemyai needs on or off".into()),
+        },
         "build" => {
             let (lot, building) = rest.split_once(char::is_whitespace).ok_or("build needs LOT BUILDING")?;
             Ok(Cmd::Build { lot: lot.to_string(), building: building.trim().to_string() })
@@ -238,6 +245,7 @@ unsafe fn run(cmd: &Cmd) {
         }
         Cmd::Progress => crate::progress::dev_list(),
         Cmd::Lots => crate::lots::dev_list(),
+        Cmd::EnemyAi(on) => crate::ai::set_local_ai(*on),
         Cmd::Build { lot, building } => crate::lots::dev_build(lot, building),
         Cmd::SetProgress { name, state } => crate::progress::dev_set(name, *state),
         Cmd::Devices => {
@@ -328,6 +336,8 @@ mod tests {
         assert_eq!(parse("autoride off"), Ok(Cmd::AutoRide(false)));
         assert!(parse("horse x").is_err());
         assert_eq!(parse("lots"), Ok(Cmd::Lots));
+        assert_eq!(parse("enemyai on"), Ok(Cmd::EnemyAi(true)));
+        assert!(parse("enemyai").is_err());
         assert_eq!(parse("build LOT_HatShop  HatShop "), Ok(Cmd::Build { lot: "LOT_HatShop".into(), building: "HatShop".into() }));
         assert!(parse("build LOT_HatShop").is_err());
     }

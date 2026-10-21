@@ -348,6 +348,16 @@
    "hook": "take_damage",
    "orig": "48895c240848896c24104889742418",
    "note": "health interface take-damage (health, amount, source actor id, flag, kind on the stack), shared by HealthTracker and TS3HealthTracker: detour that lets the enemy-health sync drop or report a hit, then calls the original through a trampoline"
+  },
+  {
+   "id": "hook_ai_tick_140644700",
+   "group": "hooks",
+   "va": "0x140644700",
+   "mode": "detour",
+   "steal": 14,
+   "hook": "ai_tick",
+   "orig": "40534883ec20488b0133d2488bd9",
+   "note": "AiBehaviorControl per-frame tick (vtable +0x80, the behaviour tree): detour that skips it for enemies on an online client, which follow the host's copy instead, then calls the original through a trampoline"
   }
  ],
  "deferred": [

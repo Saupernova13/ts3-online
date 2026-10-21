@@ -189,6 +189,31 @@ pub const HEALTH_IF_VT: u64 = 0x1_407d_9660;
 /// Health interface take-damage (`vt+0x80`), shared by both trackers; detoured by `hooks::take_damage`.
 pub const TAKE_DAMAGE: u64 = 0x1_4044_1f80;
 
+/// `ChallengeManager` (missions): challenge pointers at `+0x10`, count (i32) at `+0x18`.
+pub const CHALLENGES_PTR: u64 = 0x1_40b2_fdc8;
+pub const CHALLENGE_LIST: u64 = 0x10;
+pub const CHALLENGE_COUNT: u64 = 0x18;
+/// challenge name, `char*`
+pub const CHALLENGE_NAME: u64 = 0x80;
+/// challenge state (i32): 2 available, 3 active, 4 passed, 5 failed, 6 presenting
+pub const CHALLENGE_STATE: u64 = 0x94;
+/// times passed (i32); a repeatable challenge returns to its earlier state after a pass
+pub const CHALLENGE_PASSES: u64 = 0xd0;
+/// Challenge set-state (2 available, 3 activate, 4 pass, 5 fail), a slot of the challenge vtables.
+pub const CHALLENGE_SET_STATE: u64 = 0x1_4063_62f0;
+/// Unlock manager (catalog items, hats, buildings): lock pointers at `+0x10`, count in `LOCK_COUNT`.
+pub const LOCKS_PTR: u64 = 0x1_40b2_fde0;
+pub const LOCK_LIST: u64 = 0x10;
+pub const LOCK_COUNT: u64 = 0x1_40b2_c838;
+/// lock name, `char*`
+pub const LOCK_NAME: u64 = 0x10;
+/// lock state (i32): 0 locked, `LOCK_DEFAULT` once unlocked, 5 bought
+pub const LOCK_STATE: u64 = 0xa0;
+/// state a lock takes when unlocked (i32)
+pub const LOCK_DEFAULT: u64 = 0x9c;
+/// Sets a lock's state, posting `LockUnlocked` when it leaves 0.
+pub const LOCK_SET_STATE: u64 = 0x1_405f_2480;
+
 pub const RESPAWN_POINTS: u64 = 0x1_40b2_fdf8;
 
 /// Actor manager pointer, taken by the actor-name lookups.

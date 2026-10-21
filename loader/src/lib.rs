@@ -31,6 +31,7 @@ pub mod pad;
 pub mod patch;
 pub mod pe;
 pub mod perf;
+pub mod progress;
 pub mod projectile;
 pub mod respawn;
 #[cfg(windows)]

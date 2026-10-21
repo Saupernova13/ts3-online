@@ -164,6 +164,26 @@ pub fn take_hits() -> Vec<(u8, u32, Vec<(u32, crate::health::Key, f32)>)> {
     .unwrap_or_default()
 }
 
+/// Host: progress pages, sent unreliably to every client.
+pub fn send_progress(pages: &[crate::progress::Page]) {
+    with(|s| s.send_progress(pages));
+}
+
+/// Client: the host's progress pages since the last call.
+pub fn take_progress() -> Vec<crate::progress::Page> {
+    with(|s| s.take_progress()).unwrap_or_default()
+}
+
+/// Client: its own progress changes as (kind, name hash, state).
+pub fn send_progress_report(entries: &[(u8, u32, u8)]) {
+    with(|s| s.send_progress_report(entries));
+}
+
+/// Host: (client, reported changes) since the last call.
+pub fn take_progress_reports() -> Vec<(u8, Vec<(u8, u32, u8)>)> {
+    with(|s| s.take_progress_reports()).unwrap_or_default()
+}
+
 #[derive(Debug, Clone)]
 pub struct Options {
     pub name: String,

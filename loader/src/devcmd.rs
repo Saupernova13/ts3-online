@@ -31,6 +31,10 @@ pub enum Cmd {
     AutoRide(bool),
     /// log every actor with a health interface
     Healths,
+    /// log every mission and unlock with its state
+    Progress,
+    /// set a mission or unlock (by name) through the game's own setter
+    SetProgress { name: String, state: u8 },
     /// log every input device's kind and which device each player reads
     Devices,
     /// place a slot's avatar 1.5 m from an actor (by id), facing it
@@ -113,6 +117,11 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
         },
         "healths" => Ok(Cmd::Healths),
         "devices" => Ok(Cmd::Devices),
+        "progress" => Ok(Cmd::Progress),
+        "setprogress" => {
+            let (name, state) = rest.split_once(char::is_whitespace).ok_or("setprogress needs NAME STATE")?;
+            Ok(Cmd::SetProgress { name: name.to_string(), state: state.trim().parse().map_err(|_| "setprogress needs a state 0-255")? })
+        }
         "hit" => {
             let (id, amount) = split_arg(rest);
             let actor = crate::hex::parse_u64(id).map_err(|e| format!("actor id: {e}"))?;
@@ -186,6 +195,8 @@ unsafe fn run(cmd: &Cmd) {
             crate::coop::set_auto_ride(*on);
         }
         Cmd::Healths => crate::health::dev_list(),
+        Cmd::Progress => crate::progress::dev_list(),
+        Cmd::SetProgress { name, state } => crate::progress::dev_set(name, *state),
         Cmd::Devices => {
             let input = global(INPUT_PTR);
             for i in 0..INPUT_DEVICE_COUNT {

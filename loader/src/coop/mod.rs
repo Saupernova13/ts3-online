@@ -137,6 +137,7 @@ pub unsafe fn update() {
     }
     crate::respawn::update(mgr);
     crate::health::update(level, &players);
+    crate::progress::update(level);
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;
     let frame = Frame { mgr, level, now, own_class, players: &players };
 

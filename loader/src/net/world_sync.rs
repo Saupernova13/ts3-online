@@ -2,6 +2,7 @@
 //! Client: the list taken in seq order, plus its own events reported until the host lists them.
 use crate::health::Key;
 use crate::net::proto;
+use crate::progress::Page;
 use crate::world;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -13,6 +14,38 @@ const MAX_NPCS_IN: usize = 4096;
 const MAX_HEALTHS_IN: usize = 1024;
 const MAX_HITS_IN: usize = 64;
 pub const MAX_REPORTS: usize = 32;
+const MAX_PAGES_IN: usize = 64;
+const MAX_PROGRESS_REPORTS_IN: usize = 32;
+
+/// Progress pages (client) and reports (host) held until the game thread takes them. Progress is
+/// kept for the whole session, so a level change does not clear it.
+#[derive(Default)]
+pub struct ProgressInbox {
+    pages: Vec<Page>,
+    reports: Vec<(u8, Vec<(u8, u32, u8)>)>,
+}
+
+impl ProgressInbox {
+    pub fn on_page(&mut self, page: Page) {
+        if self.pages.len() < MAX_PAGES_IN {
+            self.pages.push(page);
+        }
+    }
+
+    pub fn take_pages(&mut self) -> Vec<Page> {
+        std::mem::take(&mut self.pages)
+    }
+
+    pub fn on_report(&mut self, client: u8, entries: Vec<(u8, u32, u8)>) {
+        if !entries.is_empty() && self.reports.len() < MAX_PROGRESS_REPORTS_IN {
+            self.reports.push((client, entries));
+        }
+    }
+
+    pub fn take_reports(&mut self) -> Vec<(u8, Vec<(u8, u32, u8)>)> {
+        std::mem::take(&mut self.reports)
+    }
+}
 
 /// Host: send progress for one client.
 #[derive(Default)]

@@ -1,8 +1,9 @@
 //! Sans-IO session state machine: bytes and the clock go in, datagrams and events come out.
 use super::proto::{self, clamp_name, DecodeError, Msg, Pad, Proj, State};
 use super::save::{self, Reassembler};
-use super::world_sync::WorldSync;
+use super::world_sync::{ProgressInbox, WorldSync};
 use crate::health::Key;
+use crate::progress::Page;
 use crate::wallet::HostWallet;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -109,6 +110,7 @@ pub struct Session {
     last_wallet: Option<u64>,
     host_wallet: Option<(Vec<i32>, u32)>,
     world: WorldSync,
+    progress: ProgressInbox,
 }
 
 fn newer(new: u32, old: u32) -> bool {
@@ -154,6 +156,7 @@ impl Session {
             last_wallet: None,
             host_wallet: None,
             world: WorldSync::new(),
+            progress: ProgressInbox::default(),
         }
     }
 
@@ -352,6 +355,40 @@ impl Session {
         }
     }
 
+    /// Host, unreliable: the pager repeats every page.
+    pub fn send_progress(&mut self, pages: &[Page]) {
+        if !self.is_host() {
+            return;
+        }
+        for p in pages {
+            let msg = Msg::Progress { kind: p.kind, page: p.page, pages: p.pages, entries: p.entries.clone() };
+            for i in 0..self.peers.len() {
+                let addr = self.peers[i].addr;
+                self.send(addr, &msg);
+            }
+        }
+    }
+
+    pub fn take_progress(&mut self) -> Vec<Page> {
+        self.progress.take_pages()
+    }
+
+    /// Client, unreliable: the caller repeats pending changes.
+    pub fn send_progress_report(&mut self, entries: &[(u8, u32, u8)]) {
+        let Some(host) = self.host_addr else { return };
+        if self.link != Link::Connected {
+            return;
+        }
+        for chunk in entries.chunks(proto::MAX_PROGRESS_REPORT) {
+            self.send(host, &Msg::ProgressReport { entries: chunk.to_vec() });
+        }
+    }
+
+    /// Host: (client, reported changes).
+    pub fn take_progress_reports(&mut self) -> Vec<(u8, Vec<(u8, u32, u8)>)> {
+        self.progress.take_reports()
+    }
+
     /// Host: (client, hits).
     pub fn take_hits(&mut self) -> Vec<(u8, Vec<(u32, Key, f32)>)> {
         self.world.take_hits()
@@ -506,6 +543,7 @@ impl Session {
             Msg::WorldAck { level, seq } => self.world.on_ack(from, level, seq),
             Msg::WorldReport { level, event, refname } => self.world.on_report(level, event, refname),
             Msg::Hits { level, entries } => self.world.on_hits(id, level, entries),
+            Msg::ProgressReport { entries } => self.progress.on_report(id, entries),
             Msg::SaveRequest { have } => self.serve_save(i, &have, now),
             Msg::LevelRequest { name } if !name.is_empty() && proto::valid_level(&name) => self.events.push(Event::LevelRequested { id, name }),
             Msg::Spend { spends } => {
@@ -647,6 +685,7 @@ impl Session {
             }
             Msg::Npcs { level, entries } => self.world.on_npcs(level, entries),
             Msg::Healths { level, entries } => self.world.on_healths(level, entries),
+            Msg::Progress { kind, page, pages, entries } => self.progress.on_page(Page { kind, page, pages, entries }),
             Msg::SaveInfo { total, crc } if self.want_save && !self.save_done => {
                 if total == 0 {
                     self.save_done = true;

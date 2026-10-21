@@ -295,3 +295,11 @@ town.
   and a figure is retried at most once a second. In game (T23, Toy Box): a host punch took a chicken
   to 90 on both copies; two client hits (dev `hit`) took another to 40 on both, matched by reference
   name across different ids; a kill from each side left both chickens at 0 on both copies.
+
+- 2026-10-21, keyboard players online (#9): the owner's buttons came only from the XInput hook. Every
+  input device shares one controller layout (code byte pairs, a control-to-code table), the
+  keyboard device is updated each frame even while player 0 reads a pad, and an unassigned keyboard
+  has no control table, so the loader reads it with the game's own keyboard layout and turns each
+  active code into the pad button of its first control (the throw trigger while carrying; BACK left
+  out). In game (T24): Space on the host's keyboard made the host's avatar jump on the client's
+  screen; E arrived as B+Y, as the game itself sets it.

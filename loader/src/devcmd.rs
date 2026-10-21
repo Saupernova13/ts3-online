@@ -31,6 +31,8 @@ pub enum Cmd {
     AutoRide(bool),
     /// log every actor with a health interface
     Healths,
+    /// log the story checkpoints
+    Checkpoints,
     /// log every mission and unlock with its state
     Progress,
     /// set a mission or unlock (by name) through the game's own setter
@@ -117,6 +119,7 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
         },
         "healths" => Ok(Cmd::Healths),
         "devices" => Ok(Cmd::Devices),
+        "checkpoints" => Ok(Cmd::Checkpoints),
         "progress" => Ok(Cmd::Progress),
         "setprogress" => {
             let (name, state) = rest.split_once(char::is_whitespace).ok_or("setprogress needs NAME STATE")?;
@@ -195,6 +198,7 @@ unsafe fn run(cmd: &Cmd) {
             crate::coop::set_auto_ride(*on);
         }
         Cmd::Healths => crate::health::dev_list(),
+        Cmd::Checkpoints => crate::checkpoint::dev_list(),
         Cmd::Progress => crate::progress::dev_list(),
         Cmd::SetProgress { name, state } => crate::progress::dev_set(name, *state),
         Cmd::Devices => {

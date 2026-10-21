@@ -214,6 +214,19 @@ pub const LOCK_DEFAULT: u64 = 0x9c;
 /// Sets a lock's state, posting `LockUnlocked` when it leaves 0.
 pub const LOCK_SET_STATE: u64 = 0x1_405f_2480;
 
+/// `CheckpointSystem`: up to `CHECKPOINT_MAX` entries of `CHECKPOINT_STRIDE` bytes from
+/// `CHECKPOINT_ENTRIES`, each an interned name `char*`, then a started and a finished byte; the
+/// current entry's index (i32, `CHECKPOINT_MAX` for none) at `CHECKPOINT_CURRENT`.
+pub const CHECKPOINTS_PTR: u64 = 0x1_40b2_bb78;
+pub const CHECKPOINT_ENTRIES: u64 = 0x8;
+pub const CHECKPOINT_STRIDE: u64 = 0x10;
+pub const CHECKPOINT_MAX: u64 = 0x20;
+pub const CHECKPOINT_STARTED: u64 = 0x8;
+pub const CHECKPOINT_FINISHED: u64 = 0x9;
+pub const CHECKPOINT_CURRENT: u64 = 0x224;
+/// The script binding `StartCheckpoint`'s worker: `(system, name, finish_previous, clear_finished)`.
+pub const START_CHECKPOINT: u64 = 0x1_4056_bb40;
+
 pub const RESPAWN_POINTS: u64 = 0x1_40b2_fdf8;
 
 /// Actor manager pointer, taken by the actor-name lookups.

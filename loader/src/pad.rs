@@ -93,6 +93,12 @@ impl Pads {
 pub const PAD_LAYOUT: [u8; 39] = [
     5, 7, 5, 8, 14, 6, 5, 7, 10, 7, 12, 4, 2, 1, 3, 11, 12, 8, 12, 12, 11, 9, 7, 10, 9, 7, 5, 12, 16, 3, 1, 2, 9, 16, 10, 9, 9, 10, 12,
 ];
+/// The game's keyboard layout (`0x1402150b0`): the controller code each control id reads on the
+/// keyboard; a key feeds a code (rebinding changes the key, not this table).
+pub const KEY_LAYOUT: [u8; 39] = [
+    0x13, 0x16, 0x13, 0, 0x19, 0x15, 0x13, 0x17, 0x18, 0x16, 0x13, 0x1b, 0x1c, 0x1d, 0x1e, 0x1a, 0x13, 0x14, 0x16, 0x13, 0, 0x28, 0x16, 0, 0, 0x14, 0,
+    0x13, 0, 0, 0, 0, 0x1f, 0, 0, 0, 0, 0, 0,
+];
 const CODE_LT: u8 = 11;
 const CODE_RT: u8 = 12;
 const CODE_START: u8 = 13;
@@ -299,11 +305,7 @@ pub fn install(base: u64, pad: u32) {
 mod keyboard_tests {
     use super::*;
 
-    /// The keyboard layout of `0x1402150b0`: control id to keyboard code.
-    const KEYS: [u8; 39] = [
-        0x13, 0x16, 0x13, 0, 0x19, 0x15, 0x13, 0x17, 0x18, 0x16, 0x13, 0x1b, 0x1c, 0x1d, 0x1e, 0x1a, 0x13, 0x14, 0x16, 0x13, 0, 0x28, 0x16, 0, 0, 0x14,
-        0, 0x13, 0, 0, 0, 0, 0x1f, 0, 0, 0, 0, 0, 0,
-    ];
+    const KEYS: [u8; 39] = KEY_LAYOUT;
 
     fn press(keys: &[u8], carrying: bool) -> Pad {
         pad_from_controls(&KEYS, |k| keys.contains(&k), carrying, (0.0, 0.0))

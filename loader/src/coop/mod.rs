@@ -509,23 +509,22 @@ unsafe fn carry_flags(avatar: u64, log_raw: bool) -> u32 {
     (if by != 0 { flags::CARRYING } else { 0 }) | (if carried != 0 { flags::CARRIED } else { 0 })
 }
 
-/// Player 0's buttons when it plays on another device than a pad (the keyboard): the XInput hook
-/// sees only pads.
+/// The keyboard's buttons as a pad: the XInput hook sees only pads. The game updates the keyboard
+/// device every frame whichever device player 0 is assigned, and a copy has one local player.
 unsafe fn device_pad(carrying: bool) -> Option<Pad> {
     let input = global(INPUT_PTR);
-    let device = if input == 0 { 0 } else { player_device(input, 0) };
-    if device == 0 {
+    if input == 0 {
         return None;
     }
-    let kind = device_kind(device);
-    if kind == 0 || stricmp(kind as *const std::ffi::c_char, c"XInput".as_ptr()) == 0 {
-        return None;
-    }
+    let is_pad = |d: u64| {
+        let kind = device_kind(d);
+        kind == 0 || stricmp(kind as *const std::ffi::c_char, c"XInput".as_ptr()) == 0
+    };
+    let device = (0..INPUT_DEVICE_COUNT).map(|i| rd_u64(input + INPUT_DEVICES + i * 8)).find(|d| *d != 0 && !is_pad(*d))?;
+    // an unassigned keyboard has no control table of its own (FINDINGS 4): the game's keyboard layout
     let table = rd_u64(device + DEVICE_CODES);
-    if table == 0 {
-        return None;
-    }
-    let codes: Vec<u8> = (0..pad::PAD_LAYOUT.len() as u64).map(|c| rd_u32(table + c * 4)).map(|k| if k < 0x30 { k as u8 } else { 0 }).collect();
+    let read: Vec<u8> = if table == 0 { Vec::new() } else { (0..pad::PAD_LAYOUT.len() as u64).map(|c| rd_u32(table + c * 4)).map(|k| if k < 0x30 { k as u8 } else { 0 }).collect() };
+    let codes = if read.iter().any(|k| *k != 0) { read } else { pad::KEY_LAYOUT.to_vec() };
     let active = |k: u8| rd_u8(device + DEVICE_CODE_STATE + 2 * k as u64) != 0;
     let stick = (rd_f32(device + DEVICE_STICK_X), rd_f32(device + DEVICE_STICK_Y));
     Some(pad::pad_from_controls(&codes, active, carrying, stick))

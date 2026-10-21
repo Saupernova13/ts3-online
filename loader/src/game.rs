@@ -261,6 +261,11 @@ pub unsafe fn device_kind(device: u64) -> u64 {
     f(device)
 }
 
+/// Input driver: its devices (up to 11 pointers; the keyboard's is first) and each player's device index.
+pub const INPUT_DEVICES: u64 = 0x460;
+pub const INPUT_DEVICE_COUNT: u64 = 11;
+pub const INPUT_PLAYER_DEVICE: u64 = 0x4b8;
+
 /// Controller device: pointer to its u32 code per control id.
 pub const DEVICE_CODES: u64 = 0xb0;
 /// Controller device: code k's current state is the byte at `+0x11 + 2k` (previous at `+0x10 + 2k`).

@@ -745,3 +745,7 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   pad control 5 is A, 0/2/6 X, 1/7/9 B, 3/0x11 Y and the throw controls RT; on the keyboard several
   controls share a code (attack and throw are one key), so a key cannot be replayed as one pad button
   without context. `0x140281140` applies the per-player key rebinding (`0x140b2eaa8`) to the table.
+  [obs] In game (2026-10-21) the keyboard device is updated every frame while player 0 reads a pad,
+  but its control table is all zero (only an assigned device gets one): Space sets codes `0x15` and
+  `0x25`, E `0x14` and `0x16`, Q `0x19`, Z `0x1f`. Input driver `vt+0x80(player, 0)` did not move
+  player 0 off its pad.

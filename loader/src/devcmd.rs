@@ -33,6 +33,8 @@ pub enum Cmd {
     Healths,
     /// place a slot's avatar 1.5 m from an actor (by id), facing it
     Goto { slot: u64, actor: u64 },
+    /// damage an actor (by id) as the local player, through the game's take-damage
+    Hit { actor: u64, amount: u32 },
 }
 
 pub fn enable(copy: u32) {
@@ -108,6 +110,12 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
             _ => Err("autoride needs on or off".into()),
         },
         "healths" => Ok(Cmd::Healths),
+        "hit" => {
+            let (id, amount) = split_arg(rest);
+            let actor = crate::hex::parse_u64(id).map_err(|e| format!("actor id: {e}"))?;
+            let amount = amount.and_then(|a| a.parse::<u32>().ok()).ok_or("hit needs a whole amount")?;
+            Ok(Cmd::Hit { actor, amount })
+        }
         "goto" => {
             let (slot, id) = split_arg(rest);
             let slot = slot.parse().map_err(|_| "goto needs a slot")?;
@@ -175,6 +183,7 @@ unsafe fn run(cmd: &Cmd) {
             crate::coop::set_auto_ride(*on);
         }
         Cmd::Healths => crate::health::dev_list(),
+        Cmd::Hit { actor, amount } => crate::health::dev_hit(*actor, *amount as f32),
         Cmd::Goto { slot, actor } => {
             let avatar = slot_avatar(global(MGR_PTR), *slot);
             let target = registry_get(*actor);
@@ -233,6 +242,8 @@ mod tests {
         assert_eq!(parse("healths"), Ok(Cmd::Healths));
         assert_eq!(parse("goto 0 1f2"), Ok(Cmd::Goto { slot: 0, actor: 0x1f2 }));
         assert!(parse("goto 0").is_err());
+        assert_eq!(parse("hit 404 10"), Ok(Cmd::Hit { actor: 0x404, amount: 10 }));
+        assert!(parse("hit 404").is_err() && parse("hit 404 nan").is_err());
         assert_eq!(parse("post SwitchLevel westerntown"), Ok(Cmd::Post { name: "SwitchLevel".into(), arg: Some("westerntown".into()) }));
         assert_eq!(parse("log hello world"), Ok(Cmd::Log("hello world".into())));
         assert_eq!(parse("log"), Ok(Cmd::Log(String::new())));

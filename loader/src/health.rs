@@ -336,7 +336,7 @@ pub fn verdict(online: bool, client: bool, victim_slot: Option<u64>, source_slot
 }
 
 #[cfg(windows)]
-pub use live::{after_damage, before_damage, dev_list, update};
+pub use live::{after_damage, before_damage, dev_hit, dev_list, update};
 
 /// Game-thread glue.
 #[cfg(windows)]
@@ -645,6 +645,19 @@ mod live {
                 log!("health: {} kept {after:.1} (was {before:.1}) for the host's {host:.1}; retrying in {RETRY_MS} ms", describe(actor));
             }
         }
+    }
+
+    /// The game's take-damage itself (detoured), as a hit by the local player.
+    pub unsafe fn dev_hit(id: u64, amount: f32) {
+        let actor = registry_get(id);
+        let iface = if actor < 0x1_0000 { 0 } else { interface(actor) };
+        let me = slot_avatar(global(MGR_PTR), 0);
+        if iface == 0 || me == 0 {
+            return log!("dev: hit: no actor {id:#x} with health, or no local player");
+        }
+        let take: extern "system" fn(u64, f32, u64, u64, i32) = std::mem::transmute(va(TAKE_DAMAGE) as usize);
+        take(iface, amount, actor::id(me), 1, 0);
+        log!("dev: hit {} for {amount}: now {:.1}", describe(actor), rd_f32(iface + HEALTH));
     }
 
     pub unsafe fn dev_list() {

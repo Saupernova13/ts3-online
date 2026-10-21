@@ -321,3 +321,10 @@ town.
   a purchase builds in town (the lot event's id is per copy; the catalog's in-world trigger was not
   found), and stopping a client's AI (its hits no longer count, so it only shows). Per-part timings
   joined the `perf:` log; Train Rescue ran at 58 fps with 80-105 us of loader work per frame.
+
+- 2026-10-21, buildings (#39, protocol 18): the lot selector's OK handler turned out to need only a
+  building key, a buyer and a lot, so the loader calls it with a stand-in screen. The lots joined
+  the progress tables as a third kind (a lot's building index + 1); a copy builds the other's
+  building only on an empty lot, and each copy runs its own construction. T29: a building from
+  each side, and a client restarted mid-session built both on joining. The catalog's in-world
+  trigger is still unknown; it is no longer needed for the sync.

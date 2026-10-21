@@ -80,6 +80,33 @@ impl Traffic {
 }
 
 static FRAMES: Mutex<Option<(Frames, Instant)>> = Mutex::new(None);
+/// Cost of the named parts of a frame's work, reported with it.
+static SECTIONS: Mutex<Vec<(&'static str, Span)>> = Mutex::new(Vec::new());
+
+/// Runs `f`, adding its time to the section `name`.
+pub fn section<T>(name: &'static str, f: impl FnOnce() -> T) -> T {
+    let t = Instant::now();
+    let out = f();
+    let us = t.elapsed().as_micros() as u64;
+    if let Ok(mut s) = SECTIONS.lock() {
+        match s.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, span)) => span.add(us),
+            None => {
+                let mut span = Span::default();
+                span.add(us);
+                s.push((name, span));
+            }
+        }
+    }
+    out
+}
+
+fn sections_report() -> String {
+    let Ok(mut s) = SECTIONS.lock() else { return String::new() };
+    let out = s.iter().map(|(n, sp)| format!("{n} avg {} max {}", sp.avg_us(), sp.max_us)).collect::<Vec<_>>().join(", ");
+    s.clear();
+    out
+}
 
 /// Call once per frame on the game thread.
 pub fn frame(work: Duration) {
@@ -90,6 +117,7 @@ pub fn frame(work: Duration) {
     let age = now.saturating_duration_since(*since);
     if age >= WINDOW {
         log!("{}", f.report(age.as_secs_f64()));
+        log!("perf: sections (us) {}", sections_report());
         *since = now;
     }
 }

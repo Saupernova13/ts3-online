@@ -105,8 +105,8 @@ pub unsafe fn update() {
     let (name, level, switched) = current_level();
     follow_levels(level);
     crate::wallet::update(level);
-    crate::world::update(level);
-    crate::npc::update(level);
+    crate::perf::section("world", || crate::world::update(level));
+    crate::perf::section("npc", || crate::npc::update(level));
     let Ok(mut guard) = PARTNERS.lock() else { return };
     let partners = guard.get_or_insert_with(HashMap::new);
     if switched && !partners.is_empty() {
@@ -136,8 +136,8 @@ pub unsafe fn update() {
         return;
     }
     crate::respawn::update(mgr);
-    crate::health::update(level, &players);
-    crate::progress::update(level);
+    crate::perf::section("health", || crate::health::update(level, &players));
+    crate::perf::section("progress", || crate::progress::update(level));
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;
     let frame = Frame { mgr, level, now, own_class, players: &players };
 

@@ -31,6 +31,8 @@ pub enum Cmd {
     AutoRide(bool),
     /// log every actor with a health interface
     Healths,
+    /// place a slot's avatar 1.5 m from an actor (by id), facing it
+    Goto { slot: u64, actor: u64 },
 }
 
 pub fn enable(copy: u32) {
@@ -106,6 +108,12 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
             _ => Err("autoride needs on or off".into()),
         },
         "healths" => Ok(Cmd::Healths),
+        "goto" => {
+            let (slot, id) = split_arg(rest);
+            let slot = slot.parse().map_err(|_| "goto needs a slot")?;
+            let actor = crate::hex::parse_u64(id.unwrap_or("")).map_err(|e| format!("actor id: {e}"))?;
+            Ok(Cmd::Goto { slot, actor })
+        }
         "" => Err("empty line".into()),
         v => Err(format!("unknown command {v:?}")),
     }
@@ -167,6 +175,19 @@ unsafe fn run(cmd: &Cmd) {
             crate::coop::set_auto_ride(*on);
         }
         Cmd::Healths => crate::health::dev_list(),
+        Cmd::Goto { slot, actor } => {
+            let avatar = slot_avatar(global(MGR_PTR), *slot);
+            let target = registry_get(*actor);
+            if avatar == 0 || target < 0x1_0000 {
+                log!("dev: goto: no avatar in slot {slot} or no actor {actor:#x}");
+            } else {
+                let p = crate::actor::pos(target);
+                let at = [p[0] + 1.5, p[1], p[2]];
+                // yaw facing -x, toward the target
+                crate::actor::place_pose(avatar, at, -std::f32::consts::FRAC_PI_2);
+                log!("dev: slot {slot} placed at {at:?} next to {actor:#x}");
+            }
+        }
     }
 }
 
@@ -210,6 +231,8 @@ mod tests {
         assert_eq!(parse("event_actor Hit 0x10 STR"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x10, arg: Some("STR".into()) }));
         assert_eq!(parse("post5 StartPickup 0 317 0x28c"), Ok(Cmd::Post5 { name: "StartPickup".into(), a: 0, b: 0x317, actor: 0x28c }));
         assert_eq!(parse("healths"), Ok(Cmd::Healths));
+        assert_eq!(parse("goto 0 1f2"), Ok(Cmd::Goto { slot: 0, actor: 0x1f2 }));
+        assert!(parse("goto 0").is_err());
         assert_eq!(parse("post SwitchLevel westerntown"), Ok(Cmd::Post { name: "SwitchLevel".into(), arg: Some("westerntown".into()) }));
         assert_eq!(parse("log hello world"), Ok(Cmd::Log("hello world".into())));
         assert_eq!(parse("log"), Ok(Cmd::Log(String::new())));

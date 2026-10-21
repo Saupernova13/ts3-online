@@ -407,6 +407,16 @@ mod live {
         }
     }
 
+    /// An enemy's health interface: a plain `HealthTracker`, not an avatar's or companion's.
+    unsafe fn enemy_interface(actor: u64) -> u64 {
+        let iface = interface(actor);
+        if iface != 0 && rd_u64(iface) == va(HEALTH_IF_VT) {
+            iface
+        } else {
+            0
+        }
+    }
+
     unsafe fn slot_of(actor: u64) -> Option<u64> {
         let mgr = global(MGR_PTR);
         if mgr == 0 || actor < 0x1_0000 {
@@ -468,7 +478,12 @@ mod live {
         let victim = rd_u64(iface - OWNER_BACK);
         let src = if source == 0 { 0 } else { registry_get(source) };
         let online = net::active();
-        let v = verdict(online, net::is_client(), slot_of(victim), slot_of(src));
+        let enemy = rd_u64(iface) == va(HEALTH_IF_VT);
+        let (victim_slot, source_slot) = (slot_of(victim), slot_of(src));
+        let v = match verdict(online, net::is_client(), victim_slot, source_slot) {
+            Verdict::Report if !enemy => Verdict::Pass,
+            v => v,
+        };
         if !online {
             return v;
         }
@@ -481,7 +496,8 @@ mod live {
         match v {
             Verdict::Drop => live.dropped += 1,
             Verdict::Report => live.pending.push((iface, victim, rd_f32(iface + HEALTH))),
-            Verdict::Pass if slot_of(victim).is_none() && !net::is_client() => {
+            // the host streams what players fight, not what the level does to its own actors
+            Verdict::Pass if enemy && victim_slot.is_none() && source_slot.is_some() && !net::is_client() => {
                 live.watched.insert(actor::id(victim));
             }
             Verdict::Pass => {}
@@ -560,7 +576,7 @@ mod live {
                     continue;
                 }
                 let actor = find(live, level, &key);
-                let iface = if actor == 0 { 0 } else { interface(actor) };
+                let iface = if actor == 0 { 0 } else { enemy_interface(actor) };
                 if iface == 0 {
                     continue;
                 }
@@ -578,7 +594,7 @@ mod live {
         let mut seen = Vec::new();
         live.watched.retain(|id| {
             let actor = registry_get(*id);
-            let iface = if actor < 0x1_0000 { 0 } else { interface(actor) };
+            let iface = if actor < 0x1_0000 { 0 } else { enemy_interface(actor) };
             if iface == 0 {
                 return false;
             }
@@ -603,7 +619,7 @@ mod live {
         let host_stand_in = stand_in(players, 0);
         for (key, host) in live.follower.current(now) {
             let actor = find(live, level, &key);
-            let iface = if actor == 0 { 0 } else { interface(actor) };
+            let iface = if actor == 0 { 0 } else { enemy_interface(actor) };
             if iface == 0 {
                 continue;
             }

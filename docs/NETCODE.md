@@ -141,7 +141,7 @@ never puppets with interactions turned off.
 | H3 | Co-op partners: the owner's pad state is sent every frame and fed to a virtual XInput pad 1-3; the remote avatar is bound to a player slot through the join path, so it moves, animates and interacts through the game's own code; the owner's position corrects drift; the `online` patch keeps one full-screen view of slot 0 | partners run, jump, pick each other up and throw on both screens |
 | H4 | Connect: `net=auto` finds a host among the online tailnet peers (`tailscale status`) or becomes the host; two hosts that meet merge; explicit `net=client:<tailnet name>:27777` still works | two PCs on one tailnet connect with the same ini and no addresses |
 | H5 | One world: the host sends its save at connect and the client plays it from a session folder without saving back, as local P2 plays P1's save; the client follows the host into its level (`SwitchLevel`, `0x14012e800`) | done (T11, T12) |
-| H6 | Shared world state, system by system: gold and pickups, enemies and NPCs owned by the host, missions, shops, rides and vehicles; wallets (gold, imagination points) are built (H6a), and so are world events by reference name (H6b: crates breaking) | both players see the same enemies, pickups and mission state |
+| H6 | Shared world state, system by system: gold and pickups, enemies and NPCs owned by the host, missions, shops, rides and vehicles; wallets (gold, imagination points) are built (H6a), world events by reference name (H6b: crates breaking), NPC movement (H6c) and enemy health (H6d) | both players see the same enemies, pickups and mission state |
 | H7 | Release: install/uninstall script, sample ini, README for players, 2-PC tailnet test | a friend installs it and plays |
 
 **Level follow (H5b).** The host sends `Level { name }` (its current level, empty outside one) to
@@ -261,6 +261,28 @@ position and yaw, or the host's position itself beyond 3 m. Skipped: the player 
 partners') and actors being carried (`ActorCarried+0x18` not 0). The client's own AI still runs
 underneath and is overridden each frame; stopping it is a later step. Wire layout (after the common
 header): `Npcs` = level u32, count u8, then count x (hash u32, x f32, y f32, z f32, yaw f32).
+
+**Enemy health (H6d).** Second step of direction item 2: the host decides how much health every
+enemy has. Every hit goes through one function, the health interface's take-damage (`0x140441f80`,
+FINDINGS 10), which the loader detours. On every copy in a networked session, a hit on a partner's
+stand-in is dropped (its owner's copy decides that player's health), and so is a hit dealt by a
+partner's stand-in to anything else (its owner's copy reports it). A client's own player hitting an
+enemy is applied as usual and the health it took is added to a running total per enemy, which the
+client sends to the host every 200 ms for 3 s after the last change (`Hits`, unreliable, repeated);
+the host applies whatever part of each total it has not applied yet, with the client's stand-in as
+the source and the raw damage kind (3: no multipliers or invulnerability), so a kill on the host
+runs the game's own death. The host watches every enemy that took damage this level and sends each
+one's health when it changes and once a second (`Healths`, unreliable), a dead one every 250 ms for
+5 s even after the game removes it. A client follows each figure: higher local health takes the
+difference as raw damage, with the host's stand-in as the source (a kill plays the death), and lower
+local health is raised to the host's unless the client's own hits on that enemy are still being
+reported. Enemies are named by a `Key`: the hash of the reference name when that is unique on the
+sender, else the hash of the actor name and the position, matched to the nearest actor with that
+name within 4 m. Wire layouts (after the common header): `Healths` = level u32, count u8 (at most
+40), then count x (key, health f32); `Hits` = level u32, count u8 (at most 34), then count x (the
+client's actor id u32, key, running total f32); key = reference-name hash u32, actor-name hash u32,
+position 3 x f32. Decode refuses larger counts, non-finite numbers, health beyond 1e6 and positions
+beyond 1e6. Each copy's enemy AI still runs; attacks on a player are decided by that player's copy.
 
 `net_sim=delay,jitter,loss` adds artificial latency and loss for testing on one PC.
 

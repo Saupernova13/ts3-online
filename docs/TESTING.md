@@ -322,6 +322,15 @@ one the way the lot selector does.
 3. Close the client and start it again: it builds both on joining.
 4. Put the host save back.
 
+## T30: a client's enemies follow the host (passed 2026-10-21, Train Rescue start only)
+
+Start as for T25; host `post SwitchLevel st_train`.
+
+1. The client logs `ai: DrPorkchopUFO (...) follows the host` and `ai: N enemy behaviour ticks
+   skipped`; no Bullseye is listed. Toy Box lists the Stagecoach.
+2. Both copies ride on and reach the same checkpoint (`checkpoints`).
+3. Not yet covered: a fight with enemies that walk and attack.
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

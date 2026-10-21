@@ -328,3 +328,11 @@ town.
   building only on an empty lot, and each copy runs its own construction. T29: a building from
   each side, and a client restarted mid-session built both on joining. The catalog's in-world
   trigger is still unknown; it is no longer needed for the sync.
+
+- 2026-10-21, enemy AI on clients: a client's enemies now skip their behaviour tree
+  (`AiBehaviorControl`'s tick, detoured) and only follow the host's stream; their hits already came
+  from the host. Telling enemies from friendly AI took three tries: the game's friendly-fire sets
+  and `AipIsEnemy` both took Bullseye for an enemy, so the rule is the damage sync's (a plain
+  `HealthTracker`) minus Bullseye. T30 at Train Rescue's start: the UFO followed the host, the
+  horses kept running and both copies reached the same checkpoint. A level with walking enemies
+  is still to be played.

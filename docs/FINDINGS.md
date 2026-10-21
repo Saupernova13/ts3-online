@@ -796,6 +796,17 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   building on the lot (`0x1401b3790`), sets built, posts `WorldEvent` to the lot and frees the id.
   Called with a stand-in screen it builds as a purchase does: barriers and a builder, then
   `BuildingContructionComplete` and the new townsperson's arrival, on whichever copy calls it.
+- **[obs] The AI's tick (2026-10-21, `queries/180`, `189`-`196`, in game).** `AiBehaviorControl`
+  (vtable `0x140804818`, the actor at `+8`): `+0x28` starts the behaviour tree named by the
+  actor's `BehaviorTreeName`, `+0x30` stops it, `+0x38` tests it is running, `+0x80`
+  (`0x140644700`) ticks it each frame (the tree at `+0x38`, a second runner at `+0x40`, both with
+  the frame time `[0x14095483c]`), `+0x90` (`0x1406432b0`) only runs timers and the death frames.
+  Skipping `+0x80` on a client for Train Rescue's UFO and Toy Box's stagecoach left both where the
+  host's stream put them, and the level ran on in step. Telling an enemy from a friendly AI: the
+  actors' `FriendlyFilter` sets (take-damage's friendly fire, `0x1404fcb50` and `0x140502bb0`) and
+  `AiPerception`'s `AipIsEnemy` (`0x140662800`) both called Bullseye, Hamm and the UFO alike;
+  [inf] neither is set up for the player in these levels. Bullseye and the UFO both use the plain
+  `HealthTracker`.
 - **[obs] Checkpoints (2026-10-21, `queries/171`, `175`-`177`, in game).** `CheckpointSystem`
   `[0x140b2bb78]`: up to 32 entries of 16 bytes from `+8` (interned name `char*`, started byte,
   finished byte), the current index (i32, 32 for none) at `+0x224`. `StartCheckpoint`'s worker

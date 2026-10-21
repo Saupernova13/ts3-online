@@ -127,8 +127,8 @@ mod live {
         find_component(avatar, b"PlayerPerception\0".as_ptr() as u64)
     }
 
-    /// Every (reference name, actor id, actor pointer) in the actor manager's three lists.
-    pub unsafe fn named_actor_ptrs() -> Vec<(String, u64, u64)> {
+    /// Every actor in the actor manager's three lists.
+    pub unsafe fn actor_ptrs() -> Vec<u64> {
         let mgr = global(ACTOR_MGR);
         let mut out = Vec::new();
         if mgr == 0 {
@@ -140,15 +140,18 @@ mod live {
             while n != 0 && guard < 20_000 {
                 let a = rd_u64(n + 8);
                 if a != 0 {
-                    if let Some(r) = actor::refname(a) {
-                        out.push((r, actor::id(a), a));
-                    }
+                    out.push(a);
                 }
                 n = rd_u64(n + 0x30);
                 guard += 1;
             }
         }
         out
+    }
+
+    /// Every (reference name, actor id, actor pointer) in the actor manager's three lists.
+    pub unsafe fn named_actor_ptrs() -> Vec<(String, u64, u64)> {
+        actor_ptrs().into_iter().filter_map(|a| actor::refname(a).map(|r| (r, actor::id(a), a))).collect()
     }
 
     unsafe fn named_actors() -> Vec<(String, u64)> {

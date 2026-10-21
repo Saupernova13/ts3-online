@@ -184,6 +184,26 @@ pub fn take_progress_reports() -> Vec<(u8, u32, Vec<(u8, u32, u8)>)> {
     with(|s| s.take_progress_reports()).unwrap_or_default()
 }
 
+/// Host: hits on a client's stand-in, sent unreliably to that client.
+pub fn send_hurts(client: u8, level: u32, entries: &[(u32, f32, u8)]) {
+    with(|s| s.send_hurts(client, level, entries));
+}
+
+/// Client: (level, hits) from the host since the last call.
+pub fn take_hurts() -> Vec<(u32, Vec<(u32, f32, u8)>)> {
+    with(|s| s.take_hurts()).unwrap_or_default()
+}
+
+/// Client: confirms hits up to `seq` in `level`.
+pub fn ack_hurts(level: u32, seq: u32) {
+    with(|s| s.ack_hurts(level, seq));
+}
+
+/// Host: (client, level, seq) confirmations since the last call.
+pub fn take_hurt_acks() -> Vec<(u8, u32, u32)> {
+    with(|s| s.take_hurt_acks()).unwrap_or_default()
+}
+
 #[derive(Debug, Clone)]
 pub struct Options {
     pub name: String,

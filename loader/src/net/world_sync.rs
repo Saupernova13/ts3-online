@@ -16,6 +16,36 @@ const MAX_HITS_IN: usize = 64;
 pub const MAX_REPORTS: usize = 32;
 const MAX_PAGES_IN: usize = 64;
 const MAX_PROGRESS_REPORTS_IN: usize = 32;
+const MAX_HURTS_IN: usize = 64;
+
+/// Forwarded hits (client) and their acks (host) held until the game thread takes them.
+#[derive(Default)]
+pub struct HurtInbox {
+    hurts: Vec<(u32, Vec<(u32, f32, u8)>)>,
+    acks: Vec<(u8, u32, u32)>,
+}
+
+impl HurtInbox {
+    pub fn on_hurt(&mut self, level: u32, entries: Vec<(u32, f32, u8)>) {
+        if self.hurts.len() < MAX_HURTS_IN {
+            self.hurts.push((level, entries));
+        }
+    }
+
+    pub fn take_hurts(&mut self) -> Vec<(u32, Vec<(u32, f32, u8)>)> {
+        std::mem::take(&mut self.hurts)
+    }
+
+    pub fn on_ack(&mut self, client: u8, level: u32, seq: u32) {
+        if self.acks.len() < MAX_HURTS_IN {
+            self.acks.push((client, level, seq));
+        }
+    }
+
+    pub fn take_acks(&mut self) -> Vec<(u8, u32, u32)> {
+        std::mem::take(&mut self.acks)
+    }
+}
 
 /// Progress pages (client) and reports (host) held until the game thread takes them. Progress is
 /// kept for the whole session, so a level change does not clear it.

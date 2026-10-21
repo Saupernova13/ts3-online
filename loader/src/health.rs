@@ -2,6 +2,9 @@
 //! dealt by a partner's stand-in and hits on a stand-in (the partner's own copy decides those), a
 //! client reports the health its own player takes off enemies, and the host streams the health of
 //! every damaged enemy, which clients follow down through the game's own damage and death path.
+//! Players' damage from enemies is the host's too: a client drops what its own enemies do to its
+//! player, and the host forwards what its enemies do to that client's stand-in. Hazards (a horse
+//! passing on an obstacle's hit, falls) stay with each copy.
 use crate::math::dist;
 use std::collections::HashMap;
 
@@ -318,20 +321,81 @@ pub enum Verdict {
     Pass,
     /// pass, and report the health it takes (a client's own hit on an enemy)
     Report,
+    /// drop, and send it to the stand-in's owner (the host's world hitting a client)
+    Forward,
+}
+
+impl Verdict {
+    pub fn passes(self) -> bool {
+        matches!(self, Verdict::Pass | Verdict::Report)
+    }
 }
 
 /// `victim_slot`/`source_slot`: the player slot of the victim and source avatar, if any; slot 0 is
-/// the local player, 1-3 partners' stand-ins.
-pub fn verdict(online: bool, client: bool, victim_slot: Option<u64>, source_slot: Option<u64>) -> Verdict {
+/// the local player, 1-3 partners' stand-ins. `by_enemy`: the source is an enemy (an actor with a
+/// plain `HealthTracker`), as opposed to a hazard or a horse passing on an obstacle's hit.
+pub fn verdict(online: bool, client: bool, victim_slot: Option<u64>, source_slot: Option<u64>, by_enemy: bool) -> Verdict {
     if !online {
         return Verdict::Pass;
     }
+    let enemy = by_enemy && source_slot.is_none();
     match (victim_slot, source_slot) {
+        (Some(v), _) if v != 0 && enemy && !client => Verdict::Forward,
         (Some(v), _) if v != 0 => Verdict::Drop,
+        (Some(_), _) if enemy && client => Verdict::Drop,
         (Some(_), _) => Verdict::Pass,
         (None, Some(s)) if s != 0 => Verdict::Drop,
         (None, Some(_)) if client => Verdict::Report,
         _ => Verdict::Pass,
+    }
+}
+
+/// Host: forwarded hits for one client this level as (seq, amount, kind), kept until confirmed.
+#[derive(Debug, Default)]
+pub struct HurtQueue {
+    next: u32,
+    pending: Vec<(u32, f32, u8)>,
+}
+
+/// Unconfirmed hits beyond this are dropped (a client that stopped answering).
+pub const MAX_HURTS: usize = 32;
+
+impl HurtQueue {
+    pub fn push(&mut self, amount: f32, kind: u8) {
+        if self.pending.len() < MAX_HURTS {
+            self.next += 1;
+            self.pending.push((self.next, amount, kind));
+        }
+    }
+
+    pub fn ack(&mut self, seq: u32) {
+        self.pending.retain(|(s, _, _)| *s > seq);
+    }
+
+    pub fn pending(&self) -> &[(u32, f32, u8)] {
+        &self.pending
+    }
+}
+
+/// Client: the forwarded hits not applied yet, in order.
+#[derive(Debug, Default)]
+pub struct HurtFollower {
+    applied: u32,
+}
+
+impl HurtFollower {
+    pub fn take_new(&mut self, entries: &[(u32, f32, u8)]) -> Vec<(f32, u8)> {
+        let mut new: Vec<(u32, f32, u8)> = entries.iter().copied().filter(|(s, _, _)| *s > self.applied).collect();
+        new.sort_by_key(|(s, _, _)| *s);
+        new.dedup_by_key(|(s, _, _)| *s);
+        if let Some((s, _, _)) = new.last() {
+            self.applied = *s;
+        }
+        new.into_iter().map(|(_, a, k)| (a, k)).collect()
+    }
+
+    pub fn applied(&self) -> u32 {
+        self.applied
     }
 }
 
@@ -358,6 +422,7 @@ mod live {
     const SET_HEALTH_VT: u64 = 0x18;
     /// take-damage kind that skips the multipliers and the invulnerable and alive checks
     const KIND_RAW: i32 = 3;
+    const HURT_RESEND_MS: u128 = 100;
     const SAMPLE_MS: u128 = 100;
     const REPORT_MS: u128 = 200;
     const NAME_REBUILD: Duration = Duration::from_secs(1);
@@ -388,6 +453,15 @@ mod live {
         /// client: (host figure, time) last applied per actor id
         tried: HashMap<u64, (f32, u64)>,
         refused_logged: u32,
+        /// host: stand-in actor id to its player
+        stand_ins: HashMap<u64, u8>,
+        /// host: forwarded hits per client
+        hurts: HashMap<u8, HurtQueue>,
+        last_hurt_send: Option<Instant>,
+        /// client: forwarded hits taken
+        hurt_follower: HurtFollower,
+        forwarded: u32,
+        hurt: u32,
     }
 
     static LIVE: Mutex<Option<Live>> = Mutex::new(None);
@@ -480,7 +554,8 @@ mod live {
         let online = net::active();
         let enemy = rd_u64(iface) == va(HEALTH_IF_VT);
         let (victim_slot, source_slot) = (slot_of(victim), slot_of(src));
-        let v = match verdict(online, net::is_client(), victim_slot, source_slot) {
+        let by_enemy = src >= 0x1_0000 && source_slot.is_none() && enemy_interface(src) != 0;
+        let v = match verdict(online, net::is_client(), victim_slot, source_slot, by_enemy) {
             Verdict::Report if !enemy => Verdict::Pass,
             v => v,
         };
@@ -495,6 +570,13 @@ mod live {
         }
         match v {
             Verdict::Drop => live.dropped += 1,
+            Verdict::Forward => match live.stand_ins.get(&actor::id(victim)) {
+                Some(&player) => {
+                    live.hurts.entry(player).or_default().push(amount, kind.clamp(0, u8::MAX as i32) as u8);
+                    live.forwarded += 1;
+                }
+                None => live.dropped += 1,
+            },
             Verdict::Report => live.pending.push((iface, victim, rd_f32(iface + HEALTH))),
             // the host streams what players fight, not what the level does to its own actors
             Verdict::Pass if enemy && victim_slot.is_none() && source_slot.is_some() && !net::is_client() => {
@@ -538,7 +620,10 @@ mod live {
             live.hits_logged = 0;
             live.tried.clear();
             live.refused_logged = 0;
+            live.hurts.clear();
+            live.hurt_follower = HurtFollower::default();
         }
+        live.stand_ins = players.iter().map(|(id, p)| (*id, *p)).collect();
         live.streamer.set_level(level);
         live.follower.set_level(level);
         live.reporter.set_level(level);
@@ -552,20 +637,63 @@ mod live {
         } else {
             host(live, level, now, players);
         }
-        if live.last_log.is_none_or(|t| t.elapsed() >= LOG_EVERY) && live.dropped + live.reported + live.applied + live.followed > 0 {
+        if live.last_log.is_none_or(|t| t.elapsed() >= LOG_EVERY) && live.dropped + live.reported + live.applied + live.followed + live.forwarded + live.hurt > 0 {
             live.last_log = Some(Instant::now());
             log!(
-                "health: dropped {} hits, reported {}, applied {} reports, followed {} host figures; {} enemies streamed",
+                "health: dropped {} hits, reported {}, applied {} reports, followed {} host figures, forwarded {} hits on clients, took {} from the host; {} enemies streamed",
                 live.dropped,
                 live.reported,
                 live.applied,
                 live.followed,
+                live.forwarded,
+                live.hurt,
                 live.streamer.len()
             );
         }
     }
 
+    /// Host: resends unconfirmed forwarded hits to each client.
+    fn send_hurts(live: &mut Live, level: u32) {
+        for (client, l, seq) in net::take_hurt_acks() {
+            if let Some(q) = live.hurts.get_mut(&client).filter(|_| l == level) {
+                q.ack(seq);
+            }
+        }
+        if live.last_hurt_send.is_some_and(|t| t.elapsed().as_millis() < HURT_RESEND_MS) {
+            return;
+        }
+        live.last_hurt_send = Some(Instant::now());
+        for (client, q) in &live.hurts {
+            if !q.pending().is_empty() {
+                net::send_hurts(*client, level, q.pending());
+            }
+        }
+    }
+
+    /// Client: takes the host's hits on its stand-in, through the game's own damage.
+    unsafe fn take_hurts(live: &mut Live, level: u32) {
+        let entries: Vec<(u32, f32, u8)> = net::take_hurts().into_iter().filter(|(l, _)| *l == level).flat_map(|(_, e)| e).collect();
+        if entries.is_empty() {
+            return;
+        }
+        let me = slot_avatar(global(MGR_PTR), 0);
+        let iface = if me == 0 { 0 } else { actor::interface(me, TYPE_HEALTH) };
+        if iface == 0 {
+            return;
+        }
+        for (amount, kind) in live.hurt_follower.take_new(&entries) {
+            let before = rd_f32(iface + HEALTH);
+            hooks::call_take_damage(iface, amount, 0, kind as i32);
+            live.hurt += 1;
+            if live.hurt <= LOG_HITS {
+                log!("health: the host's enemies hit the local player for {amount:.1} (kind {kind}): {before:.1} -> {:.1}", rd_f32(iface + HEALTH));
+            }
+        }
+        net::ack_hurts(level, live.hurt_follower.applied());
+    }
+
     unsafe fn host(live: &mut Live, level: u32, now: u64, players: &[(u64, u8)]) {
+        send_hurts(live, level);
         for (client, l, entries) in net::take_hits() {
             if l != level {
                 continue;
@@ -608,6 +736,7 @@ mod live {
     }
 
     unsafe fn client(live: &mut Live, level: u32, now: u64, players: &[(u64, u8)]) {
+        take_hurts(live, level);
         if live.last_report.is_none_or(|t| t.elapsed().as_millis() >= REPORT_MS) {
             live.last_report = Some(Instant::now());
             let due = live.reporter.due(now);
@@ -648,15 +777,21 @@ mod live {
     }
 
     /// The game's take-damage itself (detoured), as a hit by the local player.
-    pub unsafe fn dev_hit(id: u64, amount: f32) {
-        let actor = registry_get(id);
-        let iface = if actor < 0x1_0000 { 0 } else { interface(actor) };
+    /// `id` 0 is the local player; `source`: an actor id, else the local player.
+    pub unsafe fn dev_hit(id: u64, amount: f32, source: Option<u64>) {
+        let actor = if id == 0 { slot_avatar(global(MGR_PTR), 0) } else { registry_get(id) };
+        // an avatar's tracker is not found by the plain component name
+        let iface = match actor {
+            a if a < 0x1_0000 => 0,
+            a if interface(a) != 0 => interface(a),
+            a => actor::interface(a, TYPE_HEALTH),
+        };
         let me = slot_avatar(global(MGR_PTR), 0);
         if iface == 0 || me == 0 {
             return log!("dev: hit: no actor {id:#x} with health, or no local player");
         }
         let take: extern "system" fn(u64, f32, u64, u64, i32) = std::mem::transmute(va(TAKE_DAMAGE) as usize);
-        take(iface, amount, actor::id(me), 1, 0);
+        take(iface, amount, source.unwrap_or(actor::id(me)), 1, 0);
         log!("dev: hit {} for {amount}: now {:.1}", describe(actor), rd_f32(iface + HEALTH));
     }
 
@@ -706,13 +841,44 @@ mod tests {
     #[test]
     fn partners_stand_ins_neither_take_nor_deal_damage_here() {
         use Verdict::*;
-        assert_eq!(verdict(false, true, Some(1), Some(2)), Pass, "offline local co-op is untouched");
-        assert_eq!(verdict(true, false, Some(1), None), Drop, "a stand-in's health is its owner's");
-        assert_eq!(verdict(true, true, Some(0), Some(1)), Pass, "the local player's own health");
-        assert_eq!(verdict(true, false, None, Some(2)), Drop, "the partner's copy reports it");
-        assert_eq!(verdict(true, true, None, Some(0)), Report);
-        assert_eq!(verdict(true, false, None, Some(0)), Pass, "the host's own hit");
-        assert_eq!(verdict(true, true, None, None), Pass, "the world hurts enemies on every copy");
+        assert_eq!(verdict(false, true, Some(1), Some(2), true), Pass, "offline local co-op is untouched");
+        assert_eq!(verdict(true, false, Some(1), None, false), Drop, "a stand-in's health is its owner's");
+        assert_eq!(verdict(true, true, Some(0), Some(1), true), Pass, "the local player's own health");
+        assert_eq!(verdict(true, false, None, Some(2), true), Drop, "the partner's copy reports it");
+        assert_eq!(verdict(true, true, None, Some(0), true), Report);
+        assert_eq!(verdict(true, false, None, Some(0), true), Pass, "the host's own hit");
+        assert_eq!(verdict(true, true, None, None, true), Pass, "the world hurts enemies on every copy");
+    }
+
+    #[test]
+    fn the_hosts_world_decides_what_hits_players() {
+        use Verdict::*;
+        assert_eq!(verdict(true, false, Some(1), None, true), Forward, "an enemy hits a client's stand-in on the host");
+        assert_eq!(verdict(true, true, Some(1), None, true), Drop, "the host's stand-in on a client");
+        assert_eq!(verdict(true, true, Some(0), None, true), Drop, "a client's own enemies do not hurt it");
+        assert_eq!(verdict(true, false, Some(0), None, true), Pass, "the host's player");
+        assert_eq!(verdict(true, true, Some(0), None, false), Pass, "hazards stay on the client's copy");
+        assert_eq!(verdict(true, false, Some(1), None, false), Drop);
+        assert!(Forward.passes() == false && Report.passes() && !Drop.passes());
+    }
+
+    #[test]
+    fn forwarded_hits_are_kept_until_confirmed_and_applied_once() {
+        let mut q = HurtQueue::default();
+        q.push(20.0, 0);
+        q.push(5.0, 1);
+        assert_eq!(q.pending(), &[(1, 20.0, 0), (2, 5.0, 1)]);
+        let mut f = HurtFollower::default();
+        assert_eq!(f.take_new(q.pending()), vec![(20.0, 0), (5.0, 1)]);
+        assert_eq!(f.take_new(q.pending()), vec![], "a resend is not applied again");
+        q.ack(f.applied());
+        assert!(q.pending().is_empty());
+        q.push(7.0, 0);
+        assert_eq!(f.take_new(&[(3, 7.0, 0), (3, 7.0, 0)]), vec![(7.0, 0)]);
+        for _ in 0..(MAX_HURTS + 5) {
+            q.push(1.0, 0);
+        }
+        assert_eq!(q.pending().len(), MAX_HURTS);
     }
 
     #[test]

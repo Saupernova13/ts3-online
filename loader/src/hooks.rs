@@ -170,7 +170,7 @@ type TakeDamage = unsafe extern "system" fn(u64, f32, u64, u64, i32);
 
 /// Detour of the health interface's take-damage (0x140441f80); `source` is an actor id.
 pub unsafe extern "system" fn take_damage(health: u64, amount: f32, source: u64, flag: u64, kind: i32) {
-    if crate::health::before_damage(health, amount, source, kind) == crate::health::Verdict::Drop {
+    if !crate::health::before_damage(health, amount, source, kind).passes() {
         return;
     }
     if let Some(o) = original("take_damage") {

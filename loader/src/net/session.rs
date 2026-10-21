@@ -1,7 +1,7 @@
 //! Sans-IO session state machine: bytes and the clock go in, datagrams and events come out.
 use super::proto::{self, clamp_name, DecodeError, Msg, Pad, Proj, State};
 use super::save::{self, Reassembler};
-use super::world_sync::{ProgressInbox, WorldSync};
+use super::world_sync::{HurtInbox, ProgressInbox, WorldSync};
 use crate::health::Key;
 use crate::progress::Page;
 use crate::wallet::HostWallet;
@@ -111,6 +111,7 @@ pub struct Session {
     host_wallet: Option<(Vec<i32>, u32)>,
     world: WorldSync,
     progress: ProgressInbox,
+    hurts: HurtInbox,
 }
 
 fn newer(new: u32, old: u32) -> bool {
@@ -157,6 +158,7 @@ impl Session {
             host_wallet: None,
             world: WorldSync::new(),
             progress: ProgressInbox::default(),
+            hurts: HurtInbox::default(),
         }
     }
 
@@ -389,6 +391,34 @@ impl Session {
         self.progress.take_reports()
     }
 
+    /// Host, unreliable: the caller resends until acked.
+    pub fn send_hurts(&mut self, client: u8, level: u32, entries: &[(u32, f32, u8)]) {
+        if !self.is_host() {
+            return;
+        }
+        let Some(addr) = self.peers.iter().find(|p| p.id == client).map(|p| p.addr) else { return };
+        for chunk in entries.chunks(proto::MAX_HURT) {
+            self.send(addr, &Msg::Hurt { level, entries: chunk.to_vec() });
+        }
+    }
+
+    /// Client: (level, hits) from the host.
+    pub fn take_hurts(&mut self) -> Vec<(u32, Vec<(u32, f32, u8)>)> {
+        self.hurts.take_hurts()
+    }
+
+    pub fn ack_hurts(&mut self, level: u32, seq: u32) {
+        let Some(host) = self.host_addr else { return };
+        if self.link == Link::Connected {
+            self.send(host, &Msg::HurtAck { level, seq });
+        }
+    }
+
+    /// Host: (client, level, seq).
+    pub fn take_hurt_acks(&mut self) -> Vec<(u8, u32, u32)> {
+        self.hurts.take_acks()
+    }
+
     /// Host: (client, hits).
     pub fn take_hits(&mut self) -> Vec<(u8, Vec<(u32, Key, f32)>)> {
         self.world.take_hits()
@@ -544,6 +574,7 @@ impl Session {
             Msg::WorldReport { level, event, refname } => self.world.on_report(level, event, refname),
             Msg::Hits { level, entries } => self.world.on_hits(id, level, entries),
             Msg::ProgressReport { level, entries } => self.progress.on_report(id, level, entries),
+            Msg::HurtAck { level, seq } => self.hurts.on_ack(id, level, seq),
             Msg::SaveRequest { have } => self.serve_save(i, &have, now),
             Msg::LevelRequest { name } if !name.is_empty() && proto::valid_level(&name) => self.events.push(Event::LevelRequested { id, name }),
             Msg::Spend { spends } => {
@@ -686,6 +717,7 @@ impl Session {
             Msg::Npcs { level, entries } => self.world.on_npcs(level, entries),
             Msg::Healths { level, entries } => self.world.on_healths(level, entries),
             Msg::Progress { level, kind, page, pages, entries } => self.progress.on_page(Page { level, kind, page, pages, entries }),
+            Msg::Hurt { level, entries } => self.hurts.on_hurt(level, entries),
             Msg::SaveInfo { total, crc } if self.want_save && !self.save_done => {
                 if total == 0 {
                     self.save_done = true;

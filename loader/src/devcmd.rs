@@ -46,7 +46,7 @@ pub enum Cmd {
     /// place a slot's avatar 1.5 m from an actor (by id), facing it
     Goto { slot: u64, actor: u64 },
     /// damage an actor (by id) as the local player, through the game's take-damage
-    Hit { actor: u64, amount: u32 },
+    Hit { actor: u64, amount: u32, source: Option<u64> },
 }
 
 pub fn enable(copy: u32) {
@@ -132,10 +132,12 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
             Ok(Cmd::SetProgress { name: name.to_string(), state: state.trim().parse().map_err(|_| "setprogress needs a state 0-255")? })
         }
         "hit" => {
-            let (id, amount) = split_arg(rest);
+            let (id, rest) = split_arg(rest);
             let actor = crate::hex::parse_u64(id).map_err(|e| format!("actor id: {e}"))?;
-            let amount = amount.and_then(|a| a.parse::<u32>().ok()).ok_or("hit needs a whole amount")?;
-            Ok(Cmd::Hit { actor, amount })
+            let (amount, source) = split_arg(rest.unwrap_or(""));
+            let amount = amount.parse::<u32>().map_err(|_| "hit needs a whole amount")?;
+            let source = source.map(|s| crate::hex::parse_u64(s).map_err(|e| format!("source id: {e}"))).transpose()?;
+            Ok(Cmd::Hit { actor, amount, source })
         }
         "goto" => {
             let (slot, id) = split_arg(rest);
@@ -241,7 +243,7 @@ unsafe fn run(cmd: &Cmd) {
                 log!("dev: player {p} reads device {:#x} (map {})", player_device(input, p), rd_i32(input + INPUT_PLAYER_DEVICE + p as u64 * 4));
             }
         }
-        Cmd::Hit { actor, amount } => crate::health::dev_hit(*actor, *amount as f32),
+        Cmd::Hit { actor, amount, source } => crate::health::dev_hit(*actor, *amount as f32, *source),
         Cmd::Goto { slot, actor } => {
             let avatar = slot_avatar(global(MGR_PTR), *slot);
             let target = registry_get(*actor);
@@ -301,7 +303,8 @@ mod tests {
         assert_eq!(parse("devices"), Ok(Cmd::Devices));
         assert_eq!(parse("goto 0 1f2"), Ok(Cmd::Goto { slot: 0, actor: 0x1f2 }));
         assert!(parse("goto 0").is_err());
-        assert_eq!(parse("hit 404 10"), Ok(Cmd::Hit { actor: 0x404, amount: 10 }));
+        assert_eq!(parse("hit 404 10"), Ok(Cmd::Hit { actor: 0x404, amount: 10, source: None }));
+        assert_eq!(parse("hit 404 10 1f"), Ok(Cmd::Hit { actor: 0x404, amount: 10, source: Some(0x1f) }));
         assert!(parse("hit 404").is_err() && parse("hit 404 nan").is_err());
         assert_eq!(parse("post SwitchLevel westerntown"), Ok(Cmd::Post { name: "SwitchLevel".into(), arg: Some("westerntown".into()) }));
         assert_eq!(parse("log hello world"), Ok(Cmd::Log("hello world".into())));

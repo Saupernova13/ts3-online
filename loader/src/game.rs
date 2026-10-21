@@ -235,6 +235,38 @@ pub const CHECKPOINT_CURRENT: u64 = 0x224;
 /// The script binding `StartCheckpoint`'s worker: `(system, name, finish_previous, clear_finished)`.
 pub const START_CHECKPOINT: u64 = 0x1_4056_bb40;
 
+/// Toy Box building lots: lot pointers at `+0x110`, count (i32) at `+0x118`.
+pub const LOTS_PTR: u64 = 0x1_4099_b878;
+pub const LOT_LIST: u64 = 0x110;
+pub const LOT_COUNT: u64 = 0x118;
+/// the lot actor's reference name (`LOT_<site>`), `char*`
+pub const LOT_NAME: u64 = 0x8;
+/// the lot actor's id (`registry_get`)
+pub const LOT_ACTOR: u64 = 0x10;
+/// the building on the lot, a `BUILDINGS_PTR` entry; null while empty
+pub const LOT_BUILDING: u64 = 0x38;
+/// Building kinds: entry pointers at `+0x48`, count (i32) at `+0x50`.
+pub const BUILDINGS_PTR: u64 = 0x1_4099_b880;
+pub const BUILDING_LIST: u64 = 0x48;
+pub const BUILDING_COUNT: u64 = 0x50;
+/// index (i32), -1 for an unused entry
+pub const BUILDING_INDEX: u64 = 0x0;
+/// short name (`BarberShop`), `char*`
+pub const BUILDING_NAME: u64 = 0x8;
+/// the name the lot selector passes to `BUILDING_OK` (screen `+0x260`), `char*`
+pub const BUILDING_KEY: u64 = 0x18;
+/// set once bought for a lot (u8)
+pub const BUILDING_BUILT: u64 = 0x70;
+/// `ScreenBuildingSelection::OnButtonOK(screen)`: puts the building on the lot, marks it built and
+/// posts the lot's `WorldEvent` (`PurchaseBuilding`), which builds it. Reads the screen's vtable
+/// slot `SCREEN_CLOSE` and the fields below.
+pub const BUILDING_OK: u64 = 0x1_4011_4440;
+pub const SCREEN_CLOSE: u64 = 0x1e0;
+pub const SCREEN_BUILDING: u64 = 0x260;
+/// the buying player's avatar; must be set
+pub const SCREEN_PLAYER: u64 = 0x268;
+pub const SCREEN_LOT: u64 = 0x270;
+
 pub const RESPAWN_POINTS: u64 = 0x1_40b2_fdf8;
 
 /// Actor manager pointer, taken by the actor-name lookups.

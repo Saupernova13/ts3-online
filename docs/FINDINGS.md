@@ -708,3 +708,22 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `BuildingContructionComplete`; script bindings include `BuildingData_SetBuildingStateForBuildingLot`,
   `BuildingData_SetBuildingBuilt` and `BuildingLotData_InitializeLot`. [unk] Not exercised: the test
   save has not opened the catalog yet.
+- **[obs] Health and damage (`queries/151`-`154`).** An actor's health is the `HealthTracker`
+  component (`0x158` bytes, vtable `0x1407d94f8`; `TS3HealthTracker` for avatars); its health
+  interface sits at `+0x18` (type slot `0x140b2a464` for the actor's `vt+0x48`) with the owner actor
+  pointer at interface `-0x10`, max health at `+0x8` and health at `+0x14` (f32; 100 by default).
+  Interface `vt+0x48` reads health, `vt+0x50` max, `vt+0x18(value)` sets it, and `vt+0x80(amount,
+  source actor id, flag, kind)` takes damage: `0x140441f80`, shared by both trackers
+  (`TS3HealthTracker` first posts `ManDownZeroHealth` when the hit is lethal). Unless `kind` is 3 it
+  returns when the owner is inactive (`vt+0x38`), invulnerable (`+0x24`) or a friend of the source
+  (`FriendlyFilter`), and scales the amount by `+0x50` and the per-kind factor `+0x54 + kind*4`; kind
+  3 skips all of that. It then sets health (`0x14045f350`), posts `DamageNotification`, and at 0
+  health posts `NotifyOfDeath` (flag `+0x64`) or calls `vt+0x90(source)`. Every hit reaches it:
+  `HealthTracker`'s `MunitionImpact` handler (`0x140449a80`) passes the munition's damage
+  (`impact+0x4c`) and kind (fourcc `expl` 1, `spec` 2), the script binding `DoDamage` (`0x1405e77f0`)
+  passes the script owner as the source.
+- **[obs] Damage in Train Rescue (2026-10-21, in game).** The opening's obstacles (`TripperPrism1`..`10`)
+  hit the horse for 1, and the horse passes 20 to its rider, source the horse; four hits downed an
+  idle Woody. On the copy where a partner rides its summoned horse, the obstacles hit that horse and
+  the stand-in as well. The level's enemies are not out at its start: the UFOs (`UFO`..`UFO9`),
+  `Dr_P` and the train's `TrainStub:*` actors are placed with unique reference names.

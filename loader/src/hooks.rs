@@ -12,7 +12,7 @@ struct Hook {
     original: Option<&'static AtomicU64>,
 }
 
-fn table() -> [Hook; 11] {
+fn table() -> [Hook; 12] {
     let f = |p: *const ()| p as u64;
     [
         Hook { name: "bind_joining_avatar", func: f(bind_joining_avatar as *const ()), original: None },
@@ -26,6 +26,7 @@ fn table() -> [Hook; 11] {
         Hook { name: "post_broadcast", func: f(post_broadcast as *const ()), original: Some(&ORIG_POST_BROADCAST) },
         Hook { name: "post_actor", func: f(post_actor as *const ()), original: Some(&ORIG_POST_ACTOR) },
         Hook { name: "post_broadcast2", func: f(post_broadcast2 as *const ()), original: Some(&ORIG_POST_BROADCAST2) },
+        Hook { name: "take_damage", func: f(take_damage as *const ()), original: Some(&ORIG_TAKE_DAMAGE) },
     ]
 }
 
@@ -100,6 +101,7 @@ pub unsafe extern "system" fn frame_tick() {
 static ORIG_POST_BROADCAST: AtomicU64 = AtomicU64::new(0);
 static ORIG_POST_ACTOR: AtomicU64 = AtomicU64::new(0);
 static ORIG_POST_BROADCAST2: AtomicU64 = AtomicU64::new(0);
+static ORIG_TAKE_DAMAGE: AtomicU64 = AtomicU64::new(0);
 
 fn original_slot(name: &str) -> Option<&'static AtomicU64> {
     table().iter().find(|h| h.name == name).and_then(|h| h.original)
@@ -162,6 +164,24 @@ pub unsafe extern "system" fn post_broadcast2(events: u64, name: u64, a: u64, b:
         Some(o) => std::mem::transmute::<u64, Post4>(o)(events, name, a, b),
         None => 0,
     }
+}
+
+type TakeDamage = unsafe extern "system" fn(u64, f32, u64, u64, i32);
+
+/// Detour of the health interface's take-damage (0x140441f80); `source` is an actor id.
+pub unsafe extern "system" fn take_damage(health: u64, amount: f32, source: u64, flag: u64, kind: i32) {
+    if crate::health::before_damage(health, amount, source, kind) == crate::health::Verdict::Drop {
+        return;
+    }
+    if let Some(o) = original("take_damage") {
+        std::mem::transmute::<u64, TakeDamage>(o)(health, amount, source, flag, kind);
+    }
+    crate::health::after_damage(health);
+}
+
+/// Damages through the original, bypassing the detour.
+pub unsafe fn call_take_damage(health: u64, amount: f32, source: u64, kind: i32) -> bool {
+    original("take_damage").map(|o| std::mem::transmute::<u64, TakeDamage>(o)(health, amount, source, 1, kind)).is_some()
 }
 
 /// Posts through the original, bypassing the detour.

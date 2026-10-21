@@ -1,12 +1,13 @@
 //! Wire format: `b"TS3O"`, version u16, type u8, body, 16-byte tag; little-endian, no padding.
 //! Tag: HMAC-SHA256 of everything before it, cut to 16 bytes; session key, except the empty key for
 //! `Probe`, `ProbeReply` and `Refuse` so a host can be found and can refuse a wrong key.
+use crate::health::Key;
 use crate::world;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 15;
+pub const VERSION: u16 = 16;
 pub const TAG_LEN: usize = 16;
 /// Zero bytes after a `Probe`'s build, so a probe is never shorter than its reply.
 pub const PROBE_PAD: usize = 40;
@@ -19,6 +20,10 @@ pub const MAX_SPENDS: usize = 64;
 pub const MAX_WORLD: usize = 8;
 /// 20 bytes each: a datagram stays under ~1000 bytes.
 pub const MAX_NPCS: usize = 48;
+/// 24 bytes each.
+pub const MAX_HEALTHS: usize = 40;
+/// 28 bytes each.
+pub const MAX_HITS: usize = 34;
 
 pub const REFUSE_FULL: u8 = 1;
 pub const REFUSE_BUILD: u8 = 2;
@@ -48,6 +53,8 @@ const T_WORLD_REPORT: u8 = 20;
 const T_NPCS: u8 = 21;
 const T_CHECK: u8 = 22;
 const T_CHECK_REPLY: u8 = 23;
+const T_HEALTHS: u8 = 24;
+const T_HITS: u8 = 25;
 
 /// Controller state in the XINPUT_GAMEPAD layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -167,6 +174,10 @@ pub enum Msg {
     WorldReport { level: u32, event: String, refname: String },
     /// Host to clients, unreliable (latest wins): moving named actors as (reference-name hash, pos, yaw).
     Npcs { level: u32, entries: Vec<(u32, [f32; 3], f32)> },
+    /// Host to clients, unreliable (latest wins): health of damaged enemies (`health::Key`, health).
+    Healths { level: u32, entries: Vec<(Key, f32)> },
+    /// Client to host, unreliable, repeated: (client's actor id, key, health its player took off it this level).
+    Hits { level: u32, entries: Vec<(u32, Key, f32)> },
     /// Connect menu's password test, tagged with it; answered by `CheckReply` (same nonce) or `REFUSE_KEY`.
     Check { nonce: u64 },
     CheckReply { nonce: u64 },
@@ -214,6 +225,19 @@ fn put_str(out: &mut Vec<u8>, s: &str) {
     let b = &s.as_bytes()[..s.len().min(255)];
     out.push(b.len() as u8);
     out.extend_from_slice(b);
+}
+
+fn put_key(out: &mut Vec<u8>, key: &Key) {
+    out.extend_from_slice(&key.refh.to_le_bytes());
+    out.extend_from_slice(&key.nameh.to_le_bytes());
+    for v in key.pos {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+}
+
+/// Health figures: finite and within a million either way.
+fn sane_health(h: f32) -> bool {
+    h.is_finite() && h.abs() <= 1.0e6
 }
 
 /// Types tagged with the empty key.
@@ -381,6 +405,27 @@ pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
                 }
             }
         }
+        Msg::Healths { level, entries } => {
+            o.push(T_HEALTHS);
+            o.extend_from_slice(&level.to_le_bytes());
+            let entries = &entries[..entries.len().min(MAX_HEALTHS)];
+            o.push(entries.len() as u8);
+            for (key, health) in entries {
+                put_key(&mut o, key);
+                o.extend_from_slice(&health.to_le_bytes());
+            }
+        }
+        Msg::Hits { level, entries } => {
+            o.push(T_HITS);
+            o.extend_from_slice(&level.to_le_bytes());
+            let entries = &entries[..entries.len().min(MAX_HITS)];
+            o.push(entries.len() as u8);
+            for (id, key, total) in entries {
+                o.extend_from_slice(&id.to_le_bytes());
+                put_key(&mut o, key);
+                o.extend_from_slice(&total.to_le_bytes());
+            }
+        }
         Msg::Check { nonce } => {
             o.push(T_CHECK);
             o.extend_from_slice(&nonce.to_le_bytes());
@@ -426,6 +471,11 @@ impl<'a> Reader<'a> {
     fn f32(&mut self) -> Option<f32> {
         Some(f32::from_bits(self.u32()?))
     }
+    fn key(&mut self) -> Option<Key> {
+        let (refh, nameh) = (self.u32()?, self.u32()?);
+        let pos = [self.f32()?, self.f32()?, self.f32()?];
+        pos.iter().all(|v| v.is_finite() && v.abs() <= MAX_COORD).then_some(Key { refh, nameh, pos })
+    }
     fn name(&mut self) -> Option<String> {
         let n = self.u8()? as usize;
         if n > MAX_NAME {
@@ -461,7 +511,7 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
         return Err(DecodeError::Version(version));
     }
     let kind = *bytes.get(6).ok_or(Malformed)?;
-    if !(T_HELLO..=T_CHECK_REPLY).contains(&kind) || bytes.len() < 7 + TAG_LEN {
+    if !(T_HELLO..=T_HITS).contains(&kind) || bytes.len() < 7 + TAG_LEN {
         return Err(Malformed);
     }
     let (signed, tag) = bytes.split_at(bytes.len() - TAG_LEN);
@@ -583,6 +633,41 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
                 }
                 Msg::Npcs { level, entries }
             }
+            T_HEALTHS => {
+                let level = r.u32()?;
+                let n = r.u8()? as usize;
+                if n > MAX_HEALTHS {
+                    return None;
+                }
+                let mut entries = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let key = r.key()?;
+                    let health = r.f32()?;
+                    if !sane_health(health) {
+                        return None;
+                    }
+                    entries.push((key, health));
+                }
+                Msg::Healths { level, entries }
+            }
+            T_HITS => {
+                let level = r.u32()?;
+                let n = r.u8()? as usize;
+                if n > MAX_HITS {
+                    return None;
+                }
+                let mut entries = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let id = r.u32()?;
+                    let key = r.key()?;
+                    let total = r.f32()?;
+                    if !sane_health(total) {
+                        return None;
+                    }
+                    entries.push((id, key, total));
+                }
+                Msg::Hits { level, entries }
+            }
             T_CHECK => Msg::Check { nonce: r.u64()? },
             T_CHECK_REPLY => Msg::CheckReply { nonce: r.u64()? },
             _ => return None,
@@ -610,6 +695,32 @@ mod tests {
         let mut m = mac(if public(b[6]) { &[] } else { key });
         m.update(b);
         b.extend_from_slice(&m.finalize().into_bytes()[..TAG_LEN]);
+    }
+
+    fn hk(refh: u32) -> Key {
+        Key { refh, nameh: 2, pos: [0.5, 1.0, -1.5] }
+    }
+
+    #[test]
+    fn health_messages_refuse_too_many_entries_and_wild_numbers() {
+        let full = enc(&Msg::Healths { level: 1, entries: vec![(hk(1), 1.0); MAX_HEALTHS] });
+        assert!(full.len() < 1000, "{}", full.len());
+        match dec(&enc(&Msg::Healths { level: 1, entries: vec![(hk(1), 1.0); MAX_HEALTHS + 5] })) {
+            Ok(Msg::Healths { entries, .. }) => assert_eq!(entries.len(), MAX_HEALTHS),
+            other => panic!("{other:?}"),
+        }
+        let hits = enc(&Msg::Hits { level: 1, entries: vec![(1, hk(1), 1.0); MAX_HITS] });
+        assert!(hits.len() < 1000, "{}", hits.len());
+        let mut over = enc(&Msg::Hits { level: 1, entries: vec![(1, hk(1), 1.0)] });
+        over[11] = MAX_HITS as u8 + 1;
+        retag(&mut over, &[]);
+        assert_eq!(dec(&over), Err(DecodeError::Malformed));
+        for bad in [f32::NAN, f32::INFINITY, 2.0e6] {
+            assert_eq!(dec(&enc(&Msg::Healths { level: 1, entries: vec![(hk(1), bad)] })), Err(DecodeError::Malformed), "{bad}");
+            assert_eq!(dec(&enc(&Msg::Hits { level: 1, entries: vec![(1, hk(1), bad)] })), Err(DecodeError::Malformed), "{bad}");
+            let far = Key { refh: 1, nameh: 1, pos: [bad, 0.0, 0.0] };
+            assert_eq!(dec(&enc(&Msg::Healths { level: 1, entries: vec![(far, 1.0)] })), Err(DecodeError::Malformed), "{bad}");
+        }
     }
 
     fn all() -> Vec<Msg> {
@@ -656,6 +767,8 @@ mod tests {
             Msg::WorldReport { level: 77, event: "ExploderDestroy".into(), refname: "EXP_Crate_40".into() },
             Msg::Npcs { level: 77, entries: vec![(1, [1.0, -2.5, 3.0], 0.5), (u32::MAX, [0.0; 3], -3.1)] },
             Msg::Npcs { level: 0, entries: Vec::new() },
+            Msg::Healths { level: 3, entries: vec![(hk(1), 70.5), (Key { refh: 0, nameh: 9, pos: [1.0, -2.0, 3.5] }, 0.0)] },
+            Msg::Hits { level: 3, entries: vec![(0x7c2, hk(1), 30.0)] },
             Msg::Check { nonce: 0x0123_4567_89ab_cdef },
             Msg::CheckReply { nonce: u64::MAX },
         ]

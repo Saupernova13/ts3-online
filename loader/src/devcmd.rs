@@ -29,6 +29,8 @@ pub enum Cmd {
     Horse { slot: u64 },
     /// partners follow their owner's riding (on by default)
     AutoRide(bool),
+    /// log every actor with a health interface
+    Healths,
 }
 
 pub fn enable(copy: u32) {
@@ -103,6 +105,7 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
             "off" => Ok(Cmd::AutoRide(false)),
             _ => Err("autoride needs on or off".into()),
         },
+        "healths" => Ok(Cmd::Healths),
         "" => Err("empty line".into()),
         v => Err(format!("unknown command {v:?}")),
     }
@@ -163,6 +166,7 @@ unsafe fn run(cmd: &Cmd) {
             log!("dev: autoride {on}");
             crate::coop::set_auto_ride(*on);
         }
+        Cmd::Healths => crate::health::dev_list(),
     }
 }
 
@@ -205,6 +209,7 @@ mod tests {
         assert_eq!(parse("event_actor Hit 1f2a"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x1f2a, arg: None }));
         assert_eq!(parse("event_actor Hit 0x10 STR"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x10, arg: Some("STR".into()) }));
         assert_eq!(parse("post5 StartPickup 0 317 0x28c"), Ok(Cmd::Post5 { name: "StartPickup".into(), a: 0, b: 0x317, actor: 0x28c }));
+        assert_eq!(parse("healths"), Ok(Cmd::Healths));
         assert_eq!(parse("post SwitchLevel westerntown"), Ok(Cmd::Post { name: "SwitchLevel".into(), arg: Some("westerntown".into()) }));
         assert_eq!(parse("log hello world"), Ok(Cmd::Log("hello world".into())));
         assert_eq!(parse("log"), Ok(Cmd::Log(String::new())));

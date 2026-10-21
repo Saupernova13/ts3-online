@@ -1,5 +1,6 @@
 //! World-event sync. Host: the authoritative (seq, event, name) list and a send cursor per client.
 //! Client: the list taken in seq order, plus its own events reported until the host lists them.
+use crate::health::Key;
 use crate::net::proto;
 use crate::world;
 use std::collections::HashMap;
@@ -8,6 +9,9 @@ use std::net::SocketAddr;
 /// Resend interval for unacked entries and for pending reports.
 pub const WORLD_US: u64 = 200_000;
 const MAX_NPCS_IN: usize = 4096;
+/// Health figures and hit messages held until the game thread takes them.
+const MAX_HEALTHS_IN: usize = 1024;
+const MAX_HITS_IN: usize = 64;
 pub const MAX_REPORTS: usize = 32;
 
 /// Host: send progress for one client.
@@ -35,6 +39,10 @@ pub struct WorldSync {
     apply: Vec<(u32, String, String)>,
     /// Client: actor hash to latest (pos, yaw).
     npcs_in: HashMap<u32, ([f32; 3], f32)>,
+    /// Client: enemy health figures from the host, oldest first.
+    healths_in: Vec<(Key, f32)>,
+    /// Host: (client, hits) from clients, oldest first.
+    hits_in: Vec<(u8, Vec<(u32, Key, f32)>)>,
 }
 
 impl WorldSync {
@@ -64,6 +72,8 @@ impl WorldSync {
         self.seen.clear();
         self.apply.clear();
         self.npcs_in.clear();
+        self.healths_in.clear();
+        self.hits_in.clear();
     }
 
     /// A local world event. Host: listed. Client: reported until listed. True if new.
@@ -196,6 +206,29 @@ impl WorldSync {
 
     pub fn take_npcs(&mut self) -> Vec<(u32, [f32; 3], f32)> {
         self.npcs_in.drain().map(|(h, (p, y))| (h, p, y)).collect()
+    }
+
+    pub fn on_healths(&mut self, level: u32, entries: Vec<(Key, f32)>) {
+        if level == 0 || level != self.level {
+            return;
+        }
+        let room = MAX_HEALTHS_IN.saturating_sub(self.healths_in.len());
+        self.healths_in.extend(entries.into_iter().take(room));
+    }
+
+    pub fn take_healths(&mut self) -> Vec<(Key, f32)> {
+        std::mem::take(&mut self.healths_in)
+    }
+
+    pub fn on_hits(&mut self, client: u8, level: u32, entries: Vec<(u32, Key, f32)>) {
+        if level == 0 || level != self.level || entries.is_empty() || self.hits_in.len() >= MAX_HITS_IN {
+            return;
+        }
+        self.hits_in.push((client, entries));
+    }
+
+    pub fn take_hits(&mut self) -> Vec<(u8, Vec<(u32, Key, f32)>)> {
+        std::mem::take(&mut self.hits_in)
     }
 
     pub fn forget_peer(&mut self, addr: SocketAddr) {

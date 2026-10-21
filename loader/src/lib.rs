@@ -10,6 +10,7 @@ pub mod devcmd;
 pub mod evlog;
 #[cfg(windows)]
 pub mod game;
+pub mod health;
 pub mod hex;
 pub mod hold;
 #[cfg(windows)]

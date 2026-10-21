@@ -749,3 +749,11 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   but its control table is all zero (only an assigned device gets one): Space sets codes `0x15` and
   `0x25`, E `0x14` and `0x16`, Q `0x19`, Z `0x1f`. Input driver `vt+0x80(player, 0)` did not move
   player 0 off its pad.
+- **[obs] On-screen text for a waiting message (`queries/162`-`165`).** The script binding
+  `ShowTextMessage` (`0x1405ee6b0`) posts `HUDShowMessage` with `{char* text, u32 time, u8, u8}` and
+  `HideTextMessage` posts it with no argument, but `GameHUD`'s handler for it (`GameHUD::ShowMessage`,
+  vtable `0x1407f6778`, slot 3) is an empty stub in this build. `HelpText_Show` posts `ShowHelpText`;
+  `PrototypeHUD_ShowMessage` calls `0x140218770(hud, text, mode, player)`, which writes into the
+  `ControllerLayoutHUD` screen's per-player text only while no `TutorialTipScreen` is up and the
+  player stands still. [unk] Whether either draws literal text or needs a string-table key; the level
+  start hold shows no message yet.

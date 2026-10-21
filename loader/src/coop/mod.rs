@@ -105,8 +105,8 @@ pub unsafe fn update() {
     let (name, level, switched) = current_level();
     follow_levels(level);
     crate::wallet::update(level);
-    crate::world::update(level);
-    crate::npc::update(level);
+    crate::perf::section("world", || crate::world::update(level));
+    crate::perf::section("npc", || crate::npc::update(level));
     let Ok(mut guard) = PARTNERS.lock() else { return };
     let partners = guard.get_or_insert_with(HashMap::new);
     if switched && !partners.is_empty() {
@@ -119,24 +119,28 @@ pub unsafe fn update() {
     let p0 = if mgr != 0 { slot_avatar(mgr, 0) } else { 0 };
     let loading = level != 0 && !track_load(switched, p0, &name);
     crate::hold::update(if loading || p0 == 0 { "" } else { &name });
-    let loading_flag = if loading { flags::LOADING } else { 0 };
+    let own_flags = if loading { flags::LOADING } else { 0 } | if crate::hold::paused() { flags::PAUSED } else { 0 } | respawn_flags(mgr);
 
     let held = pad::take_local_pad();
     if p0 == 0 {
-        net::set_local_state(0, CLASS_UNKNOWN, [0.0; 3], 0.0, 0.0, Pad::default(), loading_flag);
+        net::set_local_state(0, CLASS_UNKNOWN, [0.0; 3], 0.0, 0.0, Pad::default(), own_flags);
         // the level teardown already reset slots 1-3
         partners.clear();
         forget_pads();
         return;
     }
     let own_class = class_of(p0);
-    let players = publish_local(mgr, p0, level, own_class, held, loading_flag, partners);
+    let players = publish_local(mgr, p0, level, own_class, held, own_flags, partners);
     if loading {
         // slot 0 still holds the old level's avatar: a partner spawned now dies with that level
         return;
     }
-    crate::respawn::update(mgr);
-    crate::health::update(level, &players);
+    // the game's two-player respawn pairs slots 0 and 1
+    let slot1_owner = partners.iter().find(|(_, p)| p.slot == 1).map(|(id, _)| *id);
+    let owner = slot1_owner.and_then(|id| net::remote_states().into_iter().find(|(r, s)| *r == id && s.level == level)).map(|(_, s)| (s.flags & flags::DOWN != 0, s.flags & flags::WAITING != 0));
+    crate::respawn::update(mgr, owner);
+    crate::perf::section("health", || crate::health::update(level, &players));
+    crate::perf::section("progress", || crate::progress::update(level));
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;
     let frame = Frame { mgr, level, now, own_class, players: &players };
 
@@ -167,6 +171,11 @@ pub unsafe fn update() {
         }
         drive(&frame, id, p, st, &used);
     }
+}
+
+unsafe fn respawn_flags(mgr: u64) -> u32 {
+    let (down, waiting) = crate::respawn::local_status(mgr);
+    (if down { flags::DOWN } else { 0 }) | if waiting { flags::WAITING } else { 0 }
 }
 
 /// The detour saw `LevelLoadComplete`.

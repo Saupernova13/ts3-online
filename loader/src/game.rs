@@ -133,6 +133,12 @@ game_fn!(exploder_break, 0x1_4065_2ac0, fn(exploder: u64) -> ());
 
 /// The game timer gameplay and scripted sequences run on (FINDINGS 10); an object, not a pointer.
 pub const GAME_TIMER: u64 = 0x1_4095_4820;
+/// The front end (screen manager) and its show-screen by name: `(front_end, name, -1)`, as the
+/// script binding `FrontEndShowScreen` calls it.
+pub const FRONT_END_PTR: u64 = 0x1_40b2_ef10;
+pub const SHOW_SCREEN: u64 = 0x1_404c_53e0;
+/// Set (u8) while the game's own pause is on: the pause menu, and other screens that pause.
+pub const GAME_PAUSED: u64 = 0x1_40b2_c5a6;
 /// `timer_set_speed` speeds: 0 stops the timer, 9 is normal.
 pub const TIMER_STOPPED: u32 = 0;
 pub const TIMER_NORMAL: u32 = 9;
@@ -170,6 +176,8 @@ game_fn!(blackboard_set, 0x1_4054_c420, fn(bb: u64, name: *const c_char, value: 
 const TYPE_COUNTER: u64 = 0x1_40b2_a448;
 /// The state machine interface (`ForceRide` trigger `0x14016c390`, summon `0x140220db0`).
 pub const TYPE_STATE_MACHINE: u64 = 0x1_40b2_a44c;
+/// Type slot of the health interface (`HealthTracker+0x18`).
+pub const TYPE_HEALTH: u64 = 0x1_40b2_a464;
 
 /// The id stored at `slot`, numbered now if it has none yet, as the game does inline.
 pub unsafe fn type_id(slot: u64) -> u32 {
@@ -188,6 +196,44 @@ pub unsafe fn type_id(slot: u64) -> u32 {
 pub const HEALTH_IF_VT: u64 = 0x1_407d_9660;
 /// Health interface take-damage (`vt+0x80`), shared by both trackers; detoured by `hooks::take_damage`.
 pub const TAKE_DAMAGE: u64 = 0x1_4044_1f80;
+
+/// `ChallengeManager` (missions): challenge pointers at `+0x10`, count (i32) at `+0x18`.
+pub const CHALLENGES_PTR: u64 = 0x1_40b2_fdc8;
+pub const CHALLENGE_LIST: u64 = 0x10;
+pub const CHALLENGE_COUNT: u64 = 0x18;
+/// challenge name, `char*`
+pub const CHALLENGE_NAME: u64 = 0x80;
+/// challenge state (i32): 2 available, 3 active, 4 passed, 5 failed, 6 presenting
+pub const CHALLENGE_STATE: u64 = 0x94;
+/// times passed (i32); a repeatable challenge returns to its earlier state after a pass
+pub const CHALLENGE_PASSES: u64 = 0xd0;
+/// Challenge set-state (2 available, 3 activate, 4 pass, 5 fail), a slot of the challenge vtables.
+pub const CHALLENGE_SET_STATE: u64 = 0x1_4063_62f0;
+/// Unlock manager (catalog items, hats, buildings): lock pointers at `+0x10`, count in `LOCK_COUNT`.
+pub const LOCKS_PTR: u64 = 0x1_40b2_fde0;
+pub const LOCK_LIST: u64 = 0x10;
+pub const LOCK_COUNT: u64 = 0x1_40b2_c838;
+/// lock name, `char*`
+pub const LOCK_NAME: u64 = 0x10;
+/// lock state (i32): 0 locked, `LOCK_DEFAULT` once unlocked, 5 bought
+pub const LOCK_STATE: u64 = 0xa0;
+/// state a lock takes when unlocked (i32)
+pub const LOCK_DEFAULT: u64 = 0x9c;
+/// Sets a lock's state, posting `LockUnlocked` when it leaves 0.
+pub const LOCK_SET_STATE: u64 = 0x1_405f_2480;
+
+/// `CheckpointSystem`: up to `CHECKPOINT_MAX` entries of `CHECKPOINT_STRIDE` bytes from
+/// `CHECKPOINT_ENTRIES`, each an interned name `char*`, then a started and a finished byte; the
+/// current entry's index (i32, `CHECKPOINT_MAX` for none) at `CHECKPOINT_CURRENT`.
+pub const CHECKPOINTS_PTR: u64 = 0x1_40b2_bb78;
+pub const CHECKPOINT_ENTRIES: u64 = 0x8;
+pub const CHECKPOINT_STRIDE: u64 = 0x10;
+pub const CHECKPOINT_MAX: u64 = 0x20;
+pub const CHECKPOINT_STARTED: u64 = 0x8;
+pub const CHECKPOINT_FINISHED: u64 = 0x9;
+pub const CHECKPOINT_CURRENT: u64 = 0x224;
+/// The script binding `StartCheckpoint`'s worker: `(system, name, finish_previous, clear_finished)`.
+pub const START_CHECKPOINT: u64 = 0x1_4056_bb40;
 
 pub const RESPAWN_POINTS: u64 = 0x1_40b2_fdf8;
 

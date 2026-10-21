@@ -31,12 +31,22 @@ pub enum Cmd {
     AutoRide(bool),
     /// log every actor with a health interface
     Healths,
+    /// open a front-end screen by name, as a script would
+    Screen(String),
+    /// down the local player through the game's own damage
+    Down,
+    /// log the story checkpoints
+    Checkpoints,
+    /// log every mission and unlock with its state
+    Progress,
+    /// set a mission or unlock (by name) through the game's own setter
+    SetProgress { name: String, state: u8 },
     /// log every input device's kind and which device each player reads
     Devices,
     /// place a slot's avatar 1.5 m from an actor (by id), facing it
     Goto { slot: u64, actor: u64 },
     /// damage an actor (by id) as the local player, through the game's take-damage
-    Hit { actor: u64, amount: u32 },
+    Hit { actor: u64, amount: u32, source: Option<u64> },
 }
 
 pub fn enable(copy: u32) {
@@ -113,11 +123,21 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
         },
         "healths" => Ok(Cmd::Healths),
         "devices" => Ok(Cmd::Devices),
+        "checkpoints" => Ok(Cmd::Checkpoints),
+        "down" => Ok(Cmd::Down),
+        "screen" if !rest.is_empty() => Ok(Cmd::Screen(rest.to_string())),
+        "progress" => Ok(Cmd::Progress),
+        "setprogress" => {
+            let (name, state) = rest.split_once(char::is_whitespace).ok_or("setprogress needs NAME STATE")?;
+            Ok(Cmd::SetProgress { name: name.to_string(), state: state.trim().parse().map_err(|_| "setprogress needs a state 0-255")? })
+        }
         "hit" => {
-            let (id, amount) = split_arg(rest);
+            let (id, rest) = split_arg(rest);
             let actor = crate::hex::parse_u64(id).map_err(|e| format!("actor id: {e}"))?;
-            let amount = amount.and_then(|a| a.parse::<u32>().ok()).ok_or("hit needs a whole amount")?;
-            Ok(Cmd::Hit { actor, amount })
+            let (amount, source) = split_arg(rest.unwrap_or(""));
+            let amount = amount.parse::<u32>().map_err(|_| "hit needs a whole amount")?;
+            let source = source.map(|s| crate::hex::parse_u64(s).map_err(|e| format!("source id: {e}"))).transpose()?;
+            Ok(Cmd::Hit { actor, amount, source })
         }
         "goto" => {
             let (slot, id) = split_arg(rest);
@@ -186,6 +206,29 @@ unsafe fn run(cmd: &Cmd) {
             crate::coop::set_auto_ride(*on);
         }
         Cmd::Healths => crate::health::dev_list(),
+        Cmd::Checkpoints => crate::checkpoint::dev_list(),
+        Cmd::Down => {
+            let me = slot_avatar(global(MGR_PTR), 0);
+            let iface = if me == 0 { 0 } else { crate::actor::interface(me, TYPE_HEALTH) };
+            if iface == 0 {
+                log!("dev: down: no local player with health");
+            } else {
+                hooks::call_take_damage(iface, 1.0e4, crate::actor::id(me), 3);
+                log!("dev: down: local player hit for 10000");
+            }
+        }
+        Cmd::Screen(name) => {
+            let fe = global(FRONT_END_PTR);
+            if fe == 0 {
+                log!("dev: screen {name}: no front end");
+            } else {
+                let f: extern "system" fn(u64, u64, i32) = std::mem::transmute(va(SHOW_SCREEN) as usize);
+                f(fe, leak_cstr(name), -1);
+                log!("dev: screen {name} shown");
+            }
+        }
+        Cmd::Progress => crate::progress::dev_list(),
+        Cmd::SetProgress { name, state } => crate::progress::dev_set(name, *state),
         Cmd::Devices => {
             let input = global(INPUT_PTR);
             for i in 0..INPUT_DEVICE_COUNT {
@@ -200,7 +243,7 @@ unsafe fn run(cmd: &Cmd) {
                 log!("dev: player {p} reads device {:#x} (map {})", player_device(input, p), rd_i32(input + INPUT_PLAYER_DEVICE + p as u64 * 4));
             }
         }
-        Cmd::Hit { actor, amount } => crate::health::dev_hit(*actor, *amount as f32),
+        Cmd::Hit { actor, amount, source } => crate::health::dev_hit(*actor, *amount as f32, *source),
         Cmd::Goto { slot, actor } => {
             let avatar = slot_avatar(global(MGR_PTR), *slot);
             let target = registry_get(*actor);
@@ -260,7 +303,8 @@ mod tests {
         assert_eq!(parse("devices"), Ok(Cmd::Devices));
         assert_eq!(parse("goto 0 1f2"), Ok(Cmd::Goto { slot: 0, actor: 0x1f2 }));
         assert!(parse("goto 0").is_err());
-        assert_eq!(parse("hit 404 10"), Ok(Cmd::Hit { actor: 0x404, amount: 10 }));
+        assert_eq!(parse("hit 404 10"), Ok(Cmd::Hit { actor: 0x404, amount: 10, source: None }));
+        assert_eq!(parse("hit 404 10 1f"), Ok(Cmd::Hit { actor: 0x404, amount: 10, source: Some(0x1f) }));
         assert!(parse("hit 404").is_err() && parse("hit 404 nan").is_err());
         assert_eq!(parse("post SwitchLevel westerntown"), Ok(Cmd::Post { name: "SwitchLevel".into(), arg: Some("westerntown".into()) }));
         assert_eq!(parse("log hello world"), Ok(Cmd::Log("hello world".into())));

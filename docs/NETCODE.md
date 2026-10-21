@@ -282,7 +282,38 @@ name within 4 m. Wire layouts (after the common header): `Healths` = level u32, 
 40), then count x (key, health f32); `Hits` = level u32, count u8 (at most 34), then count x (the
 client's actor id u32, key, running total f32); key = reference-name hash u32, actor-name hash u32,
 position 3 x f32. Decode refuses larger counts, non-finite numbers, health beyond 1e6 and positions
-beyond 1e6. Each copy's enemy AI still runs; attacks on a player are decided by that player's copy.
+beyond 1e6. Each copy's enemy AI still runs, but only the host's counts against players: a client
+drops a hit on its own player whose source is an enemy (an actor with a plain `HealthTracker`), and
+the host forwards each such hit on a client's stand-in to that client (`Hurt`: level u32, count u8,
+at most 32 x (seq u32, amount f32, damage kind u8), resent every 100 ms until `HurtAck`: level u32,
+highest seq applied u32), which applies it through the game's damage with no source. Hits with no
+enemy source (an obstacle's hit a horse passes on, falls) stay with each copy: the stand-in's
+summoned horse barely meets Train Rescue's obstacles on the host.
+
+**Missions and unlocks (H6e).** The game keeps both as named tables for the session (FINDINGS 10):
+291 challenges in Toy Box and 728 locks. The host reads both every 250 ms and pages them to clients
+(`Progress`: level u32, kind u8 (0 challenge, 1 lock), page u8, pages u8, count u8, then up to 200 x
+(name hash u32, state u8)): a page goes out when its content changes, and one page in turn every
+250 ms. A client takes the host's state where it is behind, once the difference has lasted 3 s
+(both copies usually make the same change themselves, and a forced pass on top of the game's own
+runs the pass twice), through the game's own setters (`0x1406362f0` for challenges, `0x1405f2480`
+for locks), and retries every 2 s. Challenges only move forward to 2, 3 or 4; locks never go back to
+0. A client's own changes are reported (`ProgressReport`: level u32, count u8, up to 100 x (kind u8,
+hash u32, state u8)) until the host shows them, at most 10 s, and the host takes them the same way.
+Both messages carry the level and everything resets on a level change: the lock table is
+level-scoped, and copies change level at different times. What a purchase builds in town is not
+covered yet (FINDINGS 10: the lot's `WorldEvent` id is per copy).
+
+**Shared pause.** An owner sends `flags::PAUSED` while its game's own pause is on (`0x140b2c5a6`);
+other copies in the same level stop their game timer the way the level start hold does, without a
+menu, until no partner is paused, and pause again if their own menu closes meanwhile. START and BACK
+never reach a stand-in, so menus open only on their owner's screen.
+
+**Down together.** An owner sends `flags::DOWN` and `flags::WAITING` (its `Respawn` down flag, state
+6). Each copy writes them to the slot-1 stand-in's `Respawn` (`+0x20`, `+0x1e`), the wait held for
+1.5 s after it ends, so the game's own rule applies on every copy: a downed player is held while its
+partner is down and both restart at the checkpoint once both wait; one player down alone respawns
+at its partner as before.
 
 `net_sim=delay,jitter,loss` adds artificial latency and loss for testing on one PC.
 

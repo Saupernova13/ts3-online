@@ -7,7 +7,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 16;
+pub const VERSION: u16 = 17;
 pub const TAG_LEN: usize = 16;
 /// Zero bytes after a `Probe`'s build, so a probe is never shorter than its reply.
 pub const PROBE_PAD: usize = 40;
@@ -24,6 +24,12 @@ pub const MAX_NPCS: usize = 48;
 pub const MAX_HEALTHS: usize = 40;
 /// 28 bytes each.
 pub const MAX_HITS: usize = 34;
+/// Entries in a `Progress` page (5 bytes each).
+pub const MAX_PROGRESS: usize = 200;
+/// Entries in a `ProgressReport` (6 bytes each).
+pub const MAX_PROGRESS_REPORT: usize = 100;
+/// Entries in a `Hurt` (9 bytes each).
+pub const MAX_HURT: usize = crate::health::MAX_HURTS;
 
 pub const REFUSE_FULL: u8 = 1;
 pub const REFUSE_BUILD: u8 = 2;
@@ -55,6 +61,10 @@ const T_CHECK: u8 = 22;
 const T_CHECK_REPLY: u8 = 23;
 const T_HEALTHS: u8 = 24;
 const T_HITS: u8 = 25;
+const T_PROGRESS: u8 = 26;
+const T_PROGRESS_REPORT: u8 = 27;
+const T_HURT: u8 = 28;
+const T_HURT_ACK: u8 = 29;
 
 /// Controller state in the XINPUT_GAMEPAD layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -84,6 +94,12 @@ pub mod flags {
     pub const LOADING: u32 = 1 << 11;
     /// the owner rides Bullseye (the game's `Riding` state)
     pub const RIDING: u32 = 1 << 12;
+    /// the owner's game is paused (its pause menu or another pausing screen)
+    pub const PAUSED: u32 = 1 << 13;
+    /// the owner's player is down (its `Respawn` component's down flag)
+    pub const DOWN: u32 = 1 << 14;
+    /// the owner's player is down and waiting for its partner (`Respawn` state 6)
+    pub const WAITING: u32 = 1 << 15;
 }
 
 /// One player's state, sent by its owner.
@@ -178,6 +194,15 @@ pub enum Msg {
     Healths { level: u32, entries: Vec<(Key, f32)> },
     /// Client to host, unreliable, repeated: (client's actor id, key, health its player took off it this level).
     Hits { level: u32, entries: Vec<(u32, Key, f32)> },
+    /// Host to clients, unreliable: one page of a progress table (`progress::Page`), as (name hash, state).
+    Progress { level: u32, kind: u8, page: u8, pages: u8, entries: Vec<(u32, u8)> },
+    /// Client to host, unreliable, repeated: its own progress changes as (kind, name hash, state).
+    ProgressReport { level: u32, entries: Vec<(u8, u32, u8)> },
+    /// Host to one client, unreliable, resent until acked: hits the host's world landed on that
+    /// client's stand-in in `level`, as (seq, amount, damage kind).
+    Hurt { level: u32, entries: Vec<(u32, f32, u8)> },
+    /// Client to host: highest `Hurt` seq applied in `level`.
+    HurtAck { level: u32, seq: u32 },
     /// Connect menu's password test, tagged with it; answered by `CheckReply` (same nonce) or `REFUSE_KEY`.
     Check { nonce: u64 },
     CheckReply { nonce: u64 },
@@ -426,6 +451,44 @@ pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
                 o.extend_from_slice(&total.to_le_bytes());
             }
         }
+        Msg::Progress { level, kind, page, pages, entries } => {
+            o.push(T_PROGRESS);
+            o.extend_from_slice(&level.to_le_bytes());
+            o.extend_from_slice(&[*kind, *page, *pages]);
+            let entries = &entries[..entries.len().min(MAX_PROGRESS)];
+            o.push(entries.len() as u8);
+            for (hash, state) in entries {
+                o.extend_from_slice(&hash.to_le_bytes());
+                o.push(*state);
+            }
+        }
+        Msg::ProgressReport { level, entries } => {
+            o.push(T_PROGRESS_REPORT);
+            o.extend_from_slice(&level.to_le_bytes());
+            let entries = &entries[..entries.len().min(MAX_PROGRESS_REPORT)];
+            o.push(entries.len() as u8);
+            for (kind, hash, state) in entries {
+                o.push(*kind);
+                o.extend_from_slice(&hash.to_le_bytes());
+                o.push(*state);
+            }
+        }
+        Msg::Hurt { level, entries } => {
+            o.push(T_HURT);
+            o.extend_from_slice(&level.to_le_bytes());
+            let entries = &entries[..entries.len().min(MAX_HURT)];
+            o.push(entries.len() as u8);
+            for (seq, amount, kind) in entries {
+                o.extend_from_slice(&seq.to_le_bytes());
+                o.extend_from_slice(&amount.to_le_bytes());
+                o.push(*kind);
+            }
+        }
+        Msg::HurtAck { level, seq } => {
+            o.push(T_HURT_ACK);
+            o.extend_from_slice(&level.to_le_bytes());
+            o.extend_from_slice(&seq.to_le_bytes());
+        }
         Msg::Check { nonce } => {
             o.push(T_CHECK);
             o.extend_from_slice(&nonce.to_le_bytes());
@@ -511,7 +574,7 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
         return Err(DecodeError::Version(version));
     }
     let kind = *bytes.get(6).ok_or(Malformed)?;
-    if !(T_HELLO..=T_HITS).contains(&kind) || bytes.len() < 7 + TAG_LEN {
+    if !(T_HELLO..=T_HURT_ACK).contains(&kind) || bytes.len() < 7 + TAG_LEN {
         return Err(Malformed);
     }
     let (signed, tag) = bytes.split_at(bytes.len() - TAG_LEN);
@@ -668,6 +731,52 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
                 }
                 Msg::Hits { level, entries }
             }
+            T_PROGRESS => {
+                let level = r.u32()?;
+                let (kind, page, pages) = (r.u8()?, r.u8()?, r.u8()?);
+                let n = r.u8()? as usize;
+                if kind as usize >= crate::progress::KINDS || page >= pages || n > MAX_PROGRESS {
+                    return None;
+                }
+                let mut entries = Vec::with_capacity(n);
+                for _ in 0..n {
+                    entries.push((r.u32()?, r.u8()?));
+                }
+                Msg::Progress { level, kind, page, pages, entries }
+            }
+            T_PROGRESS_REPORT => {
+                let level = r.u32()?;
+                let n = r.u8()? as usize;
+                if n > MAX_PROGRESS_REPORT {
+                    return None;
+                }
+                let mut entries = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let kind = r.u8()?;
+                    if kind as usize >= crate::progress::KINDS {
+                        return None;
+                    }
+                    entries.push((kind, r.u32()?, r.u8()?));
+                }
+                Msg::ProgressReport { level, entries }
+            }
+            T_HURT => {
+                let level = r.u32()?;
+                let n = r.u8()? as usize;
+                if n > MAX_HURT {
+                    return None;
+                }
+                let mut entries = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let (seq, amount, kind) = (r.u32()?, r.f32()?, r.u8()?);
+                    if !sane_health(amount) {
+                        return None;
+                    }
+                    entries.push((seq, amount, kind));
+                }
+                Msg::Hurt { level, entries }
+            }
+            T_HURT_ACK => Msg::HurtAck { level: r.u32()?, seq: r.u32()? },
             T_CHECK => Msg::Check { nonce: r.u64()? },
             T_CHECK_REPLY => Msg::CheckReply { nonce: r.u64()? },
             _ => return None,
@@ -769,6 +878,11 @@ mod tests {
             Msg::Npcs { level: 0, entries: Vec::new() },
             Msg::Healths { level: 3, entries: vec![(hk(1), 70.5), (Key { refh: 0, nameh: 9, pos: [1.0, -2.0, 3.5] }, 0.0)] },
             Msg::Hits { level: 3, entries: vec![(0x7c2, hk(1), 30.0)] },
+            Msg::Progress { level: 9, kind: 1, page: 2, pages: 3, entries: vec![(0xdead_beef, 5), (1, 0)] },
+            Msg::Progress { level: 0, kind: 0, page: 0, pages: 1, entries: Vec::new() },
+            Msg::ProgressReport { level: 9, entries: vec![(0, 7, 4), (1, u32::MAX, 5)] },
+            Msg::Hurt { level: 9, entries: vec![(1, 20.0, 0), (u32::MAX, 0.5, 3)] },
+            Msg::HurtAck { level: 9, seq: 7 },
             Msg::Check { nonce: 0x0123_4567_89ab_cdef },
             Msg::CheckReply { nonce: u64::MAX },
         ]

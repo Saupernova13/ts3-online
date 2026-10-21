@@ -2,12 +2,18 @@
 //! partner last reached, and waits until the partner has reached one. A remote partner's stand-in
 //! may never trigger the level's checkpoints on this copy, so once the wait has lasted a moment
 //! this module gives the game a point: the downed player's own last checkpoint, else the partner.
+//! The game also holds a downed player while its partner is down, and restarts both from the
+//! checkpoint once both wait; the stand-in's Respawn component shows its owner's down and waiting
+//! status so every copy makes that call the same way.
 
 /// Respawn component states (`0x140645280`): down and waiting for the partner's point, then
 /// respawning at it.
 pub const WAITING_FOR_PARTNER: u32 = 6;
 /// The game leaves the wait the frame a point exists; this long without one, the point is given.
 pub const GRACE_MS: u64 = 2_000;
+/// A partner's wait is still shown this long after its owner left it: the owner leaves the wait the
+/// frame it sees this copy's player waiting, which may be before this copy has seen it wait.
+pub const WAIT_LATCH_MS: u64 = 1_500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
@@ -32,10 +38,27 @@ pub struct Wait {
     since: Option<u64>,
 }
 
+/// What a stand-in's Respawn shows of its owner: (down, waiting).
+#[derive(Debug, Default)]
+pub struct Shown {
+    waited_at: Option<u64>,
+}
+
+impl Shown {
+    pub fn update(&mut self, down: bool, waiting: bool, now_ms: u64) -> (bool, bool) {
+        if waiting {
+            self.waited_at = Some(now_ms);
+        }
+        let waiting = self.waited_at.is_some_and(|t| now_ms.saturating_sub(t) < WAIT_LATCH_MS);
+        (down || waiting, waiting)
+    }
+}
+
 impl Wait {
-    /// Per frame; the source to give the game a point from, once per wait.
-    pub fn update(&mut self, d: Down, now_ms: u64) -> Option<Source> {
-        if d.state != WAITING_FOR_PARTNER || d.has_point {
+    /// Per frame; the source to give the game a point from, once per wait. While the partner is
+    /// down the game holds the wait on purpose, and no point is given.
+    pub fn update(&mut self, d: Down, partner_down: bool, now_ms: u64) -> Option<Source> {
+        if d.state != WAITING_FOR_PARTNER || d.has_point || partner_down {
             self.since = None;
             return None;
         }
@@ -50,11 +73,11 @@ impl Wait {
 }
 
 #[cfg(windows)]
-pub use live::update;
+pub use live::{local_status, update};
 
 #[cfg(windows)]
 mod live {
-    use super::{Down, Source, Wait};
+    use super::{Down, Shown, Source, Wait, WAITING_FOR_PARTNER};
     use crate::actor;
     use crate::game::*;
     use crate::log;
@@ -64,6 +87,8 @@ mod live {
 
     // Respawn component (`0x14064a820`)
     const STATE: u64 = 0x18;
+    /// set in state 6; a waiting player whose partner has it set restarts both at the checkpoint
+    const WAITING: u64 = 0x1e;
     const DOWN: u64 = 0x20;
 
     // Respawn points (`RESPAWN_POINTS`): the point player 1 set, which player 0 respawns at, and
@@ -76,6 +101,7 @@ mod live {
     const POINT_LEN: usize = 0x34;
 
     static WAIT: Mutex<Option<Wait>> = Mutex::new(None);
+    static SHOWN: Mutex<Option<Shown>> = Mutex::new(None);
     static LAST: Mutex<[u32; 2]> = Mutex::new([0; 2]);
     static START: OnceLock<Instant> = OnceLock::new();
 
@@ -87,21 +113,35 @@ mod live {
         }
     }
 
-    /// Per frame on the game thread, with slot 0 (the local player) and slot 1 (its partner).
-    pub unsafe fn update(mgr: u64) {
+    /// The local player's (down, waiting for its partner).
+    pub unsafe fn local_status(mgr: u64) -> (bool, bool) {
+        let me = if mgr == 0 { 0 } else { respawn(slot_avatar(mgr, 0)) };
+        if me == 0 {
+            return (false, false);
+        }
+        (rd_u8(me + DOWN) != 0, rd_u32(me + STATE) == WAITING_FOR_PARTNER)
+    }
+
+    /// Per frame on the game thread, with slot 0 (the local player) and slot 1 (its partner);
+    /// `owner`: the (down, waiting) status the partner's owner sends, None for a local partner.
+    pub unsafe fn update(mgr: u64, owner: Option<(bool, bool)>) {
         let points = global(RESPAWN_POINTS);
         let (me, partner) = (respawn(slot_avatar(mgr, 0)), respawn(slot_avatar(mgr, 1)));
         if points == 0 || me == 0 {
             return;
         }
+        let now = START.get_or_init(Instant::now).elapsed().as_millis() as u64;
+        if let (Some((down, waiting)), true) = (owner, partner != 0) {
+            let Ok(mut shown) = SHOWN.lock() else { return };
+            let (down, waiting) = shown.get_or_insert_with(Shown::default).update(down, waiting, now);
+            wr_u8(partner + DOWN, down as u8);
+            wr_u8(partner + WAITING, waiting as u8);
+        }
         log_changes(me, partner);
         let d = Down { state: rd_u32(me + STATE), has_point: rd_u8(points + P0_VALID) != 0, own_checkpoint: rd_u8(points + P1_VALID) != 0 };
-        let now = START.get_or_init(Instant::now).elapsed().as_millis() as u64;
+        let partner_down = partner != 0 && rd_u8(partner + DOWN) != 0;
         let Ok(mut guard) = WAIT.lock() else { return };
-        let Some(source) = guard.get_or_insert_with(Wait::default).update(d, now) else { return };
-        if partner != 0 && rd_u8(partner + DOWN) != 0 {
-            log!("respawn: waiting for a point, and the partner is down here too");
-        }
+        let Some(source) = guard.get_or_insert_with(Wait::default).update(d, partner_down, now) else { return };
         let dst = (points + P0_POINT) as *mut u8;
         match source {
             Source::OwnCheckpoint => std::ptr::copy_nonoverlapping((points + P1_POINT) as *const u8, dst, POINT_LEN),
@@ -121,12 +161,13 @@ mod live {
         log!("respawn: no checkpoint from the partner on this copy; respawning at {source:?}");
     }
 
-    /// Logs the local player's and the partner's Respawn state when it changes.
+    /// Logs the local player's Respawn state and the partner's shown status when they change.
     unsafe fn log_changes(me: u64, partner: u64) {
-        let now = [rd_u32(me + STATE), if partner == 0 { 0 } else { rd_u32(partner + STATE) }];
+        let shown = |p: u64| if p == 0 { 0 } else { rd_u8(p + DOWN) as u32 | (rd_u8(p + WAITING) as u32) << 1 };
+        let now = [rd_u32(me + STATE), shown(partner)];
         let Ok(mut last) = LAST.lock() else { return };
         if *last != now {
-            log!("respawn: state local {} partner {} (was {} {})", now[0], now[1], last[0], last[1]);
+            log!("respawn: local state {}, partner down|waiting {} (was {} {})", now[0], now[1], last[0], last[1]);
             *last = now;
         }
     }
@@ -143,31 +184,49 @@ mod tests {
     #[test]
     fn gives_a_point_after_the_grace() {
         let mut w = Wait::default();
-        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), 0), None);
-        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), GRACE_MS - 1), None);
-        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), GRACE_MS), Some(Source::OwnCheckpoint));
+        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), false, 0), None);
+        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), false, GRACE_MS - 1), None);
+        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), false, GRACE_MS), Some(Source::OwnCheckpoint));
         // the next attempt waits a full grace again
-        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), GRACE_MS + 1), None);
-        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, false), 2 * GRACE_MS), Some(Source::Partner));
+        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), false, GRACE_MS + 1), None);
+        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, false), false, 2 * GRACE_MS), Some(Source::Partner));
     }
 
     #[test]
     fn leaves_the_game_alone_otherwise() {
         let mut w = Wait::default();
         // the partner reached a checkpoint: the game respawns on its own
-        assert_eq!(w.update(down(WAITING_FOR_PARTNER, true, false), 0), None);
-        assert_eq!(w.update(down(WAITING_FOR_PARTNER, true, false), 10 * GRACE_MS), None);
+        assert_eq!(w.update(down(WAITING_FOR_PARTNER, true, false), false, 0), None);
+        assert_eq!(w.update(down(WAITING_FOR_PARTNER, true, false), false, 10 * GRACE_MS), None);
         // alive, or down in another state
-        assert_eq!(w.update(down(0, false, false), 20 * GRACE_MS), None);
-        assert_eq!(w.update(down(4, false, false), 30 * GRACE_MS), None);
+        assert_eq!(w.update(down(0, false, false), false, 20 * GRACE_MS), None);
+        assert_eq!(w.update(down(4, false, false), false, 30 * GRACE_MS), None);
+    }
+
+    #[test]
+    fn no_point_is_given_while_the_partner_is_down() {
+        let mut w = Wait::default();
+        let d = down(WAITING_FOR_PARTNER, false, true);
+        assert_eq!(w.update(d, true, 0), None);
+        assert_eq!(w.update(d, true, 10 * GRACE_MS), None);
+    }
+
+    #[test]
+    fn a_partners_wait_is_shown_a_while_after_it_ends() {
+        let mut s = Shown::default();
+        assert_eq!(s.update(false, false, 0), (false, false));
+        assert_eq!(s.update(true, false, 10), (true, false));
+        assert_eq!(s.update(true, true, 20), (true, true));
+        assert_eq!(s.update(false, false, 20 + WAIT_LATCH_MS - 1), (true, true), "the owner already restarted");
+        assert_eq!(s.update(false, false, 20 + WAIT_LATCH_MS), (false, false));
     }
 
     #[test]
     fn a_new_wait_starts_a_new_grace() {
         let mut w = Wait::default();
-        w.update(down(WAITING_FOR_PARTNER, false, true), 0);
-        w.update(down(0, false, true), 1000);
-        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), 1500), None);
-        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), 1500 + GRACE_MS), Some(Source::OwnCheckpoint));
+        w.update(down(WAITING_FOR_PARTNER, false, true), false, 0);
+        w.update(down(0, false, true), false, 1000);
+        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), false, 1500), None);
+        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, true), false, 1500 + GRACE_MS), Some(Source::OwnCheckpoint));
     }
 }

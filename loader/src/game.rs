@@ -183,6 +183,12 @@ pub unsafe fn type_id(slot: u64) -> u32 {
 }
 
 /// Two-player respawn points (FINDINGS 10): per player, where it respawns when down.
+/// Health interface vtable of the plain `HealthTracker` (enemies and props); avatars and companions
+/// use `TS3HealthTracker`'s (FINDINGS 10).
+pub const HEALTH_IF_VT: u64 = 0x1_407d_9660;
+/// Health interface take-damage (`vt+0x80`), shared by both trackers; detoured by `hooks::take_damage`.
+pub const TAKE_DAMAGE: u64 = 0x1_4044_1f80;
+
 pub const RESPAWN_POINTS: u64 = 0x1_40b2_fdf8;
 
 /// Actor manager pointer, taken by the actor-name lookups.

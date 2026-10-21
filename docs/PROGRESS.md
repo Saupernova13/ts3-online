@@ -284,3 +284,14 @@ town.
   (`CreateJessieRidingBullseye`) left the partner on foot. In game (T22): a horse spawned for the
   partner on both copies within 0.1 s of the bind, drift 0.0 m while riding, the partner shown on a
   horse in Train Rescue and in Toy Box. New dev commands: `states`, `request`, `horse`, `autoride`.
+
+- 2026-10-21, enemy health from the host (protocol 16): every hit goes through one function, the
+  health interface's take-damage (`0x140441f80`), now detoured. Each copy drops hits on and by a
+  partner's stand-in; a client reports what its own player takes off enemies and the host applies it;
+  the host streams the health of enemies a player hit and clients follow it down through the game's
+  own damage, so kills play the death on every copy. The first run in Train Rescue showed the client
+  hitting the level's Jessie companion every frame (the host's copy was at 0, the client's would not
+  stay down): now only plain `HealthTracker` actors count, the host streams only what players hit,
+  and a figure is retried at most once a second. In game (T23, Toy Box): a host punch took a chicken
+  to 90 on both copies; two client hits (dev `hit`) took another to 40 on both, matched by reference
+  name across different ids; a kill from each side left both chickens at 0 on both copies.

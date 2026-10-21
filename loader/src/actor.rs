@@ -11,6 +11,8 @@ pub const NODE: u64 = 0x50;
 pub const POS: u64 = 0x80;
 /// Rotation quaternion `(x, y, z, w)`.
 pub const ROT: u64 = 0x90;
+/// Actor name pointer (the placed or spawned template's name).
+pub const NAME: u64 = 0x148;
 /// Reference name pointer, unique and equal across copies for most placed actors.
 pub const REF: u64 = 0x150;
 /// Bit 0 set once the actor is activated.
@@ -48,6 +50,12 @@ pub unsafe fn pose(actor: u64) -> ([f32; 3], f32) {
 /// None when the actor has no reference name.
 pub unsafe fn refname(actor: u64) -> Option<String> {
     let p = rd_u64(actor + REF);
+    (p != 0).then(|| CStr::from_ptr(p as *const c_char).to_string_lossy().into_owned())
+}
+
+/// None when the actor has no actor name.
+pub unsafe fn name(actor: u64) -> Option<String> {
+    let p = rd_u64(actor + NAME);
     (p != 0).then(|| CStr::from_ptr(p as *const c_char).to_string_lossy().into_owned())
 }
 

@@ -140,6 +140,30 @@ pub fn take_npcs() -> Vec<(u32, [f32; 3], f32)> {
     with(|s| s.take_npcs()).unwrap_or_default()
 }
 
+/// Host: health of damaged enemies of `level`, sent unreliably to every client.
+pub fn set_healths(level: u32, entries: &[(crate::health::Key, f32)]) {
+    with(|s| s.set_healths(level, entries));
+}
+
+/// Client: the host's enemy health figures since the last call.
+pub fn take_healths() -> Vec<(crate::health::Key, f32)> {
+    with(|s| s.take_healths()).unwrap_or_default()
+}
+
+/// Client: running totals of the health the local player took off enemies.
+pub fn send_hits(level: u32, entries: &[(u32, crate::health::Key, f32)]) {
+    with(|s| s.send_hits(level, entries));
+}
+
+/// Host: (client, level, hits) since the last call; the level is the current one.
+pub fn take_hits() -> Vec<(u8, u32, Vec<(u32, crate::health::Key, f32)>)> {
+    with(|s| {
+        let level = s.world_level();
+        s.take_hits().into_iter().map(|(c, e)| (c, level, e)).collect()
+    })
+    .unwrap_or_default()
+}
+
 #[derive(Debug, Clone)]
 pub struct Options {
     pub name: String,

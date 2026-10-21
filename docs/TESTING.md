@@ -240,6 +240,23 @@ Start as for T20 and play into Train Rescue.
    copy logs `spawned horse` and shows the partner on a horse.
 4. Put the host save back.
 
+## T23: enemies have the host's health (passed 2026-10-21, with dev hits for the client)
+
+Start as for T20 and play into a level with enemies, both players near the same enemy.
+
+1. The host hits the enemy: its log shows `health: hit ... by ... slot0: Pass`; the client's shows the
+   host stand-in's copy of the hit as `Drop`, then `followed` counts rising in the `health:` summary,
+   and the enemy loses the same health on both screens.
+2. The client hits the enemy: its log shows `Report`, the host's summary counts `applied` reports, and
+   the enemy's health matches on both copies within a second.
+3. The enemy dies on both screens, whoever lands the last hit.
+4. `healths` in a command file lists every actor with health and its figure; the two copies agree
+   for every enemy that took damage. `goto SLOT ID` puts a player next to an actor, and
+   `hit ID AMOUNT` damages it as the local player through the game's own take-damage (the same
+   path as a punch), which is how the client side was run: Toy Box's chickens (`Created_5`-`10`)
+   flee before a placed player's punch lands.
+5. Put the host save back.
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

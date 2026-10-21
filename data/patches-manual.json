@@ -338,6 +338,16 @@
    "hook": "post_broadcast2",
    "orig": "48895c24084889742410574883ec20",
    "note": "event post broadcast, second variant (events, name, a, b): detour that records the name when logging is on, then calls the original through a trampoline"
+  },
+  {
+   "id": "hook_take_damage_140441f80",
+   "group": "hooks",
+   "va": "0x140441f80",
+   "mode": "detour",
+   "steal": 15,
+   "hook": "take_damage",
+   "orig": "48895c240848896c24104889742418",
+   "note": "health interface take-damage (health, amount, source actor id, flag, kind on the stack), shared by HealthTracker and TS3HealthTracker: detour that lets the enemy-health sync drop or report a hit, then calls the original through a trampoline"
   }
  ],
  "deferred": [

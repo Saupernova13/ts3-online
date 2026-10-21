@@ -2,6 +2,7 @@
 use super::proto::{self, clamp_name, DecodeError, Msg, Pad, Proj, State};
 use super::save::{self, Reassembler};
 use super::world_sync::WorldSync;
+use crate::health::Key;
 use crate::wallet::HostWallet;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -267,6 +268,10 @@ impl Session {
 
     /// 0 outside a level; a change resets all world state. A client entering a level tells the host
     /// it holds nothing yet, so the host sends the list from the start (also after a reconnect).
+    pub fn world_level(&self) -> u32 {
+        self.world.level()
+    }
+
     pub fn set_world_level(&mut self, level: u32) {
         if self.world.set_level(level) && !self.is_host() {
             self.ack_world_position();
@@ -316,6 +321,40 @@ impl Session {
 
     pub fn take_npcs(&mut self) -> Vec<(u32, [f32; 3], f32)> {
         self.world.take_npcs()
+    }
+
+    /// Host, unreliable: the caller resends what is still changing.
+    pub fn set_healths(&mut self, level: u32, entries: &[(Key, f32)]) {
+        if !self.is_host() || level == 0 || level != self.world.level() {
+            return;
+        }
+        for chunk in entries.chunks(proto::MAX_HEALTHS) {
+            let msg = Msg::Healths { level, entries: chunk.to_vec() };
+            for i in 0..self.peers.len() {
+                let addr = self.peers[i].addr;
+                self.send(addr, &msg);
+            }
+        }
+    }
+
+    pub fn take_healths(&mut self) -> Vec<(Key, f32)> {
+        self.world.take_healths()
+    }
+
+    /// Client, unreliable: the caller repeats running totals.
+    pub fn send_hits(&mut self, level: u32, entries: &[(u32, Key, f32)]) {
+        let Some(host) = self.host_addr else { return };
+        if self.link != Link::Connected || level == 0 || level != self.world.level() {
+            return;
+        }
+        for chunk in entries.chunks(proto::MAX_HITS) {
+            self.send(host, &Msg::Hits { level, entries: chunk.to_vec() });
+        }
+    }
+
+    /// Host: (client, hits).
+    pub fn take_hits(&mut self) -> Vec<(u8, Vec<(u32, Key, f32)>)> {
+        self.world.take_hits()
     }
 
     fn send_reports(&mut self, host: SocketAddr, now: u64) {
@@ -466,6 +505,7 @@ impl Session {
             Msg::Bye { id: b } if b == id => self.drop_client(i),
             Msg::WorldAck { level, seq } => self.world.on_ack(from, level, seq),
             Msg::WorldReport { level, event, refname } => self.world.on_report(level, event, refname),
+            Msg::Hits { level, entries } => self.world.on_hits(id, level, entries),
             Msg::SaveRequest { have } => self.serve_save(i, &have, now),
             Msg::LevelRequest { name } if !name.is_empty() && proto::valid_level(&name) => self.events.push(Event::LevelRequested { id, name }),
             Msg::Spend { spends } => {
@@ -606,6 +646,7 @@ impl Session {
                 }
             }
             Msg::Npcs { level, entries } => self.world.on_npcs(level, entries),
+            Msg::Healths { level, entries } => self.world.on_healths(level, entries),
             Msg::SaveInfo { total, crc } if self.want_save && !self.save_done => {
                 if total == 0 {
                     self.save_done = true;
@@ -1336,6 +1377,41 @@ mod tests {
         a.handle(addr(H), &proto::encode(&Msg::Npcs { level: 7, entries: vec![mover(4)] }, &[]), MS);
         a.set_world_level(8);
         assert!(a.take_npcs().is_empty());
+    }
+
+    #[test]
+    fn enemy_health_goes_to_clients_and_hits_to_the_host_with_the_sender() {
+        let (mut host, mut a, mut b) = two_clients();
+        let k = Key { refh: 5, nameh: 1, pos: [1.0, 2.0, 3.0] };
+        for s in [&mut host, &mut a, &mut b] {
+            s.set_world_level(7);
+            s.drain_outgoing();
+        }
+        a.set_healths(7, &[(k, 1.0)]);
+        assert!(a.drain_outgoing().is_empty(), "only the host sends health");
+        host.set_healths(7, &[(k, 40.0)]);
+        host.set_healths(8, &[(k, 10.0)]); // another level: dropped
+        for (to, bytes) in host.drain_outgoing() {
+            if to == addr(1) {
+                a.handle(addr(H), &bytes, MS);
+            } else {
+                b.handle(addr(H), &bytes, MS);
+            }
+        }
+        assert_eq!(a.take_healths(), vec![(k, 40.0)]);
+        assert!(a.take_healths().is_empty(), "taken once");
+        assert_eq!(b.take_healths(), vec![(k, 40.0)]);
+        host.send_hits(7, &[(9, k, 30.0)]);
+        assert!(host.drain_outgoing().is_empty(), "only clients report hits");
+        a.send_hits(7, &[(9, k, 30.0)]);
+        b.send_hits(8, &[(9, k, 30.0)]); // b is not in that level: nothing goes out
+        deliver(addr(1), &mut a, addr(H), &mut host, MS);
+        deliver(addr(2), &mut b, addr(H), &mut host, MS);
+        let id = a.local_id().unwrap_or(0);
+        assert_eq!(host.take_hits(), vec![(id, vec![(9, k, 30.0)])]);
+        // hits from a stranger are ignored
+        host.handle(addr(77), &proto::encode(&Msg::Hits { level: 7, entries: vec![(9, k, 30.0)] }, &[]), MS);
+        assert!(host.take_hits().is_empty());
     }
 
     #[test]

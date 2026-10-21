@@ -31,6 +31,10 @@ pub enum Cmd {
     AutoRide(bool),
     /// log every actor with a health interface
     Healths,
+    /// open a front-end screen by name, as a script would
+    Screen(String),
+    /// down the local player through the game's own damage
+    Down,
     /// log the story checkpoints
     Checkpoints,
     /// log every mission and unlock with its state
@@ -120,6 +124,8 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
         "healths" => Ok(Cmd::Healths),
         "devices" => Ok(Cmd::Devices),
         "checkpoints" => Ok(Cmd::Checkpoints),
+        "down" => Ok(Cmd::Down),
+        "screen" if !rest.is_empty() => Ok(Cmd::Screen(rest.to_string())),
         "progress" => Ok(Cmd::Progress),
         "setprogress" => {
             let (name, state) = rest.split_once(char::is_whitespace).ok_or("setprogress needs NAME STATE")?;
@@ -199,6 +205,26 @@ unsafe fn run(cmd: &Cmd) {
         }
         Cmd::Healths => crate::health::dev_list(),
         Cmd::Checkpoints => crate::checkpoint::dev_list(),
+        Cmd::Down => {
+            let me = slot_avatar(global(MGR_PTR), 0);
+            let iface = if me == 0 { 0 } else { crate::actor::interface(me, TYPE_HEALTH) };
+            if iface == 0 {
+                log!("dev: down: no local player with health");
+            } else {
+                hooks::call_take_damage(iface, 1.0e4, crate::actor::id(me), 3);
+                log!("dev: down: local player hit for 10000");
+            }
+        }
+        Cmd::Screen(name) => {
+            let fe = global(FRONT_END_PTR);
+            if fe == 0 {
+                log!("dev: screen {name}: no front end");
+            } else {
+                let f: extern "system" fn(u64, u64, i32) = std::mem::transmute(va(SHOW_SCREEN) as usize);
+                f(fe, leak_cstr(name), -1);
+                log!("dev: screen {name} shown");
+            }
+        }
         Cmd::Progress => crate::progress::dev_list(),
         Cmd::SetProgress { name, state } => crate::progress::dev_set(name, *state),
         Cmd::Devices => {

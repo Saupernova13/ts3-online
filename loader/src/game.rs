@@ -133,6 +133,10 @@ game_fn!(exploder_break, 0x1_4065_2ac0, fn(exploder: u64) -> ());
 
 /// The game timer gameplay and scripted sequences run on (FINDINGS 10); an object, not a pointer.
 pub const GAME_TIMER: u64 = 0x1_4095_4820;
+/// The front end (screen manager) and its show-screen by name: `(front_end, name, -1)`, as the
+/// script binding `FrontEndShowScreen` calls it.
+pub const FRONT_END_PTR: u64 = 0x1_40b2_ef10;
+pub const SHOW_SCREEN: u64 = 0x1_404c_53e0;
 /// Set (u8) while the game's own pause is on: the pause menu, and other screens that pause.
 pub const GAME_PAUSED: u64 = 0x1_40b2_c5a6;
 /// `timer_set_speed` speeds: 0 stops the timer, 9 is normal.
@@ -172,6 +176,8 @@ game_fn!(blackboard_set, 0x1_4054_c420, fn(bb: u64, name: *const c_char, value: 
 const TYPE_COUNTER: u64 = 0x1_40b2_a448;
 /// The state machine interface (`ForceRide` trigger `0x14016c390`, summon `0x140220db0`).
 pub const TYPE_STATE_MACHINE: u64 = 0x1_40b2_a44c;
+/// Type slot of the health interface (`HealthTracker+0x18`).
+pub const TYPE_HEALTH: u64 = 0x1_40b2_a464;
 
 /// The id stored at `slot`, numbered now if it has none yet, as the game does inline.
 pub unsafe fn type_id(slot: u64) -> u32 {

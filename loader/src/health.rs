@@ -45,6 +45,9 @@ pub const EXPIRE_MS: u64 = 2500;
 pub const REPORT_KEEP_MS: u64 = 3000;
 /// Client: a host figure this much above the local one raises it.
 pub const RAISE_MIN: f32 = 0.5;
+/// Client: a figure already applied to an enemy is applied again only this long after (some
+/// actors refuse damage or come straight back, and would otherwise be hit every frame).
+pub const RETRY_MS: u64 = 1000;
 /// Most entries the follower keeps.
 const MAX_FOLLOWED: usize = 256;
 
@@ -185,6 +188,14 @@ pub fn fix(local: f32, host: f32, reporting: bool) -> Fix {
         return Fix::Raise(host);
     }
     Fix::None
+}
+
+/// `last`: the host figure last applied to this enemy and when.
+pub fn retry_due(last: Option<(f32, u64)>, host: f32, now: u64) -> bool {
+    match last {
+        Some((h, at)) if (h - host).abs() <= EPS => now.saturating_sub(at) >= RETRY_MS,
+        _ => true,
+    }
 }
 
 /// Client side: the host's latest figure per enemy.
@@ -374,6 +385,9 @@ mod live {
         reported: u32,
         applied: u32,
         followed: u32,
+        /// client: (host figure, time) last applied per actor id
+        tried: HashMap<u64, (f32, u64)>,
+        refused_logged: u32,
     }
 
     static LIVE: Mutex<Option<Live>> = Mutex::new(None);
@@ -506,6 +520,8 @@ mod live {
             live.watched.clear();
             live.names = None;
             live.hits_logged = 0;
+            live.tried.clear();
+            live.refused_logged = 0;
         }
         live.streamer.set_level(level);
         live.follower.set_level(level);
@@ -591,18 +607,26 @@ mod live {
             if iface == 0 {
                 continue;
             }
-            let reporting = live.reporter.reporting(now, actor::id(actor) as u32);
-            match fix(rd_f32(iface + HEALTH), host, reporting) {
-                Fix::None => {}
+            let id = actor::id(actor);
+            let reporting = live.reporter.reporting(now, id as u32);
+            let before = rd_f32(iface + HEALTH);
+            let f = fix(before, host, reporting);
+            if f == Fix::None || !retry_due(live.tried.get(&id).copied(), host, now) {
+                continue;
+            }
+            live.tried.insert(id, (host, now));
+            match f {
                 Fix::Damage(d) => {
-                    if hooks::call_take_damage(iface, d, host_stand_in, KIND_RAW) {
-                        live.followed += 1;
-                    }
+                    hooks::call_take_damage(iface, d, host_stand_in, KIND_RAW);
                 }
-                Fix::Raise(h) => {
-                    set_health(iface, h);
-                    live.followed += 1;
-                }
+                Fix::Raise(h) => set_health(iface, h),
+                Fix::None => {}
+            }
+            live.followed += 1;
+            let after = rd_f32(iface + HEALTH);
+            if (after - host.max(0.0)).abs() > EPS && live.refused_logged < LOG_HITS {
+                live.refused_logged += 1;
+                log!("health: {} kept {after:.1} (was {before:.1}) for the host's {host:.1}; retrying in {RETRY_MS} ms", describe(actor));
             }
         }
     }
@@ -616,7 +640,8 @@ mod live {
             }
             n += 1;
             let p = actor::pos(a);
-            log!("dev: health {} {:.1}/{:.1} at {:.1} {:.1} {:.1}", describe(a), rd_f32(h + HEALTH), rd_f32(h + MAX_HEALTH), p[0], p[1], p[2]);
+            let vt = rd_u64(h).wrapping_sub(va(IMAGE_BASE)).wrapping_add(IMAGE_BASE);
+            log!("dev: health {} {:.1}/{:.1} at {:.1} {:.1} {:.1} interface vt {vt:#x}", describe(a), rd_f32(h + HEALTH), rd_f32(h + MAX_HEALTH), p[0], p[1], p[2]);
         }
         log!("dev: {n} actors with health");
     }
@@ -706,6 +731,14 @@ mod tests {
         assert_eq!(fix(40.0, 70.0, true), Fix::None, "the host has not applied our hit yet");
         assert_eq!(fix(0.0, 70.0, false), Fix::None, "dead here stays dead");
         assert_eq!(fix(f32::NAN, 70.0, false), Fix::None);
+    }
+
+    #[test]
+    fn a_figure_is_applied_again_only_after_a_second_unless_it_changes() {
+        assert!(retry_due(None, 50.0, 0));
+        assert!(!retry_due(Some((50.0, 100)), 50.0, 100 + RETRY_MS - 1));
+        assert!(retry_due(Some((50.0, 100)), 50.0, 100 + RETRY_MS));
+        assert!(retry_due(Some((50.0, 100)), 40.0, 101), "a new figure goes at once");
     }
 
     #[test]

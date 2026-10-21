@@ -12,7 +12,7 @@ struct Hook {
     original: Option<&'static AtomicU64>,
 }
 
-fn table() -> [Hook; 12] {
+fn table() -> [Hook; 13] {
     let f = |p: *const ()| p as u64;
     [
         Hook { name: "bind_joining_avatar", func: f(bind_joining_avatar as *const ()), original: None },
@@ -27,6 +27,7 @@ fn table() -> [Hook; 12] {
         Hook { name: "post_actor", func: f(post_actor as *const ()), original: Some(&ORIG_POST_ACTOR) },
         Hook { name: "post_broadcast2", func: f(post_broadcast2 as *const ()), original: Some(&ORIG_POST_BROADCAST2) },
         Hook { name: "take_damage", func: f(take_damage as *const ()), original: Some(&ORIG_TAKE_DAMAGE) },
+        Hook { name: "ai_tick", func: f(ai_tick as *const ()), original: Some(&ORIG_AI_TICK) },
     ]
 }
 
@@ -102,6 +103,7 @@ static ORIG_POST_BROADCAST: AtomicU64 = AtomicU64::new(0);
 static ORIG_POST_ACTOR: AtomicU64 = AtomicU64::new(0);
 static ORIG_POST_BROADCAST2: AtomicU64 = AtomicU64::new(0);
 static ORIG_TAKE_DAMAGE: AtomicU64 = AtomicU64::new(0);
+static ORIG_AI_TICK: AtomicU64 = AtomicU64::new(0);
 
 fn original_slot(name: &str) -> Option<&'static AtomicU64> {
     table().iter().find(|h| h.name == name).and_then(|h| h.original)
@@ -177,6 +179,19 @@ pub unsafe extern "system" fn take_damage(health: u64, amount: f32, source: u64,
         std::mem::transmute::<u64, TakeDamage>(o)(health, amount, source, flag, kind);
     }
     crate::health::after_damage(health);
+}
+
+type AiTick = unsafe extern "system" fn(u64);
+
+/// Detour of the behaviour controller's per-frame tick (`AiBehaviorControl` vtable `+0x80`,
+/// 0x140644700); the controller's actor is at `+8`.
+pub unsafe extern "system" fn ai_tick(control: u64) {
+    if !crate::ai::runs(rd_u64(control + 8)) {
+        return;
+    }
+    if let Some(o) = original("ai_tick") {
+        std::mem::transmute::<u64, AiTick>(o)(control);
+    }
 }
 
 /// Damages through the original, bypassing the detour.

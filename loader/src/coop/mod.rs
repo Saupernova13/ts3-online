@@ -139,6 +139,7 @@ pub unsafe fn update() {
     let slot1_owner = partners.iter().find(|(_, p)| p.slot == 1).map(|(id, _)| *id);
     let owner = slot1_owner.and_then(|id| net::remote_states().into_iter().find(|(r, s)| *r == id && s.level == level)).map(|(_, s)| (s.flags & flags::DOWN != 0, s.flags & flags::WAITING != 0));
     crate::respawn::update(mgr, owner);
+    crate::ai::note_frame(level);
     crate::perf::section("health", || crate::health::update(level, &players));
     crate::perf::section("progress", || crate::progress::update(level));
     let now = START.get_or_init(Instant::now).elapsed().as_micros() as u64;

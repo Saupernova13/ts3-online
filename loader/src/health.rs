@@ -400,7 +400,7 @@ impl HurtFollower {
 }
 
 #[cfg(windows)]
-pub use live::{after_damage, before_damage, dev_hit, dev_list, update};
+pub use live::{after_damage, before_damage, dev_hit, dev_list, is_enemy, update};
 
 /// Game-thread glue.
 #[cfg(windows)]
@@ -482,6 +482,11 @@ mod live {
     }
 
     /// An enemy's health interface: a plain `HealthTracker`, not an avatar's or companion's.
+    /// An actor with a plain `HealthTracker` (players use `TS3HealthTracker`).
+    pub unsafe fn is_enemy(actor: u64) -> bool {
+        actor != 0 && enemy_interface(actor) != 0
+    }
+
     unsafe fn enemy_interface(actor: u64) -> u64 {
         let iface = interface(actor);
         if iface != 0 && rd_u64(iface) == va(HEALTH_IF_VT) {

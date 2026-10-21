@@ -1,6 +1,7 @@
 //! ts3online: a `dinput8.dll` proxy that patches Toy Story 3 in memory before its CRT initializers run.
 #[cfg(windows)]
 pub mod actor;
+pub mod ai;
 pub mod checkpoint;
 pub mod config;
 pub mod copy;

@@ -307,6 +307,13 @@ empty lot, by calling the lot selector's OK with a stand-in screen and its own p
 (FINDINGS 10), so each copy runs its own construction. The `WorldEvent` the selector posts is not
 replayed: its id is allocated per call.
 
+**Enemy AI.** On an online client, the behaviour tree of each actor with a plain `HealthTracker`
+(Bullseye excepted: a horse answers to its rider on the rider's copy) does not tick
+(`AiBehaviorControl+0x80`, FINDINGS 10). Such an enemy only moves where the host's NPC stream
+puts it, and its hits on players come from the host (above). The role is noted once per frame, so
+the tick does not take the session lock; it lapses after 1 s without a note, and enemies think
+again. `enemyai on` in a command file turns it off.
+
 **Shared pause.** An owner sends `flags::PAUSED` while its game's own pause is on (`0x140b2c5a6`);
 other copies in the same level stop their game timer the way the level start hold does, without a
 menu, until no partner is paused, and pause again if their own menu closes meanwhile. START and BACK

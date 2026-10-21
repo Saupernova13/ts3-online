@@ -19,9 +19,9 @@ Relocation: `0x258` bytes at RVA `0x9582b0` -> a `0x400` buffer; fields from `+0
 | quadrants (optional) | 1 | Optional (`enable=quadrants` in `ts3online.ini`): every split request builds 4 quadrants, so each player keeps the same 16:9 quarter for streaming. | FINDINGS 2; PLAN rig design | not tested in game |
 | online (optional) | 3 | Optional (enabled by `net=` in `ts3online.ini`): every split request keeps one full-screen viewport for the local player, whatever the player count, so remote players join as partners without a split screen. | FINDINGS 9 | not tested in game |
 | instances (optional) | 3 | Optional (`enable=instances`): lets a second copy of the game run on the same PC for host/client play. | FINDINGS 9 | not tested in game |
-| hooks | 13 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5f | verified in game (teardown and the controls fix 2026-10-17) except level_player_setup (T8) |
+| hooks | 14 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5f | verified in game (teardown and the controls fix 2026-10-17) except level_player_setup (T8) |
 
-Total: 232 patches.
+Total: 233 patches.
 
 ## relocate
 
@@ -299,3 +299,4 @@ Total: 232 patches.
 | `0x1405bae40` | entry_caller -> `find_avatar_by_class`, 12 bytes | avatar-by-class lookup: unchanged except calls from the pick handler skip player-owned avatars |
 | `0x1405d32da` | call -> `refresh_player_controls` (prefix `4889f1`), 49 bytes | global controls-disabled add (0x1405d3200): slot-1 refresh block -> refresh slots 1..3; mgr in RSI |
 | `0x1405f8b3a` | call -> `refresh_player_controls` (prefix `4889e9`), 49 bytes | global controls-disabled remove (0x1405f8a70): slot-1 refresh block -> refresh slots 1..3; mgr in RBP |
+| `0x140644700` | detour -> `ai_tick`, 14 bytes, steals 14 | AiBehaviorControl per-frame tick (vtable +0x80, the behaviour tree): detour that skips it for enemies on an online client, which follow the host's copy instead, then calls the original through a trampoline |

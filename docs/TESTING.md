@@ -268,6 +268,48 @@ Start as for T11, both copies in Toy Box with no menu open. Send keys to the hos
    `coop: player 0 press 0xa000`.
 3. Pad play is unchanged (T10).
 
+## T25: missions and unlocks follow the host (passed 2026-10-21)
+
+Start as for T11, both copies in Toy Box, `dev_cmds=1`. `progress` logs every challenge and lock;
+`setprogress NAME STATE` sets one through the game's own setter.
+
+1. Host: `setprogress BL_BarberShop 5` and `setprogress DeliverCows1 3`. About 3 s later the client
+   logs `progress: lock BL_BarberShop 2 -> 5 (the host's)` and the challenge `2 -> 3`.
+2. Client: `setprogress BL_TailorShop 5`, `setprogress FindDinoBones 3`. The client logs
+   `progress: reporting ...`, the host `player 1 reports ...` and 3 s later `... (a client's change)`.
+3. Host: `setprogress DeliverCows1 4`. The client logs the pass with `CHALLENGE_PASS_MESSAGE`, the
+   unlocks that follow and `TriggerPrimedRewards`.
+4. Switch both to Train Rescue: no `progress:` reports (the lock table differs by level).
+5. Put the host save back.
+
+## T26: one player's pause pauses everyone (passed 2026-10-21)
+
+1. Host START: the pause menu opens on the host only; the client logs `hold: player(s) [0] paused;
+   game paused` and its screen stops without a menu. Host B: `hold: partners resumed`.
+2. The same from the client (pad 2).
+
+## T27: down together, restart together (passed 2026-10-21)
+
+Start as for T20 in Train Rescue. `down` in a command file downs the local player through the game's
+damage.
+
+1. `down` on both copies at once: each logs `respawn: local state 6, partner down|waiting 3`, then
+   state 5 and `StartingRespawn` (restart at the checkpoint).
+2. `down` on the client 0.6 s after the host: the host is held in state 4-6 while the partner is
+   down; both then restart as in 1.
+3. `down` on the host only: state 7 (respawn at the partner), no `StartingRespawn`.
+
+## T28: the host's enemies hurt clients (passed 2026-10-21, with dev hits)
+
+In Train Rescue, `healths` lists the level's enemies (`DrPorkchopUFO`); the bind line gives the
+stand-in's id. `hit ID AMOUNT SOURCE` damages an actor as if by `SOURCE`, `hit 0 ...` the local player.
+
+1. Host: `hit <client's stand-in> 15 <enemy>`: the host logs `Forward`, the client `the host's enemies
+   hit the local player for 15.0 (kind 0): 100.0 -> 85.0`.
+2. Client: `hit 0 25 <enemy>`: `Drop`, the client's health stays.
+3. Obstacles still hurt each copy's own riders (`health: dropped` counts only enemy hits and
+   stand-ins).
+
 ## T14: world events (H6b, passed 2026-10-19)
 
 Start as for T11 (`log_events=1` helps). Break crates and barrels (`EXP_*` actors) near the Toy Box

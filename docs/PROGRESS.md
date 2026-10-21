@@ -303,3 +303,21 @@ town.
   active code into the pad button of its first control (the throw trigger while carrying; BACK left
   out). In game (T24): Space on the host's keyboard made the host's avatar jump on the client's
   screen; E arrived as B+Y, as the game itself sets it.
+
+- 2026-10-21, missions, unlocks, pause, restarts and player damage (protocol 17): the game keeps
+  missions (challenges, 291 in Toy Box) and unlocks (728 locks: catalog packs, hats, buildings) as
+  named tables with a state each; the host pages both to clients, a client takes the host's state
+  where it is behind after a 3 s grace through the game's own setters, and reports its own changes,
+  which the host takes in turn (T25: a lock and a challenge each way, and a forced pass that ran the
+  pass message, the unlocks after it and the rewards on the client). The lock table turned out to be
+  level-scoped (Toy Box purchases read 0 in Train Rescue), which a first build reported as a client
+  change; pages and reports now carry the level. A partner's mirrored START had been opening the
+  pause menu on every copy; START and BACK now stay local, and the other copies pause their timer
+  while a partner's game is paused (T26). With remote partners a level never restarted at its
+  checkpoint (a stand-in is never down on this copy); each copy now shows its partner's down and
+  waiting status on the stand-in's `Respawn`, and the game restarts both copies together when both
+  are down (T27, three cases). Enemy hits on players are decided on the host: a client drops its own
+  enemies' hits, and the host forwards its enemies' hits on a client's stand-in (T28). Not done: what
+  a purchase builds in town (the lot event's id is per copy; the catalog's in-world trigger was not
+  found), and stopping a client's AI (its hits no longer count, so it only shows). Per-part timings
+  joined the `perf:` log; Train Rescue ran at 58 fps with 80-105 us of loader work per frame.

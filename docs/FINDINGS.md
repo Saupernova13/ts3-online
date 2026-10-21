@@ -757,3 +757,44 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `ControllerLayoutHUD` screen's per-player text only while no `TutorialTipScreen` is up and the
   player stands still. [unk] Whether either draws literal text or needs a string-table key; the level
   start hold shows no message yet.
+- **[obs] Missions are challenges (2026-10-21, `queries/166`-`170`, in game).** The `ChallengeManager`
+  `[0x140b2fdc8]` holds the challenge pointers at `+0x10`, count (i32) `+0x18`; `0x140614570(mgr,
+  &name)` finds one by name (`strcmp` on `challenge+0x80`, a `char*`). A challenge's state (i32) is
+  at `+0x94`: 0 and 1 not yet available, 2 available, 3 active, 4 passed, 5 failed, 6 presenting
+  (`0x140617e30` returns the field; the script getters `ChallengeManager_IsChallengeActive`/`Available`
+  test 3/2). `0x1406362f0(challenge, state)`, slot 19 of the challenge vtables, sets 2, 3, 4 or 5 the
+  way the game does (`CHALLENGE_AVAILABLE/ACTIVATE/PASS/FAIL_MESSAGE`, rewards for a pass, then
+  `ChallengeStateChanged`); any other value only writes `+0x1c0`. Toy Box on the test save has 291
+  challenges (104 in state 3, many of them always-on achievements); a story level has none. Passing
+  `DeliverCows1` this way on a client ran the pass message, the unlock that follows
+  (`FindCowBells` 0 -> 2, `BL_Barn` 0 -> 1) and the reward effects, as on the host.
+- **[obs] Unlocks (2026-10-21, `queries/171`-`172`, in game).** The unlock manager `[0x140b2fde0]` holds
+  728 locks (catalog packs, hats, building parts, buildings `BL_*`, cars, Toy Box cards), pointers at
+  `+0x10`, count in `[0x140b2c838]`; a lock's name `char*` is at `+0x10` (`0x1402aba50`), its state
+  (i32) at `+0xa0`: 0 locked, `+0x9c` (1, or 5) once unlocked, 2 for sale, 5 bought.
+  `0x1405f2480(lock, state)` sets it and posts `LockUnlocked` when it leaves 0; `0x140632cd0(mgr,
+  name, state)` does that only for a locked one. A catalog purchase (`0x1400eddf0`) adds the price to
+  stat `0xcc`, takes it off gold (`0x2f`), counts `0xcb`, posts `FirstSale` and sets the lock to 5.
+  The table is level-scoped: Toy Box loads the Toy Box purchases (`LockUnlocked` x 12 at its load)
+  and Train Rescue shows them at 0.
+- **[obs] Building a bought building (2026-10-21, `queries/173`-`174`).** The lot selector's OK
+  (`0x140114440`, `ScreenBuildingSelection::OnButtonOK`) posts `WorldEvent` to the lot actor with an
+  event id from `0x140615440(&0x140b2ff60, name)`, which allocates a new id per call and stores the
+  event's properties (`EventName=PurchaseBuilding`) under it, so the id differs between copies.
+  `FrontEndShowScreen` (`0x1404c53e0([0x140b2ef10], name, -1)`) opens `Catalog2` (the Toy Store) from
+  the loader, but it takes no input opened that way; the in-world trigger is in the level scripts.
+  [unk] The trigger, and what the lot does with the event.
+- **[obs] Checkpoints (2026-10-21, `queries/171`, `175`-`177`, in game).** `CheckpointSystem`
+  `[0x140b2bb78]`: up to 32 entries of 16 bytes from `+8` (interned name `char*`, started byte,
+  finished byte), the current index (i32, 32 for none) at `+0x224`. `StartCheckpoint`'s worker
+  `0x14056bb40(system, name, finish_previous, clear_finished)` marks one started and posts
+  `CheckpointStarted`. Train Rescue: `General_Reset`, `FlatCar`, `Check Point Down Hill`, reached
+  the same way on both copies while both ride. Respawn state 6 (`0x140645280`) sets `+0x1e`
+  (waiting); a waiting player whose partner's `Respawn` has `+0x1e` set goes to 5 (both restart at
+  the checkpoint, `StartingRespawn` with the player's id), and goes to 7 (respawn at the partner's
+  point) only while the partner's `+0x20` (down) is clear: a player is held while its partner is
+  down. The story pause menu has no restart entry.
+- **[obs] The pause flag (`queries/178`).** `0x140b2c5a6` (u8) is set by the `Pause` handler
+  (`0x1405d6360`) and cleared by `Unpause` (`0x1405f8d60`); the timer pause of the level start hold
+  leaves it alone. A partner's mirrored START opened the pause menu on the other copy as well (the
+  game's local co-op lets any player pause), and its B closed it.

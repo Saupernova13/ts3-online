@@ -92,6 +92,10 @@ pub mod flags {
     pub const RIDING: u32 = 1 << 12;
     /// the owner's game is paused (its pause menu or another pausing screen)
     pub const PAUSED: u32 = 1 << 13;
+    /// the owner's player is down (its `Respawn` component's down flag)
+    pub const DOWN: u32 = 1 << 14;
+    /// the owner's player is down and waiting for its partner (`Respawn` state 6)
+    pub const WAITING: u32 = 1 << 15;
 }
 
 /// One player's state, sent by its owner.

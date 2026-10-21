@@ -240,7 +240,7 @@ Start as for T20 and play into Train Rescue.
    copy logs `spawned horse` and shows the partner on a horse.
 4. Put the host save back.
 
-## T23: enemies have the host's health
+## T23: enemies have the host's health (passed 2026-10-21, with dev hits for the client)
 
 Start as for T20 and play into a level with enemies, both players near the same enemy.
 
@@ -251,7 +251,10 @@ Start as for T20 and play into a level with enemies, both players near the same 
    the enemy's health matches on both copies within a second.
 3. The enemy dies on both screens, whoever lands the last hit.
 4. `healths` in a command file lists every actor with health and its figure; the two copies agree
-   for every enemy that took damage.
+   for every enemy that took damage. `goto SLOT ID` puts a player next to an actor, and
+   `hit ID AMOUNT` damages it as the local player through the game's own take-damage (the same
+   path as a punch), which is how the client side was run: Toy Box's chickens (`Created_5`-`10`)
+   flee before a placed player's punch lands.
 5. Put the host save back.
 
 ## T14: world events (H6b, passed 2026-10-19)

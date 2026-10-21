@@ -726,4 +726,10 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   hit the horse for 1, and the horse passes 20 to its rider, source the horse; four hits downed an
   idle Woody. On the copy where a partner rides its summoned horse, the obstacles hit that horse and
   the stand-in as well. The level's enemies are not out at its start: the UFOs (`UFO`..`UFO9`),
-  `Dr_P` and the train's `TrainStub:*` actors are placed with unique reference names.
+  `Dr_P` and the train's `TrainStub:*` actors are placed with unique reference names. The level's
+  Jessie companion (`Jessie2` on `Bullseye2`) uses `TS3HealthTracker` like the players (interface
+  vtable `0x1407692b0`; the plain tracker's is `0x1407d9660`); on one copy it went to 0 health and
+  `Bullseye2` fell out of the world, while on the other both stayed at 100, and raw damage to the
+  companion did not keep it down. Toy Box's chickens (`Created_5`..`10`, reference names
+  `Created_<n>Spawn Actor<m>_<k>`, equal on both copies, ids not) have plain trackers, take 10 from a
+  punch, flee once hit and stay in the world at 0 health.

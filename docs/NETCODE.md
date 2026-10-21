@@ -271,12 +271,12 @@ enemy is applied as usual and the health it took is added to a running total per
 client sends to the host every 200 ms for 3 s after the last change (`Hits`, unreliable, repeated);
 the host applies whatever part of each total it has not applied yet, with the client's stand-in as
 the source and the raw damage kind (3: no multipliers or invulnerability), so a kill on the host
-runs the game's own death. The host watches every enemy that took damage this level and sends each
+runs the game's own death. Only actors with the plain `HealthTracker` count as enemies; avatars and the level's companions (Train Rescue's `Jessie2`) use `TS3HealthTracker` and are left to each copy. The host watches every enemy a player has hit this level (a hit from a player's avatar, or a client's report), not actors only the level damages, and sends each
 one's health when it changes and once a second (`Healths`, unreliable), a dead one every 250 ms for
 5 s even after the game removes it. A client follows each figure: higher local health takes the
 difference as raw damage, with the host's stand-in as the source (a kill plays the death), and lower
 local health is raised to the host's unless the client's own hits on that enemy are still being
-reported. Enemies are named by a `Key`: the hash of the reference name when that is unique on the
+reported; a figure already applied to an enemy is applied again only after 1 s, since some actors refuse damage or come straight back. Enemies are named by a `Key`: the hash of the reference name when that is unique on the
 sender, else the hash of the actor name and the position, matched to the nearest actor with that
 name within 4 m. Wire layouts (after the common header): `Healths` = level u32, count u8 (at most
 40), then count x (key, health f32); `Hits` = level u32, count u8 (at most 34), then count x (the

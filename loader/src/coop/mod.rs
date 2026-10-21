@@ -119,7 +119,7 @@ pub unsafe fn update() {
     let p0 = if mgr != 0 { slot_avatar(mgr, 0) } else { 0 };
     let loading = level != 0 && !track_load(switched, p0, &name);
     crate::hold::update(if loading || p0 == 0 { "" } else { &name });
-    let loading_flag = if loading { flags::LOADING } else { 0 };
+    let loading_flag = if loading { flags::LOADING } else { 0 } | if crate::hold::paused() { flags::PAUSED } else { 0 };
 
     let held = pad::take_local_pad();
     if p0 == 0 {

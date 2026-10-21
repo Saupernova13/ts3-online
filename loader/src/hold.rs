@@ -1,5 +1,7 @@
 //! Level start hold: a copy that has loaded a level pauses until every partner on its way there has
-//! loaded it too, so the level's scripts (intro, first enemies) start together.
+//! loaded it too, so the level's scripts (intro, first enemies) start together. Shared pause: while a
+//! partner in the same level has its game paused, this copy's game is paused too, as one game's
+//! pause stops both players in local co-op.
 use crate::net::proto::{flags, State};
 
 /// A hold never lasts longer than this.
@@ -49,6 +51,10 @@ pub struct Hold {
 }
 
 impl Hold {
+    pub fn holding(&self) -> bool {
+        self.since.is_some()
+    }
+
     /// Per frame; `level` is the play level this copy has loaded, 0 while loading or in a menu.
     /// A level is held at most once, when it has just loaded.
     pub fn update(&mut self, level: u32, peers: &[Peer], now_ms: u64) -> Option<Change> {
@@ -76,28 +82,81 @@ impl Hold {
     }
 }
 
+/// Shared pause: whether to pause or resume this copy for partners' pauses.
+#[derive(Debug, Default)]
+pub struct Shared {
+    /// this copy's game is paused for a partner
+    applied: bool,
+    menu_was: bool,
+}
+
+impl Shared {
+    /// Per frame. `menu`: this copy's own pause is on; `remote`: a partner in this level is paused.
+    /// Returns Some(on) to pause or resume the game.
+    pub fn update(&mut self, menu: bool, remote: bool) -> Option<bool> {
+        let closed = self.menu_was && !menu;
+        self.menu_was = menu;
+        if menu {
+            // the game's own pause owns the timer, and resumes it when it ends
+            self.applied = false;
+            return None;
+        }
+        if closed {
+            self.applied = false;
+        }
+        if remote != self.applied {
+            self.applied = remote;
+            return Some(remote);
+        }
+        None
+    }
+
+    pub fn applied(&self) -> bool {
+        self.applied
+    }
+}
+
 #[cfg(windows)]
-pub use live::{pause, update};
+pub use live::{pause, paused, update};
 
 #[cfg(windows)]
 mod live {
-    use super::{classify, Change, Hold, Peer, Why};
+    use super::{classify, Change, Hold, Peer, Shared, Why};
+    use crate::net::proto::flags;
     use crate::game::*;
     use crate::net::proto::level_hash;
     use crate::{log, net};
     use std::sync::{Mutex, OnceLock};
     use std::time::Instant;
 
-    static HOLD: Mutex<Option<Hold>> = Mutex::new(None);
+    static HOLD: Mutex<Option<(Hold, Shared)>> = Mutex::new(None);
     static START: OnceLock<Instant> = OnceLock::new();
 
     /// Per frame on the game thread; `loaded` is the play level that has finished loading, "" otherwise.
     pub unsafe fn update(loaded: &str) {
         let level = level_hash(loaded);
-        let peers: Vec<Peer> = if net::active() { net::remote_states().iter().map(|(_, s)| classify(level, s)).collect() } else { Vec::new() };
+        let states = if net::active() { net::remote_states() } else { Vec::new() };
+        let peers: Vec<Peer> = states.iter().map(|(_, s)| classify(level, s)).collect();
+        let paused_by: Vec<u8> = states.iter().filter(|(_, s)| level != 0 && s.level == level && s.flags & flags::PAUSED != 0).map(|(id, _)| *id).collect();
         let now = START.get_or_init(Instant::now).elapsed().as_millis() as u64;
         let Ok(mut guard) = HOLD.lock() else { return };
-        let hold = guard.get_or_insert_with(Hold::default);
+        let (hold, shared) = guard.get_or_insert_with(Default::default);
+        let holding = hold.holding();
+        match shared.update(paused(), !paused_by.is_empty()) {
+            Some(true) => {
+                log!("hold: player(s) {paused_by:?} paused; game paused");
+                if !holding {
+                    pause(true);
+                }
+            }
+            Some(false) => {
+                log!("hold: partners resumed; game resumed");
+                if !holding {
+                    pause(false);
+                }
+            }
+            None => {}
+        }
         match hold.update(level, &peers, now) {
             Some(Change::Hold { waiting }) => {
                 log!("hold: {loaded} loaded; game paused until {waiting} player(s) on the way have loaded it");
@@ -110,10 +169,17 @@ mod live {
                     Why::Left => "this copy left the level",
                 };
                 log!("hold: game resumed after {:.1} s: {why}", held_ms as f64 / 1000.0);
-                pause(false);
+                if !shared.applied() {
+                    pause(false);
+                }
             }
             None => {}
         }
+    }
+
+    /// This copy's own pause is on.
+    pub unsafe fn paused() -> bool {
+        rd_u8(va(GAME_PAUSED)) != 0
     }
 
     /// What the pause menu's handlers do to the game (`0x1405d6360`, `0x1405f8d60`; FINDINGS 10)
@@ -176,6 +242,26 @@ mod tests {
         assert_eq!(h.update(7, &[], 0), None);
         assert_eq!(h.update(8, &[Peer::Ready, Peer::Away], 10), None);
         assert_eq!(h.update(0, &[Peer::Coming], 20), None);
+    }
+
+    #[test]
+    fn a_partners_pause_pauses_this_copy_until_it_ends() {
+        let mut s = Shared::default();
+        assert_eq!(s.update(false, false), None);
+        assert_eq!(s.update(false, true), Some(true));
+        assert_eq!(s.update(false, true), None);
+        assert_eq!(s.update(false, false), Some(false));
+    }
+
+    #[test]
+    fn this_copys_own_pause_owns_the_timer() {
+        let mut s = Shared::default();
+        assert_eq!(s.update(false, true), Some(true));
+        assert_eq!(s.update(true, true), None, "the menu opened on top");
+        assert!(!s.applied());
+        assert_eq!(s.update(false, true), Some(true), "the menu closed and resumed the game: pause again");
+        assert_eq!(s.update(true, false), None);
+        assert_eq!(s.update(false, false), None, "nothing of ours to resume");
     }
 
     #[test]

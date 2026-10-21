@@ -90,6 +90,8 @@ pub mod flags {
     pub const LOADING: u32 = 1 << 11;
     /// the owner rides Bullseye (the game's `Riding` state)
     pub const RIDING: u32 = 1 << 12;
+    /// the owner's game is paused (its pause menu or another pausing screen)
+    pub const PAUSED: u32 = 1 << 13;
 }
 
 /// One player's state, sent by its owner.

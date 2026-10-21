@@ -133,6 +133,8 @@ game_fn!(exploder_break, 0x1_4065_2ac0, fn(exploder: u64) -> ());
 
 /// The game timer gameplay and scripted sequences run on (FINDINGS 10); an object, not a pointer.
 pub const GAME_TIMER: u64 = 0x1_4095_4820;
+/// Set (u8) while the game's own pause is on: the pause menu, and other screens that pause.
+pub const GAME_PAUSED: u64 = 0x1_40b2_c5a6;
 /// `timer_set_speed` speeds: 0 stops the timer, 9 is normal.
 pub const TIMER_STOPPED: u32 = 0;
 pub const TIMER_NORMAL: u32 = 9;

@@ -14,14 +14,17 @@ const ACTION_BUTTONS: u32 = 0xe300;
 const LT_BIT: u32 = 1 << 16;
 const RT_BIT: u32 = 1 << 17;
 const TRIGGER_PRESSED: u8 = 128;
+/// START and BACK (XInput): an owner's menus open on its own copy only; the others pause with it.
+const MENU_BUTTONS: u16 = 0x0030;
 
 /// An owner with controls off is on a screen (tutorial, shop, menu): its pad reaches the partner
-/// only if the partner's controls are off too, else the partner gets a neutral pad.
+/// only if the partner's controls are off too, else the partner gets a neutral pad. START and BACK
+/// never reach it.
 pub(super) fn mirror_input(st: State, partner_off: bool) -> State {
     if st.flags & flags::CONTROLS_OFF != 0 && !partner_off {
         State { pad: Pad::default(), ..st }
     } else {
-        st
+        State { pad: Pad { buttons: st.pad.buttons & !MENU_BUTTONS, ..st.pad }, ..st }
     }
 }
 
@@ -155,6 +158,9 @@ mod tests {
         // owner playing: the pad always goes through
         assert_eq!(mirror_input(st(0), false).pad, pad);
         assert_eq!(mirror_input(st(0), true).pad, pad);
+        // menus stay on the owner's copy
+        let menus = State { pad: Pad { buttons: 0x1030, ..pad }, ..st(0) };
+        assert_eq!(mirror_input(menus, false).pad.buttons, 0x1000);
     }
 
     #[test]

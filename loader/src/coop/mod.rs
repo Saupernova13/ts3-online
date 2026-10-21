@@ -55,6 +55,8 @@ static LOAD_COMPLETE: AtomicBool = AtomicBool::new(false);
 static AVATAR_SINCE: Mutex<Option<Instant>> = Mutex::new(None);
 static LOADED: AtomicBool = AtomicBool::new(false);
 static LOCAL_RIDING: AtomicBool = AtomicBool::new(false);
+/// Last pad read from a non-pad device, for logging changes.
+static LOCAL_KEYS: AtomicU32 = AtomicU32::new(0);
 static AUTO_RIDE: AtomicBool = AtomicBool::new(true);
 
 /// `net_steer`, `net_steer_x`, `net_steer_y`.
@@ -217,7 +219,12 @@ unsafe fn publish_local(mgr: u64, p0: u64, level: u32, own_class: Option<usize>,
         log!("coop: local player riding {riding}");
     }
     let carry = carry_flags(p0, true);
-    let held = pad::merge(held, device_pad(carry & flags::CARRYING != 0).unwrap_or_default());
+    let keys = device_pad(carry & flags::CARRYING != 0).unwrap_or_default();
+    let keys_now = keys.buttons as u32 | (keys.lt as u32) << 16 | (keys.rt as u32) << 24;
+    if LOCAL_KEYS.swap(keys_now, Ordering::Relaxed) != keys_now {
+        log!("coop: keyboard buttons {:#06x} lt {} rt {}", keys.buttons, keys.lt, keys.rt);
+    }
+    let held = pad::merge(held, keys);
     let state_flags = carry | extra_flags | if controls { 0 } else { flags::CONTROLS_OFF } | if riding { flags::RIDING } else { 0 };
     let mut players: Vec<(u64, u8)> = partners.iter().filter(|(_, p)| p.avatar != 0).map(|(id, p)| (p.actor_id, *id)).collect();
     if let Some(me) = net::local_id() {

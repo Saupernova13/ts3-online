@@ -31,6 +31,8 @@ pub enum Cmd {
     AutoRide(bool),
     /// log every actor with a health interface
     Healths,
+    /// give a player an input device (0 is the keyboard)
+    Assign { player: u32, device: u32 },
     /// place a slot's avatar 1.5 m from an actor (by id), facing it
     Goto { slot: u64, actor: u64 },
     /// damage an actor (by id) as the local player, through the game's take-damage
@@ -110,6 +112,13 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
             _ => Err("autoride needs on or off".into()),
         },
         "healths" => Ok(Cmd::Healths),
+        "assign" => {
+            let (p, d) = split_arg(rest);
+            match (p.parse(), d.and_then(|d| d.parse().ok())) {
+                (Ok(player), Some(device)) => Ok(Cmd::Assign { player, device }),
+                _ => Err("assign needs a player and a device".into()),
+            }
+        }
         "hit" => {
             let (id, amount) = split_arg(rest);
             let actor = crate::hex::parse_u64(id).map_err(|e| format!("actor id: {e}"))?;
@@ -183,6 +192,10 @@ unsafe fn run(cmd: &Cmd) {
             crate::coop::set_auto_ride(*on);
         }
         Cmd::Healths => crate::health::dev_list(),
+        Cmd::Assign { player, device } => {
+            input_assign(global(INPUT_PTR), *player, *device);
+            log!("dev: player {player} assigned device {device}");
+        }
         Cmd::Hit { actor, amount } => crate::health::dev_hit(*actor, *amount as f32),
         Cmd::Goto { slot, actor } => {
             let avatar = slot_avatar(global(MGR_PTR), *slot);
@@ -240,6 +253,8 @@ mod tests {
         assert_eq!(parse("event_actor Hit 0x10 STR"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x10, arg: Some("STR".into()) }));
         assert_eq!(parse("post5 StartPickup 0 317 0x28c"), Ok(Cmd::Post5 { name: "StartPickup".into(), a: 0, b: 0x317, actor: 0x28c }));
         assert_eq!(parse("healths"), Ok(Cmd::Healths));
+        assert_eq!(parse("assign 0 0"), Ok(Cmd::Assign { player: 0, device: 0 }));
+        assert!(parse("assign 0").is_err());
         assert_eq!(parse("goto 0 1f2"), Ok(Cmd::Goto { slot: 0, actor: 0x1f2 }));
         assert!(parse("goto 0").is_err());
         assert_eq!(parse("hit 404 10"), Ok(Cmd::Hit { actor: 0x404, amount: 10 }));

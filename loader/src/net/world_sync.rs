@@ -22,7 +22,7 @@ const MAX_PROGRESS_REPORTS_IN: usize = 32;
 #[derive(Default)]
 pub struct ProgressInbox {
     pages: Vec<Page>,
-    reports: Vec<(u8, Vec<(u8, u32, u8)>)>,
+    reports: Vec<(u8, u32, Vec<(u8, u32, u8)>)>,
 }
 
 impl ProgressInbox {
@@ -36,13 +36,13 @@ impl ProgressInbox {
         std::mem::take(&mut self.pages)
     }
 
-    pub fn on_report(&mut self, client: u8, entries: Vec<(u8, u32, u8)>) {
+    pub fn on_report(&mut self, client: u8, level: u32, entries: Vec<(u8, u32, u8)>) {
         if !entries.is_empty() && self.reports.len() < MAX_PROGRESS_REPORTS_IN {
-            self.reports.push((client, entries));
+            self.reports.push((client, level, entries));
         }
     }
 
-    pub fn take_reports(&mut self) -> Vec<(u8, Vec<(u8, u32, u8)>)> {
+    pub fn take_reports(&mut self) -> Vec<(u8, u32, Vec<(u8, u32, u8)>)> {
         std::mem::take(&mut self.reports)
     }
 }

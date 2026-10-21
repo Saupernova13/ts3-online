@@ -185,9 +185,9 @@ pub enum Msg {
     /// Client to host, unreliable, repeated: (client's actor id, key, health its player took off it this level).
     Hits { level: u32, entries: Vec<(u32, Key, f32)> },
     /// Host to clients, unreliable: one page of a progress table (`progress::Page`), as (name hash, state).
-    Progress { kind: u8, page: u8, pages: u8, entries: Vec<(u32, u8)> },
+    Progress { level: u32, kind: u8, page: u8, pages: u8, entries: Vec<(u32, u8)> },
     /// Client to host, unreliable, repeated: its own progress changes as (kind, name hash, state).
-    ProgressReport { entries: Vec<(u8, u32, u8)> },
+    ProgressReport { level: u32, entries: Vec<(u8, u32, u8)> },
     /// Connect menu's password test, tagged with it; answered by `CheckReply` (same nonce) or `REFUSE_KEY`.
     Check { nonce: u64 },
     CheckReply { nonce: u64 },
@@ -436,8 +436,9 @@ pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
                 o.extend_from_slice(&total.to_le_bytes());
             }
         }
-        Msg::Progress { kind, page, pages, entries } => {
+        Msg::Progress { level, kind, page, pages, entries } => {
             o.push(T_PROGRESS);
+            o.extend_from_slice(&level.to_le_bytes());
             o.extend_from_slice(&[*kind, *page, *pages]);
             let entries = &entries[..entries.len().min(MAX_PROGRESS)];
             o.push(entries.len() as u8);
@@ -446,8 +447,9 @@ pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
                 o.push(*state);
             }
         }
-        Msg::ProgressReport { entries } => {
+        Msg::ProgressReport { level, entries } => {
             o.push(T_PROGRESS_REPORT);
+            o.extend_from_slice(&level.to_le_bytes());
             let entries = &entries[..entries.len().min(MAX_PROGRESS_REPORT)];
             o.push(entries.len() as u8);
             for (kind, hash, state) in entries {
@@ -699,6 +701,7 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
                 Msg::Hits { level, entries }
             }
             T_PROGRESS => {
+                let level = r.u32()?;
                 let (kind, page, pages) = (r.u8()?, r.u8()?, r.u8()?);
                 let n = r.u8()? as usize;
                 if kind as usize >= crate::progress::KINDS || page >= pages || n > MAX_PROGRESS {
@@ -708,9 +711,10 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
                 for _ in 0..n {
                     entries.push((r.u32()?, r.u8()?));
                 }
-                Msg::Progress { kind, page, pages, entries }
+                Msg::Progress { level, kind, page, pages, entries }
             }
             T_PROGRESS_REPORT => {
+                let level = r.u32()?;
                 let n = r.u8()? as usize;
                 if n > MAX_PROGRESS_REPORT {
                     return None;
@@ -723,7 +727,7 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
                     }
                     entries.push((kind, r.u32()?, r.u8()?));
                 }
-                Msg::ProgressReport { entries }
+                Msg::ProgressReport { level, entries }
             }
             T_CHECK => Msg::Check { nonce: r.u64()? },
             T_CHECK_REPLY => Msg::CheckReply { nonce: r.u64()? },
@@ -826,9 +830,9 @@ mod tests {
             Msg::Npcs { level: 0, entries: Vec::new() },
             Msg::Healths { level: 3, entries: vec![(hk(1), 70.5), (Key { refh: 0, nameh: 9, pos: [1.0, -2.0, 3.5] }, 0.0)] },
             Msg::Hits { level: 3, entries: vec![(0x7c2, hk(1), 30.0)] },
-            Msg::Progress { kind: 1, page: 2, pages: 3, entries: vec![(0xdead_beef, 5), (1, 0)] },
-            Msg::Progress { kind: 0, page: 0, pages: 1, entries: Vec::new() },
-            Msg::ProgressReport { entries: vec![(0, 7, 4), (1, u32::MAX, 5)] },
+            Msg::Progress { level: 9, kind: 1, page: 2, pages: 3, entries: vec![(0xdead_beef, 5), (1, 0)] },
+            Msg::Progress { level: 0, kind: 0, page: 0, pages: 1, entries: Vec::new() },
+            Msg::ProgressReport { level: 9, entries: vec![(0, 7, 4), (1, u32::MAX, 5)] },
             Msg::Check { nonce: 0x0123_4567_89ab_cdef },
             Msg::CheckReply { nonce: u64::MAX },
         ]

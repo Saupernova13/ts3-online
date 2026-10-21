@@ -174,13 +174,13 @@ pub fn take_progress() -> Vec<crate::progress::Page> {
     with(|s| s.take_progress()).unwrap_or_default()
 }
 
-/// Client: its own progress changes as (kind, name hash, state).
-pub fn send_progress_report(entries: &[(u8, u32, u8)]) {
-    with(|s| s.send_progress_report(entries));
+/// Client: its own progress changes in `level` as (kind, name hash, state).
+pub fn send_progress_report(level: u32, entries: &[(u8, u32, u8)]) {
+    with(|s| s.send_progress_report(level, entries));
 }
 
-/// Host: (client, reported changes) since the last call.
-pub fn take_progress_reports() -> Vec<(u8, Vec<(u8, u32, u8)>)> {
+/// Host: (client, level, reported changes) since the last call.
+pub fn take_progress_reports() -> Vec<(u8, u32, Vec<(u8, u32, u8)>)> {
     with(|s| s.take_progress_reports()).unwrap_or_default()
 }
 

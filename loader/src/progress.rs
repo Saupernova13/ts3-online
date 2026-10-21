@@ -22,17 +22,20 @@ pub const REPORT_KEEP_MS: u64 = 10_000;
 /// (kind, name hash)
 pub type Id = (u8, u32);
 
-/// Whether a copy showing `local` should take `other`. Challenges only move forward through
-/// available (2), active (3) and passed (4); failed (5) and presenting (6) pass by on their own.
+/// Whether a copy showing `local` should take `other`. Challenges only move forward to available
+/// (2), active (3) and passed (4), the states the game's setter takes; the rest pass by on their own.
+/// Unlocks are never locked again.
 pub fn behind(kind: u8, local: u8, other: u8) -> bool {
     match kind {
-        CHALLENGE => local < other && other <= 4,
-        _ => local != other,
+        CHALLENGE => local < other && (2..=4).contains(&other),
+        _ => local != other && other != 0,
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page {
+    /// level hash: unlock states differ between levels (Toy Box purchases are not loaded in a story level)
+    pub level: u32,
     pub kind: u8,
     pub page: u8,
     pub pages: u8,
@@ -50,7 +53,7 @@ pub struct Pager {
 impl Pager {
     /// Every page whose content changed since it was last sent, plus the next page in turn each
     /// `REFRESH_MS`. Tables need not be sorted.
-    pub fn pages(&mut self, now: u64, tables: [&[(u32, u8)]; KINDS]) -> Vec<Page> {
+    pub fn pages(&mut self, now: u64, level: u32, tables: [&[(u32, u8)]; KINDS]) -> Vec<Page> {
         let mut all = Vec::new();
         for (kind, table) in tables.iter().enumerate() {
             let mut t = table.to_vec();
@@ -59,7 +62,7 @@ impl Pager {
             let pages = chunks.len() as u8;
             for (i, c) in chunks.into_iter().enumerate() {
                 let changed = self.sent[kind].get(i) != Some(&c);
-                all.push((changed, Page { kind: kind as u8, page: i as u8, pages, entries: c }));
+                all.push((changed, Page { level, kind: kind as u8, page: i as u8, pages, entries: c }));
             }
         }
         let refresh = self.last_refresh.is_none_or(|t| now.saturating_sub(t) >= REFRESH_MS) && !all.is_empty();
@@ -253,6 +256,8 @@ mod live {
         reconciler: Reconciler,
         /// host: reported changes as id -> (state, received)
         reports: HashMap<Id, (u8, u64)>,
+        /// client: what it reported at the last poll
+        last_report: Vec<(Id, u8)>,
         forced: u32,
         reported: u32,
         unknown: u32,
@@ -317,12 +322,13 @@ mod live {
         let Ok(mut guard) = LIVE.lock() else { return };
         let live = guard.get_or_insert_with(Live::default);
         if live.level != level {
-            live.level = level;
-            live.entered = Some(Instant::now());
+            // the tables are reloaded with the level, and each copy changes level on its own time
+            *live = Live { level, entered: Some(Instant::now()), forced: live.forced, reported: live.reported, unknown: live.unknown, ..Live::default() };
         }
-        let pages = net::take_progress();
-        for p in &pages {
-            live.mirror.on_page(p);
+        for p in net::take_progress() {
+            if p.level == level {
+                live.mirror.on_page(&p);
+            }
         }
         if level == 0 || live.last_poll.is_some_and(|t| t.elapsed() < POLL) {
             return;
@@ -332,9 +338,9 @@ mod live {
         let table = snapshot();
         let settled = live.entered.is_some_and(|t| t.elapsed() >= SETTLE);
         if net::is_client() {
-            client(live, now, &table, settled);
+            client(live, level, now, &table, settled);
         } else {
-            host(live, now, &table, settled);
+            host(live, level, now, &table, settled);
         }
         if live.last_log.is_none_or(|t| t.elapsed() >= LOG_EVERY) && live.forced + live.reported + live.unknown > 0 {
             live.last_log = Some(Instant::now());
@@ -342,14 +348,17 @@ mod live {
         }
     }
 
-    unsafe fn host(live: &mut Live, now: u64, table: &[(Id, u8, u64)], settled: bool) {
+    unsafe fn host(live: &mut Live, level: u32, now: u64, table: &[(Id, u8, u64)], settled: bool) {
         let mut tables: [Vec<(u32, u8)>; KINDS] = Default::default();
         for (id, s, _) in table {
             tables[id.0 as usize].push((id.1, *s));
         }
-        let pages = live.pager.pages(now, [&tables[0], &tables[1]]);
+        let pages = live.pager.pages(now, level, [&tables[0], &tables[1]]);
         net::send_progress(&pages);
-        for (client, entries) in net::take_progress_reports() {
+        for (client, l, entries) in net::take_progress_reports() {
+            if l != level {
+                continue;
+            }
             for (kind, hash, state) in entries {
                 if !live.reports.contains_key(&(kind, hash)) {
                     log!("progress: player {client} reports {} {hash:#010x} at {state}", if kind == CHALLENGE { "challenge" } else { "lock" });
@@ -376,23 +385,24 @@ mod live {
         }
     }
 
-    unsafe fn client(live: &mut Live, now: u64, table: &[(Id, u8, u64)], settled: bool) {
-        let local: Vec<(Id, u8)> = table.iter().map(|(id, s, _)| (*id, *s)).collect();
-        let report = live.reporter.step(now, &local, &live.mirror);
-        if !report.is_empty() && settled {
-            if report.len() as u32 != live.reported {
-                for (id, s) in &report {
-                    if let Some(&(_, _, ptr)) = table.iter().find(|(i, _, _)| i == id) {
-                        log!("progress: reporting {} at {s}", describe(*id, ptr));
-                    }
-                }
-            }
-            live.reported = report.len() as u32;
-            net::send_progress_report(&report.iter().map(|((k, h), s)| (*k, *h, *s)).collect::<Vec<_>>());
-        }
+    unsafe fn client(live: &mut Live, level: u32, now: u64, table: &[(Id, u8, u64)], settled: bool) {
         if !settled {
             return;
         }
+        let local: Vec<(Id, u8)> = table.iter().map(|(id, s, _)| (*id, *s)).collect();
+        let report = live.reporter.step(now, &local, &live.mirror);
+        for (id, s) in &report {
+            if !live.last_report.contains(&(*id, *s)) {
+                live.reported += 1;
+                if let Some(&(_, _, ptr)) = table.iter().find(|(i, _, _)| i == id) {
+                    log!("progress: reporting {} at {s}", describe(*id, ptr));
+                }
+            }
+        }
+        if !report.is_empty() {
+            net::send_progress_report(level, &report.iter().map(|((k, h), s)| (*k, *h, *s)).collect::<Vec<_>>());
+        }
+        live.last_report = report;
         for &(id, _, ptr) in table {
             if !live.mirror.complete(id.0) || live.reporter.pending(id) {
                 continue;
@@ -442,36 +452,38 @@ mod tests {
         assert!(behind(CHALLENGE, 2, 3) && behind(CHALLENGE, 3, 4) && behind(CHALLENGE, 0, 2));
         assert!(!behind(CHALLENGE, 4, 3), "never back");
         assert!(!behind(CHALLENGE, 3, 5) && !behind(CHALLENGE, 2, 6), "failed and presenting are not forced");
+        assert!(!behind(CHALLENGE, 0, 1), "the setter does not take 1");
         assert!(!behind(CHALLENGE, 3, 3));
-        assert!(behind(LOCK, 5, 0) && behind(LOCK, 0, 2) && !behind(LOCK, 2, 2));
+        assert!(behind(LOCK, 5, 1) && behind(LOCK, 0, 2) && !behind(LOCK, 2, 2));
+        assert!(!behind(LOCK, 5, 0), "never locked again");
     }
 
     #[test]
     fn the_pager_sends_everything_once_then_changes_at_once_and_one_page_in_turn() {
         let mut p = Pager::default();
         let big: Vec<(u32, u8)> = (0..(PAGE as u32 + 5)).rev().map(|h| (h, 0)).collect();
-        let first = p.pages(0, [&big, &[(7, 1)]]);
+        let first = p.pages(0, 1, [&big, &[(7, 1)]]);
         assert_eq!(first.len(), 3, "both pages of the challenges and the one of the locks");
         assert_eq!((first[0].page, first[0].pages, first[0].entries[0]), (0, 2, (0, 0)), "sorted by hash");
-        assert!(p.pages(10, [&big, &[(7, 1)]]).is_empty(), "nothing changed and no refresh due");
-        let r = p.pages(REFRESH_MS, [&big, &[(7, 1)]]);
+        assert!(p.pages(10, 1, [&big, &[(7, 1)]]).is_empty(), "nothing changed and no refresh due");
+        let r = p.pages(REFRESH_MS, 1, [&big, &[(7, 1)]]);
         assert_eq!(r.len(), 1, "one page in turn");
-        let next = p.pages(2 * REFRESH_MS, [&big, &[(7, 1)]]);
+        let next = p.pages(2 * REFRESH_MS, 1, [&big, &[(7, 1)]]);
         assert_ne!((r[0].kind, r[0].page), (next[0].kind, next[0].page), "the turn moves on");
-        let changed = p.pages(2 * REFRESH_MS + 1, [&big, &[(7, 5)]]);
-        assert_eq!(changed, vec![Page { kind: LOCK, page: 0, pages: 1, entries: vec![(7, 5)] }]);
+        let changed = p.pages(2 * REFRESH_MS + 1, 1, [&big, &[(7, 5)]]);
+        assert_eq!(changed, vec![Page { level: 1, kind: LOCK, page: 0, pages: 1, entries: vec![(7, 5)] }]);
     }
 
     #[test]
     fn the_mirror_is_complete_once_every_page_arrived() {
         let mut m = Mirror::default();
-        m.on_page(&Page { kind: CHALLENGE, page: 1, pages: 2, entries: vec![(9, 4)] });
+        m.on_page(&Page { level: 1, kind: CHALLENGE, page: 1, pages: 2, entries: vec![(9, 4)] });
         assert!(!m.complete(CHALLENGE));
         assert_eq!(m.get((CHALLENGE, 9)), Some(4));
-        m.on_page(&Page { kind: CHALLENGE, page: 0, pages: 2, entries: vec![(1, 2)] });
+        m.on_page(&Page { level: 1, kind: CHALLENGE, page: 0, pages: 2, entries: vec![(1, 2)] });
         assert!(m.complete(CHALLENGE) && !m.complete(LOCK));
-        m.on_page(&Page { kind: 5, page: 0, pages: 1, entries: vec![(1, 2)] });
-        m.on_page(&Page { kind: LOCK, page: 1, pages: 1, entries: vec![(1, 2)] });
+        m.on_page(&Page { level: 1, kind: 5, page: 0, pages: 1, entries: vec![(1, 2)] });
+        m.on_page(&Page { level: 1, kind: LOCK, page: 1, pages: 1, entries: vec![(1, 2)] });
         assert!(!m.complete(LOCK), "bad pages are ignored");
     }
 
@@ -493,8 +505,8 @@ mod tests {
     #[test]
     fn a_client_reports_its_own_changes_until_the_host_shows_them_but_not_forced_ones() {
         let mut host = Mirror::default();
-        host.on_page(&Page { kind: CHALLENGE, page: 0, pages: 1, entries: vec![(1, 2), (2, 2)] });
-        host.on_page(&Page { kind: LOCK, page: 0, pages: 1, entries: vec![(1, 0)] });
+        host.on_page(&Page { level: 1, kind: CHALLENGE, page: 0, pages: 1, entries: vec![(1, 2), (2, 2)] });
+        host.on_page(&Page { level: 1, kind: LOCK, page: 0, pages: 1, entries: vec![(1, 0)] });
         let mut r = Reporter::default();
         let base = [((CHALLENGE, 1), 2), ((CHALLENGE, 2), 2), ((LOCK, 1), 0)];
         assert!(r.step(0, &base, &host).is_empty(), "the first look is no change");
@@ -502,7 +514,7 @@ mod tests {
         let moved = [((CHALLENGE, 1), 4), ((CHALLENGE, 2), 3), ((LOCK, 1), 5)];
         assert_eq!(r.step(10, &moved, &host), vec![((CHALLENGE, 1), 4), ((LOCK, 1), 5)]);
         assert!(r.pending((CHALLENGE, 1)) && !r.pending((CHALLENGE, 2)));
-        host.on_page(&Page { kind: CHALLENGE, page: 0, pages: 1, entries: vec![(1, 4), (2, 3)] });
+        host.on_page(&Page { level: 1, kind: CHALLENGE, page: 0, pages: 1, entries: vec![(1, 4), (2, 3)] });
         assert_eq!(r.step(20, &moved, &host), vec![((LOCK, 1), 5)], "the host shows the pass");
         assert!(r.step(10 + REPORT_KEEP_MS, &moved, &host).is_empty(), "given up");
     }
@@ -510,7 +522,7 @@ mod tests {
     #[test]
     fn a_challenge_falling_back_on_the_client_is_not_reported() {
         let mut host = Mirror::default();
-        host.on_page(&Page { kind: CHALLENGE, page: 0, pages: 1, entries: vec![(1, 3)] });
+        host.on_page(&Page { level: 1, kind: CHALLENGE, page: 0, pages: 1, entries: vec![(1, 3)] });
         let mut r = Reporter::default();
         r.step(0, &[((CHALLENGE, 1), 3)], &host);
         assert!(r.step(1, &[((CHALLENGE, 1), 2)], &host).is_empty());

@@ -361,7 +361,7 @@ impl Session {
             return;
         }
         for p in pages {
-            let msg = Msg::Progress { kind: p.kind, page: p.page, pages: p.pages, entries: p.entries.clone() };
+            let msg = Msg::Progress { level: p.level, kind: p.kind, page: p.page, pages: p.pages, entries: p.entries.clone() };
             for i in 0..self.peers.len() {
                 let addr = self.peers[i].addr;
                 self.send(addr, &msg);
@@ -374,18 +374,18 @@ impl Session {
     }
 
     /// Client, unreliable: the caller repeats pending changes.
-    pub fn send_progress_report(&mut self, entries: &[(u8, u32, u8)]) {
+    pub fn send_progress_report(&mut self, level: u32, entries: &[(u8, u32, u8)]) {
         let Some(host) = self.host_addr else { return };
         if self.link != Link::Connected {
             return;
         }
         for chunk in entries.chunks(proto::MAX_PROGRESS_REPORT) {
-            self.send(host, &Msg::ProgressReport { entries: chunk.to_vec() });
+            self.send(host, &Msg::ProgressReport { level, entries: chunk.to_vec() });
         }
     }
 
-    /// Host: (client, reported changes).
-    pub fn take_progress_reports(&mut self) -> Vec<(u8, Vec<(u8, u32, u8)>)> {
+    /// Host: (client, level, reported changes).
+    pub fn take_progress_reports(&mut self) -> Vec<(u8, u32, Vec<(u8, u32, u8)>)> {
         self.progress.take_reports()
     }
 
@@ -543,7 +543,7 @@ impl Session {
             Msg::WorldAck { level, seq } => self.world.on_ack(from, level, seq),
             Msg::WorldReport { level, event, refname } => self.world.on_report(level, event, refname),
             Msg::Hits { level, entries } => self.world.on_hits(id, level, entries),
-            Msg::ProgressReport { entries } => self.progress.on_report(id, entries),
+            Msg::ProgressReport { level, entries } => self.progress.on_report(id, level, entries),
             Msg::SaveRequest { have } => self.serve_save(i, &have, now),
             Msg::LevelRequest { name } if !name.is_empty() && proto::valid_level(&name) => self.events.push(Event::LevelRequested { id, name }),
             Msg::Spend { spends } => {
@@ -685,7 +685,7 @@ impl Session {
             }
             Msg::Npcs { level, entries } => self.world.on_npcs(level, entries),
             Msg::Healths { level, entries } => self.world.on_healths(level, entries),
-            Msg::Progress { kind, page, pages, entries } => self.progress.on_page(Page { kind, page, pages, entries }),
+            Msg::Progress { level, kind, page, pages, entries } => self.progress.on_page(Page { level, kind, page, pages, entries }),
             Msg::SaveInfo { total, crc } if self.want_save && !self.save_done => {
                 if total == 0 {
                     self.save_done = true;

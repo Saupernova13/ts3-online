@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     defaults:
       run:
@@ -22,19 +22,60 @@ jobs:
           path: |
             ~/.cargo/registry
             loader/target
-          key: cargo-${{ hashFiles('loader/Cargo.lock') }}
+            setup/target
+          key: cargo-win-${{ hashFiles('loader/Cargo.lock', 'setup/Cargo.lock') }}
       - name: Test
-        working-directory: loader
-        run: cargo test
+        run: |
+          (cd loader && cargo test)
+          (cd setup && cargo test)
       - name: Build
-        working-directory: loader
-        run: cargo build --release
+        run: |
+          (cd loader && cargo build --release)
+          (cd setup && cargo build --release)
+          mkdir -p out && cp loader/target/release/dinput8.dll setup/target/release/ts3-online-setup.exe out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/
+
+  linux:
+    # the oldest supported runner, so the setup program runs on older glibc too (SteamOS, Ubuntu LTS)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            setup/target
+          key: cargo-linux-${{ hashFiles('loader/Cargo.lock', 'setup/Cargo.lock') }}
+      - name: Test and build
+        working-directory: setup
+        run: |
+          cargo test
+          cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: setup/target/release/ts3-online-setup
+
+  package:
+    needs: [windows, linux]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: built
       - name: Package
+        # zipped here so the Linux program keeps its executable bit
         run: |
           mkdir -p dist/ts3-online
-          cp loader/target/release/dinput8.dll tools/install.ps1 tools/Setup.cmd tools/Update.cmd tools/Uninstall.cmd tools/local-coop.ps1 tools/LocalCoop.cmd LICENSE dist/ts3-online/
+          cp built/windows/dinput8.dll built/windows/ts3-online-setup.exe built/linux/ts3-online-setup dist/ts3-online/
+          chmod +x dist/ts3-online/ts3-online-setup
+          cp tools/local-coop.ps1 tools/LocalCoop.cmd LICENSE dist/ts3-online/
           cp docs/PLAYING.md dist/ts3-online/README.md
-          cd dist && 7z a -tzip ts3-online.zip ts3-online >/dev/null
+          cd dist && zip -qr ts3-online.zip ts3-online
       - uses: actions/upload-artifact@v4
         with:
           name: ts3-online
@@ -44,7 +85,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Update.cmd compares the tag with the version built into the DLL
+          # the setup program compares the tag with the version built into the DLL
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' loader/Cargo.toml | head -1)
-          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match Cargo version $version"; exit 1; }
+          setup=$(sed -n 's/^version = "\(.*\)"/\1/p' setup/Cargo.toml | head -1)
+          [ "v$version" = "$GITHUB_REF_NAME" ] && [ "$setup" = "$version" ] || { echo "tag $GITHUB_REF_NAME, loader $version, setup $setup disagree"; exit 1; }
           gh release create "$GITHUB_REF_NAME" dist/ts3-online.zip --title "$GITHUB_REF_NAME" --notes-file docs/PLAYING.md

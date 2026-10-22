@@ -185,10 +185,10 @@ fn log_event(e: &Event, now_ms: u64, rtt_logged: &mut HashMap<u8, u64>) {
 
 /// Client: writes the host save into the session folder and unblocks the save redirect.
 fn store_received_save(data: &[u8]) {
-    let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let base = copy::base();
     let app_data = std::env::var("APPDATA").unwrap_or_default();
-    let session_dir = copy::savedata_dir(&copy::session_root(&local));
-    let normal_dir = copy::savedata_dir(&copy::normal_root(&app_data, &local, COPY.load(Ordering::Relaxed)));
+    let session_dir = copy::savedata_dir(&copy::session_root(&base));
+    let normal_dir = copy::savedata_dir(&copy::normal_root(&app_data, &base, COPY.load(Ordering::Relaxed)));
     match install_session_save(data, &session_dir, &normal_dir) {
         Ok(path) => {
             log!("net: save: received {} bytes (crc ok) -> {}", data.len(), path.display());

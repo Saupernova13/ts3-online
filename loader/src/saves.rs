@@ -82,31 +82,27 @@ fn ansi_path(root: &Path) -> Result<Vec<u8>, String> {
 }
 
 /// None defers to Windows. The first answer is kept, so the folder cannot switch under the game.
-fn redirect_root(local: &str) -> Option<PathBuf> {
+fn redirect_root(base: &Path) -> Option<PathBuf> {
     let decision = *DECISION.get_or_init(|| {
         let d = net::wait_decision(WAIT);
         if d == net::Decision::Session {
             net::set_plays_session();
-            log!("saves: client session folder {}", copy::session_root(local).display());
+            log!("saves: client session folder {}", copy::session_root(base).display());
         } else {
             log!("saves: normal save folder ({})", net::describe());
         }
         d
     });
     match decision {
-        net::Decision::Session => Some(copy::session_root(local)),
-        net::Decision::Normal if COPY.load(Ordering::Relaxed) > 1 => Some(copy::save_root(local, COPY.load(Ordering::Relaxed))),
+        net::Decision::Session => Some(copy::session_root(base)),
+        net::Decision::Normal if COPY.load(Ordering::Relaxed) > 1 => Some(copy::save_root(base, COPY.load(Ordering::Relaxed))),
         net::Decision::Normal => None,
     }
 }
 
 /// The redirected folder as the game reads it; Ok(None) when this copy keeps the real folder.
 fn redirected_path() -> Result<Option<(PathBuf, Vec<u8>)>, String> {
-    let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
-    let Some(root) = redirect_root(&local) else { return Ok(None) };
-    if local.is_empty() {
-        return Err("LOCALAPPDATA is not set".into());
-    }
+    let Some(root) = redirect_root(&copy::base()) else { return Ok(None) };
     std::fs::create_dir_all(&root).map_err(|e| format!("cannot create {}: {e}", root.display()))?;
     let bytes = ansi_path(&root)?;
     Ok(Some((root, bytes)))

@@ -1,7 +1,7 @@
 //! `ts3online.ini`: `key=value` lines, `#` comments; `[copyN]` sections apply to copy N only.
 use crate::log;
 use crate::net::proto::clamp_name;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// `net = host[:PORT] | client:ADDR[:PORT] | auto | menu`; a missing port means `net_port`.
 /// A client address is resolved when the session starts.
@@ -108,22 +108,20 @@ fn parse_bool(v: &str) -> Option<bool> {
     }
 }
 
-/// `TS3ONLINE_CONFIG` names the config file: the setup wizard keeps it in the Linux home under Proton.
-pub const CONFIG_ENV: &str = "TS3ONLINE_CONFIG";
+/// The setup's settings file, in the mod's folder.
+pub const SETTINGS: &str = "settings.ini";
 
-/// The file `explicit` names, else the ini beside the exe, else under `%LOCALAPPDATA%	s3online`;
-/// defaults when none reads. Also returns the path read, for the connect menu to write back to.
-pub fn load(explicit: Option<&Path>, exe_dir: &Path, local_app_data: Option<&Path>, copy: u32) -> (Config, Option<PathBuf>) {
-    let beside = exe_dir.join("ts3online.ini");
-    let fallback = local_app_data.map(|l| l.join("ts3online").join("ts3online.ini"));
-    let found = [explicit.map(Path::to_path_buf), Some(beside), fallback].into_iter().flatten().find_map(|p| std::fs::read_to_string(&p).ok().map(|t| (p, t)));
+/// The first of `files` that reads; defaults when none does. Also returns the path read, for the
+/// connect menu to write back to.
+pub fn load(files: &[PathBuf], copy: u32) -> (Config, Option<PathBuf>) {
+    let found = files.iter().find_map(|p| std::fs::read_to_string(p).ok().map(|t| (p.clone(), t)));
     match found {
         Some((p, t)) => {
             log!("config file: {}", p.display());
             (parse(&t, copy), Some(p))
         }
         None => {
-            log!("no ts3online.ini found; using defaults");
+            log!("no settings found; using defaults");
             (Config::default(), None)
         }
     }
@@ -400,16 +398,16 @@ join=10.0.0.2", 1).join.as_deref(), Some("10.0.0.2:99"));
     }
 
     #[test]
-    fn load_prefers_the_named_file() {
+    fn load_takes_the_first_file_that_reads() {
         let dir = std::env::temp_dir().join(format!("ts3online-load-{}", std::process::id()));
-        let exe = dir.join("game");
-        let named = dir.join("named.ini");
-        std::fs::create_dir_all(&exe).unwrap();
-        std::fs::write(exe.join("ts3online.ini"), "name=beside").unwrap();
-        std::fs::write(&named, "name=named").unwrap();
-        assert_eq!(load(Some(&named), &exe, None, 1).0.name, "named");
-        assert_eq!(load(Some(&dir.join("missing.ini")), &exe, None, 1).0.name, "beside");
-        assert_eq!(load(None, &exe, None, 1).0.name, "beside");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.ini"), dir.join("b.ini"));
+        std::fs::write(&b, "name=second").unwrap();
+        assert_eq!(load(&[a.clone(), b.clone()], 1).0.name, "second");
+        std::fs::write(&a, "name=first").unwrap();
+        let (c, read) = load(&[a.clone(), b], 1);
+        assert_eq!((c.name.as_str(), read), ("first", Some(a)));
+        assert_eq!(load(&[dir.join("none.ini")], 1).1, None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

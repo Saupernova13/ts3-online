@@ -7,6 +7,7 @@ mod platform;
 mod probe;
 mod settings;
 mod steam;
+mod text;
 
 use actions::Step;
 use eframe::egui::{self, Color32, RichText};
@@ -53,7 +54,7 @@ fn shot_args() -> Option<Shot> {
 
 /// Without a window: `--apply` (install if needed, then save the settings given), `--uninstall
 /// [--delete-settings]`, `--update`. Settings flags: `--role host|join|ask --join ADDR --name NAME
-/// --password TEXT --port N --game-dir DIR --no-firewall`. Exit code 1 if a step failed.
+/// --password TEXT --port N --game-dir DIR`. Exit code 1 if a step failed.
 fn cli() -> Option<i32> {
     let a: Vec<String> = std::env::args().collect();
     let has = |k: &str| a.iter().any(|x| x == k);
@@ -64,8 +65,9 @@ fn cli() -> Option<i32> {
     attach_console();
     if has("--help") {
         println!("ts3-online-setup {VERSION}
+  --text          the setup as questions in the terminal
   (no arguments)  open the setup window
-  --apply [--role host|join|ask] [--join ADDR] [--name NAME] [--password TEXT] [--port N] [--no-firewall]
+  --apply [--role host|join|ask] [--join ADDR] [--name NAME] [--password TEXT] [--port N]
   --update
   --uninstall [--delete-settings]
   --game-dir DIR  when Steam's libraries do not list the game");
@@ -81,7 +83,7 @@ fn cli() -> Option<i32> {
         actions::uninstall(&game, has("--delete-settings"))
     } else if has("--update") {
         match actions::latest_release().and_then(|(_, url)| actions::download_dll(&url)) {
-            Ok(d) => vec![actions::install_dll(&game, &d)],
+            Ok(d) => vec![actions::install_mod(&game, &d)],
             Err(e) => vec![Step { ok: false, text: e }],
         }
     } else {
@@ -116,18 +118,11 @@ fn cli() -> Option<i32> {
             eprintln!("{p}");
             return Some(2);
         }
-        let mut steps = Vec::new();
         if actions::installed(&game).is_none() {
-            steps.push(actions::backup_saves(&game));
-            match actions::bundled_dll().map(Ok).unwrap_or_else(|| actions::latest_release().and_then(|(_, url)| actions::download_dll(&url))) {
-                Ok(d) => steps.push(actions::install_dll(&game, &d)),
-                Err(e) => steps.push(Step { ok: false, text: e }),
-            }
+            actions::install_all(&game, &s)
+        } else {
+            actions::save(&game, &s)
         }
-        if steps.iter().all(|s| s.ok) {
-            steps.extend(actions::save(&game, &s, !has("--no-firewall")));
-        }
-        steps
     };
     for s in &steps {
         println!("{} {}", if s.ok { "ok  " } else { "FAIL" }, s.text);
@@ -147,13 +142,25 @@ fn main() -> eframe::Result<()> {
     if let Some(code) = cli() {
         std::process::exit(code);
     }
+    if std::env::args().any(|a| a == "--text") {
+        attach_console();
+        std::process::exit(text::run(&user_name()));
+    }
     let shot = shot_args();
     let mut viewport = egui::ViewportBuilder::default().with_icon(std::sync::Arc::new(icon())).with_title("ts3-online setup").with_inner_size([680.0, 600.0]).with_min_inner_size([560.0, 480.0]);
     if shot.is_some() {
         viewport = viewport.with_position([-4000.0, -4000.0]).with_active(false).with_taskbar(false);
     }
     let options = eframe::NativeOptions { viewport, ..Default::default() };
-    eframe::run_native("ts3-online setup", options, Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx, shot)))))
+    let r = eframe::run_native("ts3-online setup", options, Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx, shot)))));
+    if let Err(e) = &r {
+        // no desktop or no graphics libraries: the same setup as questions in the terminal
+        attach_console();
+        eprintln!("The setup window cannot open here ({e}); asking in the terminal instead.
+");
+        std::process::exit(text::run(&user_name()));
+    }
+    r
 }
 
 /// A gold ring on a dark rounded square.
@@ -203,6 +210,7 @@ enum Job {
     Save,
     Update(String),
     Uninstall,
+    Tailscale,
 }
 
 struct App {
@@ -212,7 +220,6 @@ struct App {
     installed: Option<String>,
     settings: Settings,
     saved: Option<Settings>,
-    firewall: bool,
     show_password: bool,
     probe: Probe,
     build: u64,
@@ -263,7 +270,6 @@ impl App {
             installed,
             settings,
             saved,
-            firewall: true,
             show_password: false,
             probe,
             build,
@@ -280,35 +286,15 @@ impl App {
     fn start(&mut self, job: Job) {
         let Some(game) = self.game.clone() else { return };
         let s = self.settings.clone();
-        let firewall = self.firewall;
         let (label, f): (&str, Box<dyn FnOnce() -> (Vec<Step>, Option<String>) + Send>) = match job {
-            Job::Install => (
-                "Installing...",
-                Box::new(move || {
-                    let mut steps = vec![actions::backup_saves(&game)];
-                    if !steps[0].ok {
-                        return (steps, None);
-                    }
-                    let dll = match actions::bundled_dll() {
-                        Some(d) => Ok(d),
-                        None => actions::latest_release().and_then(|(_, url)| actions::download_dll(&url)),
-                    };
-                    match dll {
-                        Ok(d) => steps.push(actions::install_dll(&game, &d)),
-                        Err(e) => steps.push(Step { ok: false, text: e }),
-                    }
-                    if steps.iter().all(|s| s.ok) {
-                        steps.extend(actions::save(&game, &s, firewall));
-                    }
-                    (steps, actions::installed(&game))
-                }),
-            ),
-            Job::Save => ("Saving...", Box::new(move || (actions::save(&game, &s, firewall), actions::installed(&game)))),
+            Job::Install => ("Installing...", Box::new(move || (actions::install_all(&game, &s), actions::installed(&game)))),
+            Job::Save => ("Saving...", Box::new(move || (actions::save(&game, &s), actions::installed(&game)))),
+            Job::Tailscale => ("Getting Tailscale...", Box::new(move || (vec![actions::install_tailscale()], actions::installed(&game)))),
             Job::Update(url) => (
                 "Updating...",
                 Box::new(move || {
                     let step = match actions::download_dll(&url) {
-                        Ok(d) => actions::install_dll(&game, &d),
+                        Ok(d) => actions::install_mod(&game, &d),
                         Err(e) => Step { ok: false, text: e },
                     };
                     (vec![step], actions::installed(&game))
@@ -514,14 +500,11 @@ impl App {
         heading(ui, "Playing over the internet");
         self.tailscale_line(ui);
         ui.label(RichText::new("Players on the same home network find each other without it.").weak());
-        if cfg!(not(windows)) {
-            ui.add_space(8.0);
-            ui.label(RichText::new("On Linux and Steam Deck, close Steam before you install: setup adds a launch option Steam needs for the mod.").color(ACCENT));
-        }
     }
 
-    fn tailscale_line(&self, ui: &mut egui::Ui) {
+    fn tailscale_line(&mut self, ui: &mut egui::Ui) {
         let v = self.probe.view();
+        let mut ask_tailscale = false;
         ui.horizontal_wrapped(|ui| match v.tailscale {
             Tailscale::Unknown => {
                 ui.spinner();
@@ -529,15 +512,27 @@ impl App {
             }
             Tailscale::Missing => {
                 ui.label(RichText::new("!").color(ACCENT));
-                ui.label("Tailscale is not installed or not signed in. Friends in other places need it: install it from");
-                ui.hyperlink_to("tailscale.com/download", "https://tailscale.com/download");
-                ui.label("and everyone signs in to the same tailnet.");
+                if platform::tailscale_installed() {
+                    ui.label("Tailscale is installed but not signed in: open it and sign in. Everyone signs in to the same tailnet.");
+                } else {
+                    ui.label("Tailscale is not installed. Friends in other places need it (free); friends on your home network do not.");
+                    ask_tailscale = true;
+                }
             }
             Tailscale::Connected { own, peers } => {
                 ui.label(RichText::new("✔").color(GOOD));
                 ui.label(format!("Tailscale is connected ({own}), {peers} other device(s) online."));
             }
         });
+        if ask_tailscale && self.busy.is_none() {
+            let label = if cfg!(windows) { "Install Tailscale" } else { "Get Tailscale" };
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(label).clicked() {
+                    self.start(Job::Tailscale);
+                }
+                ui.label(RichText::new(if cfg!(windows) { "downloads Tailscale's own installer from tailscale.com and starts it; it asks for administrator rights" } else { "opens tailscale.com/download for your system" }).weak());
+            });
+        }
     }
 
     fn role(&mut self, ui: &mut egui::Ui) {
@@ -648,15 +643,7 @@ impl App {
         }
         ui.label(RichText::new("Most friends do not need it: your game appears in their list by itself.").weak());
         if cfg!(windows) {
-            ui.add_space(4.0);
-            if platform::firewall_rule_present() {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("✔").color(GOOD));
-                    ui.label("Other players are let through the Windows Firewall.");
-                });
-            } else {
-                ui.checkbox(&mut self.firewall, "Let other players through the Windows Firewall (Windows asks for administrator rights)");
-            }
+            ui.label(RichText::new("The first time you host, Windows asks whether to let the game through its firewall: click Allow.").weak());
         }
     }
 
@@ -727,7 +714,8 @@ impl App {
                 Role::Join => "Your game joins the host by itself. Pick a character and enter Toy Box.",
                 Role::Ask => "The ts3-online window opens first: Host, or pick a game and Join.",
             });
-            ui.label(RichText::new("To change anything later (host instead of join, a new address, your name), open this setup again.").weak());
+            let where_ = self.game.as_ref().map(|g| platform::mod_dir(g).display().to_string()).unwrap_or_default();
+            ui.label(RichText::new(format!("To change anything later (host instead of join, a new address, your name), run ts3-online-setup again; a copy is in {where_}. Everything the mod uses is in the game folder, so you can move it to another PC.")).weak());
         } else {
             ui.label("Fix what is marked above, then try again from Settings.");
         }
@@ -740,6 +728,9 @@ impl App {
                 let v = self.installed.as_deref().filter(|v| !v.is_empty()).unwrap_or("(older release)");
                 ui.label(format!("ts3-online {v} is installed in {}", g.display()));
             });
+        }
+        if self.game.as_deref().is_some_and(actions::needs_repair) {
+            ui.label(RichText::new("Steam put its own steam_api64.dll back (a file check or an update): Save puts the mod back in its place.").color(ACCENT));
         }
         heading(ui, "How you play");
         ui.horizontal(|ui| {
@@ -790,19 +781,12 @@ impl App {
         });
         if let Some(g) = self.game.clone() {
             ui.horizontal(|ui| {
-                if ui.button("Open the game folder").clicked() {
-                    platform::open_folder(&g);
+                if ui.button("Open the ts3-online folder").clicked() {
+                    platform::open(&platform::mod_dir(&g).to_string_lossy());
                 }
-                ui.label(RichText::new(format!("its {} helps with bug reports", actions::log_file(&g).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default())).weak());
+                ui.label(RichText::new("settings, logs (ts3online.log helps with bug reports) and save backups").weak());
             });
         }
-        ui.horizontal(|ui| {
-            if ui.button("Open the settings folder").clicked() {
-                if let Some(d) = platform::config_file().parent() {
-                    platform::open_folder(d);
-                }
-            }
-        });
         ui.add_space(6.0);
         if !self.confirm_uninstall {
             if ui.button(RichText::new("Uninstall ts3-online...").color(BAD)).clicked() {

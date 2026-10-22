@@ -1,12 +1,17 @@
-//! Install, save, update and uninstall: each step reports one line for the player.
-use crate::platform::{self, EXE};
-use crate::settings::{Role, Settings};
-use crate::steam::{self, APP_ID};
+//! Install, save, update and uninstall: each step reports one line for the player. Everything goes
+//! into the game folder: `dinput8.dll` and `steam_api64.dll` (both the mod) beside the game, the
+//! rest in its `ts3-online` folder.
+use crate::platform::{self, mod_dir};
+use crate::settings::Settings;
+use dinput8::copy::STEAM_ORIGINAL;
 use std::path::{Path, PathBuf};
 
 pub const REPO: &str = "Saupernova13/ts3-online";
 const DLL: &str = "dinput8.dll";
+const STEAM: &str = "steam_api64.dll";
+/// A settings file in the game folder itself, from releases before 1.7.
 const OLD_INI: &str = "ts3online.ini";
+const SETUP_FILES: [&str; 2] = ["ts3-online-setup.exe", "ts3-online-setup"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
@@ -24,42 +29,51 @@ fn fail(text: impl Into<String>) -> Step {
 
 /// The loader's DLL: it names `DirectInput8Create` and carries `ts3online`.
 pub fn is_ours(bytes: &[u8]) -> bool {
-    contains(bytes, b"DirectInput8Create") && contains(bytes, b"ts3online")
+    find(bytes, b"DirectInput8Create").is_some() && find(bytes, b"ts3online").is_some()
 }
 
-fn contains(hay: &[u8], needle: &[u8]) -> bool {
-    hay.windows(needle.len()).any(|w| w == needle)
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
 }
 
 /// `ts3online-version=X.Y.Z;` inside the DLL.
 pub fn version_of(bytes: &[u8]) -> Option<String> {
     let tag = b"ts3online-version=";
-    let at = hay_find(bytes, tag)? + tag.len();
+    let at = find(bytes, tag)? + tag.len();
     let end = bytes[at..].iter().position(|b| *b == b';')?;
     String::from_utf8(bytes[at..at + end].to_vec()).ok()
 }
 
-fn hay_find(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    hay.windows(needle.len()).position(|w| w == needle)
+fn ours_at(path: &Path) -> Option<Vec<u8>> {
+    std::fs::read(path).ok().filter(|b| is_ours(b))
 }
 
 /// The version installed in the game folder: Some("") for an older release without the tag.
 pub fn installed(game: &Path) -> Option<String> {
-    let bytes = std::fs::read(game.join(DLL)).ok()?;
-    is_ours(&bytes).then(|| version_of(&bytes).unwrap_or_default())
+    let bytes = ours_at(&game.join(DLL)).or_else(|| ours_at(&game.join(STEAM)))?;
+    Some(version_of(&bytes).unwrap_or_default())
 }
 
-/// The DLL shipped beside this program (the release zip), or a local build.
-pub fn bundled_dll() -> Option<Vec<u8>> {
+/// Installed, but Steam put its own `steam_api64.dll` back (a file check or an update).
+pub fn needs_repair(game: &Path) -> bool {
+    installed(game).is_some() && ours_at(&game.join(STEAM)).is_none()
+}
+
+/// The DLL shipped beside this program (the release zip, or its copy in the game folder), or a
+/// local build.
+pub fn bundled_dll(game: Option<&Path>) -> Option<Vec<u8>> {
     let me = std::env::current_exe().ok()?;
     let dir = me.parent()?;
-    let candidates = [dir.join(DLL), dir.join("../../../loader/target/release").join(DLL), dir.join("../../loader/target/release").join(DLL)];
-    candidates.iter().find_map(|p| std::fs::read(p).ok().filter(|b| is_ours(b)))
+    let mut candidates = vec![dir.join(DLL), dir.join("../../../loader/target/release").join(DLL)];
+    if let Some(g) = game {
+        candidates.push(g.join(DLL));
+    }
+    candidates.iter().find_map(|p| ours_at(p))
 }
 
 pub fn backup_saves(game: &Path) -> Step {
     let Some(src) = platform::saves_dir(game).filter(|s| s.is_dir()) else { return ok("No saves yet, so there was nothing to back up.") };
-    let dst = platform::documents().join("ts3-online save backup").join(today());
+    let dst = mod_dir(game).join("save backups").join(today());
     if dst.is_dir() {
         return ok(format!("Saves already backed up today: {}", dst.display()));
     }
@@ -98,31 +112,99 @@ fn today() -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-pub fn install_dll(game: &Path, bytes: &[u8]) -> Step {
-    let path = game.join(DLL);
-    if let Ok(old) = std::fs::read(&path) {
-        if !is_ours(&old) {
-            return fail(format!("{} belongs to another mod: move it out of the game folder, then try again.", path.display()));
-        }
-    }
+/// Puts the mod in the game folder twice: as `dinput8.dll` (Windows loads it) and in place of
+/// `steam_api64.dll` (Proton loads that one without a launch option), Steam's own moved into
+/// `ts3-online`. The game runs the first that loads.
+pub fn install_mod(game: &Path, bytes: &[u8]) -> Step {
     if platform::game_running() {
         return fail("Close Toy Story 3 first, then try again.");
     }
-    match std::fs::write(&path, bytes) {
+    let dll = game.join(DLL);
+    if let Ok(old) = std::fs::read(&dll) {
+        if !is_ours(&old) {
+            return fail(format!("{} belongs to another mod: move it out of the game folder, then try again.", dll.display()));
+        }
+    }
+    let dir = mod_dir(game);
+    let steam = game.join(STEAM);
+    let original = dir.join(STEAM_ORIGINAL);
+    let result = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all(&dir)?;
+        match std::fs::read(&steam) {
+            // Steam's own, perhaps newer than a copy kept before
+            Ok(b) if !is_ours(&b) => std::fs::write(&original, b)?,
+            Ok(_) => {}
+            Err(_) if original.is_file() => {}
+            Err(e) => return Err(std::io::Error::new(e.kind(), format!("the game folder has no {STEAM}: {e}"))),
+        }
+        std::fs::write(&dll, bytes)?;
+        std::fs::write(&steam, bytes)
+    })();
+    match result {
         Ok(()) => ok(format!("Installed ts3-online {} in the game folder.", version_of(bytes).unwrap_or_default())),
-        Err(e) => fail(format!("Could not write {}: {e}", path.display())),
+        Err(e) => fail(format!("Could not install in {}: {e}", game.display())),
     }
 }
 
-/// The saved settings text: the settings file, else an older setup's ini in the game folder.
-pub fn read_config(game: Option<&Path>) -> String {
-    std::fs::read_to_string(platform::config_file()).ok().or_else(|| game.and_then(|g| std::fs::read_to_string(g.join(OLD_INI)).ok())).unwrap_or_default()
+/// First install, or setting up again: back up the saves, put the mod and this program in the game
+/// folder, save the settings. Stops at the first step that fails.
+pub fn install_all(game: &Path, s: &Settings) -> Vec<Step> {
+    let mut steps = vec![backup_saves(game)];
+    if !steps[0].ok {
+        return steps;
+    }
+    let dll = match bundled_dll(Some(game)) {
+        Some(d) => Ok(d),
+        None => latest_release().and_then(|(_, url)| download_dll(&url)),
+    };
+    steps.push(match dll {
+        Ok(d) => install_mod(game, &d),
+        Err(e) => fail(e),
+    });
+    if !steps.iter().all(|s| s.ok) {
+        return steps;
+    }
+    steps.extend(copy_setup(game));
+    steps.extend(save(game, s));
+    steps
 }
 
-/// Writes the settings, and what the game needs to find and use them on this OS.
-pub fn save(game: &Path, s: &Settings, firewall_wanted: bool) -> Vec<Step> {
+/// Copies this program (and its other-system twin beside it) into `ts3-online`, so the game folder
+/// carries its own setup.
+pub fn copy_setup(game: &Path) -> Option<Step> {
+    let me = std::env::current_exe().ok()?;
+    let here = me.parent()?;
+    let dir = mod_dir(game);
+    if here.canonicalize().ok() == dir.canonicalize().ok() {
+        return None;
+    }
+    let mut copied = 0;
+    for name in SETUP_FILES {
+        let src = here.join(name);
+        if src.is_file() && std::fs::copy(&src, dir.join(name)).is_ok() {
+            copied += 1;
+        }
+    }
+    Some(if copied > 0 { ok(format!("Put the setup program in {} to change your settings later.", dir.display())) } else { fail("Could not copy the setup program into the game folder.") })
+}
+
+/// The saved settings text: the settings file, else where older releases kept it.
+pub fn read_config(game: Option<&Path>) -> String {
+    let mut files: Vec<PathBuf> = Vec::new();
+    if let Some(g) = game {
+        files.push(platform::config_file(g));
+        files.push(g.join(OLD_INI));
+    }
+    if let Some(l) = platform::legacy_dir() {
+        files.push(l.join("ts3online.ini"));
+    }
+    files.iter().find_map(|f| std::fs::read_to_string(f).ok()).unwrap_or_default()
+}
+
+/// Writes the settings into the game folder and moves older settings in from elsewhere.
+pub fn save(game: &Path, s: &Settings) -> Vec<Step> {
     let mut steps = Vec::new();
-    let file = platform::config_file();
+    let file = platform::config_file(game);
     let mut s = s.clone();
     if cfg!(not(windows)) {
         // under Proton the game cannot run Tailscale's own command, so it probes these instead
@@ -142,91 +224,70 @@ pub fn save(game: &Path, s: &Settings, firewall_wanted: bool) -> Vec<Step> {
     let old = game.join(OLD_INI);
     if old.is_file() {
         steps.push(match std::fs::remove_file(&old) {
-            Ok(()) => ok("Moved the old settings out of the game folder."),
-            Err(e) => fail(format!("Could not remove the old {}: {e}. Delete it by hand, or it is read instead.", old.display())),
+            Ok(()) => ok("Moved the old settings file into the ts3-online folder."),
+            Err(e) => fail(format!("Could not remove the old {}: {e}. Delete it by hand: it is read first.", old.display())),
         });
     }
-    if cfg!(windows) {
-        if s.role == Role::Host && firewall_wanted && !platform::firewall_rule_present() {
-            steps.push(if platform::firewall(true, &game.join(EXE), s.port) {
-                ok("Other players are let through the Windows Firewall.")
-            } else {
-                fail("The firewall was not changed. Windows asks again the first time you host: click Allow.")
-            });
+    if let Some(l) = platform::legacy_dir().filter(|l| l.is_dir()) {
+        steps.push(match std::fs::remove_dir_all(&l) {
+            Ok(()) => ok(format!("Removed the old {} (the mod now keeps everything in the game folder).", l.display())),
+            Err(e) => fail(format!("Could not remove the old {}: {e}", l.display())),
+        });
+    }
+    if needs_repair(game) {
+        if let Some(b) = bundled_dll(Some(game)) {
+            steps.push(install_mod(game, &b));
         }
-    } else {
-        steps.push(launch_option(true, &file));
     }
     steps
 }
 
-/// Sets (or removes) our launch option for every Steam user; Linux and SteamOS only.
-pub fn launch_option(add: bool, config: &Path) -> Step {
-    let files = platform::steam_user_configs();
-    if files.is_empty() {
-        return fail(format!("No Steam user settings found. In Steam, set Toy Story 3's launch options to: {}", wanted_option("", config)));
-    }
-    let mut changed = 0;
-    let mut pending = Vec::new();
-    for f in &files {
-        let Ok(text) = std::fs::read_to_string(f) else { continue };
-        let Some(cur) = steam::launch_options(&text, APP_ID) else { continue };
-        let new = if add { wanted_option(&cur, config) } else { steam::without_ours(&cur) };
-        if new != cur {
-            pending.push((f.clone(), text, new));
-        }
-    }
-    if pending.is_empty() {
-        return ok(if add { "Steam's launch option for the game was already set." } else { "No launch option to remove." });
-    }
-    if platform::steam_running() {
-        let line = pending[0].2.clone();
-        return fail(if add {
-            format!("Steam is running, so its launch options were left alone. Close Steam and Save again, or set Toy Story 3's launch options to:\n{line}")
-        } else {
-            "Steam is running: close it and uninstall again to remove the launch option.".to_string()
-        });
-    }
-    for (f, text, new) in pending {
-        let Some(out) = steam::set_launch_options(&text, APP_ID, &new) else { continue };
-        let _ = std::fs::copy(&f, f.with_extension("vdf.ts3-online.bak"));
-        if std::fs::write(&f, out).is_ok() {
-            changed += 1;
-        }
-    }
-    ok(if add { format!("Set the launch option Proton needs ({changed} Steam user(s)).") } else { format!("Removed the launch option ({changed} Steam user(s)).") })
-}
-
-fn wanted_option(current: &str, config: &Path) -> String {
-    steam::with_ours(current, Some(&platform::config_for_wine(config)))
-}
-
 pub fn uninstall(game: &Path, delete_settings: bool) -> Vec<Step> {
+    if platform::game_running() {
+        return vec![fail("Close Toy Story 3 first, then try again.")];
+    }
     let mut steps = Vec::new();
     let dll = game.join(DLL);
     steps.push(match std::fs::read(&dll) {
         Ok(b) if is_ours(&b) => match std::fs::remove_file(&dll) {
-            Ok(()) => ok("Removed ts3-online from the game folder."),
-            Err(e) => fail(format!("Could not remove {}: {e} (is the game open?)", dll.display())),
+            Ok(()) => ok("Removed dinput8.dll."),
+            Err(e) => fail(format!("Could not remove {}: {e}", dll.display())),
         },
         Ok(_) => ok("The dinput8.dll in the game folder is another mod's; left alone."),
-        Err(_) => ok("ts3-online was not in the game folder."),
+        Err(_) => ok("There was no dinput8.dll."),
     });
-    if cfg!(windows) {
-        if platform::firewall_rule_present() {
-            steps.push(if platform::firewall(false, &game.join(EXE), 0) { ok("Removed the firewall rule.") } else { fail("The firewall rule was left (no administrator rights).") });
-        }
-    } else {
-        steps.push(launch_option(false, &platform::config_file()));
+    let dir = mod_dir(game);
+    let steam = game.join(STEAM);
+    let original = dir.join(STEAM_ORIGINAL);
+    if ours_at(&steam).is_some() {
+        steps.push(match std::fs::copy(&original, &steam) {
+            Ok(_) => ok("Put Steam's own steam_api64.dll back."),
+            Err(e) => fail(format!("Could not put Steam's steam_api64.dll back ({e}). In Steam: right-click the game, Properties, Installed Files, Verify integrity.")),
+        });
     }
-    if delete_settings {
-        let f = platform::config_file();
-        if f.is_file() {
-            steps.push(match std::fs::remove_file(&f) {
-                Ok(()) => ok("Deleted your settings."),
-                Err(e) => fail(format!("Could not delete {}: {e}", f.display())),
-            });
+    let me = std::env::current_exe().ok();
+    let keep = |p: &Path| me.as_deref() == Some(p) || (!delete_settings && (p.ends_with(dinput8::config::SETTINGS) || p.ends_with("save backups")));
+    let mut left = 0;
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if keep(&p) {
+                left += 1;
+                continue;
+            }
+            let r = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+            if r.is_err() {
+                left += 1;
+            }
         }
+    }
+    if left == 0 {
+        let _ = std::fs::remove_dir(&dir);
+        steps.push(ok("Removed the ts3-online folder."));
+    } else if delete_settings {
+        steps.push(ok(format!("Emptied {}; delete it once this program is closed.", dir.display())));
+    } else {
+        steps.push(ok(format!("Kept your settings and save backups in {}.", dir.display())));
     }
     steps
 }
@@ -240,12 +301,16 @@ pub fn latest_release() -> Result<(String, String), String> {
     zip.map(|z| (version.clone(), z)).ok_or_else(|| format!("Release {version} has no ts3-online.zip."))
 }
 
-/// The DLL from a release zip.
-pub fn download_dll(url: &str) -> Result<Vec<u8>, String> {
+fn download(url: &str) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     let resp = ureq::get(url).set("User-Agent", "ts3-online-setup").call().map_err(|e| format!("Download failed: {e}"))?;
     std::io::Read::read_to_end(&mut resp.into_reader(), &mut bytes).map_err(|e| format!("Download failed: {e}"))?;
-    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| format!("Not a zip: {e}"))?;
+    Ok(bytes)
+}
+
+/// The DLL from a release zip.
+pub fn download_dll(url: &str) -> Result<Vec<u8>, String> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(download(url)?)).map_err(|e| format!("Not a zip: {e}"))?;
     let mut f = zip.by_name("ts3-online/dinput8.dll").map_err(|_| "The download has no dinput8.dll.".to_string())?;
     let mut dll = Vec::new();
     std::io::Read::read_to_end(&mut f, &mut dll).map_err(|e| e.to_string())?;
@@ -255,6 +320,30 @@ pub fn download_dll(url: &str) -> Result<Vec<u8>, String> {
     Ok(dll)
 }
 
+/// Tailscale's own installer for Windows, which asks for administrator rights itself.
+pub const TAILSCALE_WINDOWS: &str = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe";
+pub const TAILSCALE_PAGE: &str = "https://tailscale.com/download";
+
+/// Downloads and starts Tailscale's installer (Windows); elsewhere opens its download page.
+pub fn install_tailscale() -> Step {
+    if !cfg!(windows) {
+        platform::open(TAILSCALE_PAGE);
+        return ok("Opened Tailscale's download page: follow it for your system, then sign in.");
+    }
+    let bytes = match download(TAILSCALE_WINDOWS) {
+        Ok(b) => b,
+        Err(e) => return fail(format!("{e}. Get it from {TAILSCALE_PAGE} instead.")),
+    };
+    let path = std::env::temp_dir().join("tailscale-setup.exe");
+    if let Err(e) = std::fs::write(&path, bytes) {
+        return fail(format!("Could not save the installer: {e}"));
+    }
+    match std::process::Command::new(&path).spawn() {
+        Ok(_) => ok("Started Tailscale's installer: finish it, then sign in. Setup notices when it is connected."),
+        Err(e) => fail(format!("Could not start the installer: {e}")),
+    }
+}
+
 /// Compares `a.b.c` versions.
 pub fn newer(latest: &str, installed: &str) -> bool {
     let parse = |v: &str| v.split('.').map(|p| p.parse::<u32>().unwrap_or(0)).collect::<Vec<_>>();
@@ -262,22 +351,19 @@ pub fn newer(latest: &str, installed: &str) -> bool {
 }
 
 pub fn game_dir_ok(p: &Path) -> bool {
-    p.join(EXE).is_file()
-}
-
-pub fn log_file(game: &Path) -> PathBuf {
-    game.join("ts3online.log")
+    p.join(platform::EXE).is_file()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const DLL_BYTES: &[u8] = b"MZ...DirectInput8Create...ts3online...ts3online-version=1.7.0;...";
+
     #[test]
     fn our_dll_and_its_version_are_recognised() {
-        let dll = b"MZ...DirectInput8Create...ts3online...ts3online-version=1.6.0;...";
-        assert!(is_ours(dll));
-        assert_eq!(version_of(dll).as_deref(), Some("1.6.0"));
+        assert!(is_ours(DLL_BYTES));
+        assert_eq!(version_of(DLL_BYTES).as_deref(), Some("1.7.0"));
         assert!(!is_ours(b"MZ...DirectInput8Create...other"));
         assert_eq!(version_of(b"no tag"), None);
     }
@@ -294,5 +380,48 @@ mod tests {
         let t = today();
         assert_eq!(t.len(), 10);
         assert!(t.starts_with("20"));
+    }
+
+    fn game() -> PathBuf {
+        let g = std::env::temp_dir().join(format!("ts3-setup-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&g);
+        std::fs::create_dir_all(&g).unwrap();
+        std::fs::write(g.join(platform::EXE), b"MZ").unwrap();
+        std::fs::write(g.join(STEAM), b"steam's own").unwrap();
+        g
+    }
+
+    #[test]
+    fn install_takes_steams_place_and_uninstall_gives_it_back() {
+        let g = game();
+        let st = install_mod(&g, DLL_BYTES);
+        assert!(st.ok, "{st:?}");
+        assert_eq!(std::fs::read(g.join(STEAM)).unwrap(), DLL_BYTES);
+        assert_eq!(std::fs::read(g.join(DLL)).unwrap(), DLL_BYTES);
+        assert_eq!(std::fs::read(mod_dir(&g).join(STEAM_ORIGINAL)).unwrap(), b"steam's own");
+        assert!(install_mod(&g, DLL_BYTES).ok, "again, Steam's copy is kept");
+        assert_eq!(std::fs::read(mod_dir(&g).join(STEAM_ORIGINAL)).unwrap(), b"steam's own");
+        assert_eq!(installed(&g).as_deref(), Some("1.7.0"));
+        std::fs::write(g.join(STEAM), b"steam's update").unwrap();
+        assert!(needs_repair(&g));
+        assert!(install_mod(&g, DLL_BYTES).ok);
+        assert_eq!(std::fs::read(mod_dir(&g).join(STEAM_ORIGINAL)).unwrap(), b"steam's update", "the newer one is kept");
+        std::fs::write(platform::config_file(&g), "name=x").unwrap();
+        let steps = uninstall(&g, false);
+        assert!(steps.iter().all(|s| s.ok), "{steps:?}");
+        assert_eq!(std::fs::read(g.join(STEAM)).unwrap(), b"steam's update");
+        assert!(!g.join(DLL).exists() && platform::config_file(&g).exists() && !mod_dir(&g).join(STEAM_ORIGINAL).exists());
+        uninstall(&g, true);
+        assert!(!mod_dir(&g).exists());
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[test]
+    fn another_mods_dinput8_is_left_alone() {
+        let g = game();
+        std::fs::write(g.join(DLL), b"someone else's").unwrap();
+        assert!(!install_mod(&g, DLL_BYTES).ok);
+        assert_eq!(std::fs::read(g.join(STEAM)).unwrap(), b"steam's own");
+        std::fs::remove_dir_all(&g).unwrap();
     }
 }

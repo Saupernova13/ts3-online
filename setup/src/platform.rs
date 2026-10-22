@@ -1,10 +1,12 @@
-//! Where things are on this computer: Steam, the game, the settings file, the saves.
-use crate::steam::{self, APP_ID, GAME};
+//! Where things are: Steam's libraries, the game folder and the mod's folder inside it. Everything
+//! the mod keeps is in `<game>/ts3-online`, so the game folder can move to another PC or a USB drive.
+use crate::steam::{self, GAME};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub const EXE: &str = "Toy Story 3 Complete Edition.exe";
-pub const FIREWALL_RULE: &str = "ts3-online (UDP)";
+/// The mod's folder inside the game folder (the loader's `copy::MOD_DIR`).
+pub const MOD_DIR: &str = dinput8::copy::MOD_DIR;
 
 /// Steam installs to look in, most likely first.
 pub fn steam_roots() -> Vec<PathBuf> {
@@ -35,7 +37,7 @@ pub fn steam_roots() -> Vec<PathBuf> {
     out
 }
 
-/// Without Windows' `\?\` prefix, which `canonicalize` adds.
+/// Without Windows' `\\?\` prefix, which `canonicalize` adds.
 fn plain(p: PathBuf) -> PathBuf {
     match p.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
         Some(s) => PathBuf::from(s),
@@ -43,8 +45,16 @@ fn plain(p: PathBuf) -> PathBuf {
     }
 }
 
-/// The game folder in any Steam library.
+/// The game folder: the one this program sits in (or the game folder above its `ts3-online`
+/// folder), else the first Steam library that has the game.
 pub fn find_game() -> Option<PathBuf> {
+    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+        for d in [Some(dir.clone()), dir.parent().map(Path::to_path_buf)].into_iter().flatten() {
+            if d.join(EXE).is_file() {
+                return Some(plain(d));
+            }
+        }
+    }
     for root in steam_roots() {
         let mut libs = vec![root.clone()];
         if let Ok(t) = std::fs::read_to_string(root.join("steamapps").join("libraryfolders.vdf")) {
@@ -60,74 +70,38 @@ pub fn find_game() -> Option<PathBuf> {
     None
 }
 
-/// The Steam library holding the game folder (`<library>/steamapps/common/<game>`).
-pub fn library_of(game: &Path) -> Option<PathBuf> {
-    game.parent()?.parent()?.parent().map(Path::to_path_buf)
+#[cfg(not(windows))]
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
 }
 
-pub fn home() -> Option<PathBuf> {
-    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
+pub fn mod_dir(game: &Path) -> PathBuf {
+    game.join(MOD_DIR)
 }
 
-/// The settings file: Windows `%LOCALAPPDATA%\ts3online\ts3online.ini` (the loader's default),
-/// Linux `~/.config/ts3-online/ts3online.ini` (named to the game by the launch option).
-pub fn config_file() -> PathBuf {
+/// The settings file, in the mod's folder.
+pub fn config_file(game: &Path) -> PathBuf {
+    mod_dir(game).join(dinput8::config::SETTINGS)
+}
+
+/// Where releases before 1.7 kept settings and copies' saves (`%LOCALAPPDATA%\ts3online`).
+pub fn legacy_dir() -> Option<PathBuf> {
     if cfg!(windows) {
-        let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| home().unwrap_or_default().join("AppData").join("Local"));
-        local.join("ts3online").join("ts3online.ini")
+        std::env::var_os("LOCALAPPDATA").map(|l| PathBuf::from(l).join("ts3online"))
     } else {
-        let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().unwrap_or_default().join(".config"));
-        base.join("ts3-online").join("ts3online.ini")
+        None
     }
 }
 
-/// `config_file()` as the game sees it under Proton: Wine maps the Linux root to drive Z.
-pub fn config_for_wine(path: &Path) -> String {
-    format!("Z:{}", path.to_string_lossy())
-}
-
-/// The game's own saves folder (Proton keeps it in the game's prefix).
+/// The game's own saves (Proton keeps them in the game's prefix). The game, not the mod, puts them
+/// there; the setup only reads them for its backup.
 pub fn saves_dir(game: &Path) -> Option<PathBuf> {
     if cfg!(windows) {
         std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Disney").join(GAME))
     } else {
-        let pfx = library_of(game)?.join("steamapps").join("compatdata").join(APP_ID).join("pfx");
+        let lib = game.parent()?.parent()?.parent()?;
+        let pfx = lib.join("steamapps").join("compatdata").join(steam::APP_ID).join("pfx");
         Some(pfx.join("drive_c").join("users").join("steamuser").join("AppData").join("Roaming").join("Disney").join(GAME))
-    }
-}
-
-pub fn documents() -> PathBuf {
-    let h = home().unwrap_or_default();
-    let d = h.join("Documents");
-    if d.is_dir() {
-        d
-    } else {
-        h
-    }
-}
-
-/// Every Steam user's `localconfig.vdf`.
-pub fn steam_user_configs() -> Vec<PathBuf> {
-    let mut v = Vec::new();
-    for root in steam_roots() {
-        if let Ok(rd) = std::fs::read_dir(root.join("userdata")) {
-            for e in rd.flatten() {
-                let f = e.path().join("config").join("localconfig.vdf");
-                if f.is_file() {
-                    v.push(f);
-                }
-            }
-        }
-    }
-    v
-}
-
-/// Steam rewrites `localconfig.vdf` when it exits, so it must be closed while the file changes.
-pub fn steam_running() -> bool {
-    if cfg!(windows) {
-        output("tasklist", &["/FI", "IMAGENAME eq steam.exe", "/NH"]).is_some_and(|o| o.to_ascii_lowercase().contains("steam.exe"))
-    } else {
-        ["steam", "steamwebhelper"].iter().any(|p| Command::new("pgrep").args(["-x", p]).output().is_ok_and(|o| o.status.success()))
     }
 }
 
@@ -135,7 +109,43 @@ pub fn game_running() -> bool {
     if cfg!(windows) {
         output("tasklist", &["/FI", &format!("IMAGENAME eq {EXE}"), "/NH"]).is_some_and(|o| o.contains(EXE))
     } else {
-        Command::new("pgrep").args(["-f", EXE]).output().is_ok_and(|o| o.status.success())
+        // a process that merely mentions the exe (a shell, pgrep) is not the game
+        let Ok(rd) = std::fs::read_dir("/proc") else { return false };
+        rd.flatten().any(|e| {
+            let name = e.file_name();
+            name.to_string_lossy().bytes().all(|b| b.is_ascii_digit())
+                && std::fs::read(e.path().join("cmdline")).is_ok_and(|b| cmdline_is_game(&b))
+        })
+    }
+}
+
+/// Whether a `/proc/<pid>/cmdline` (NUL-separated arguments) runs the game: an argument is a path
+/// ending in the exe's name. A bare name (a `pgrep` pattern, a shell's argument) does not count.
+#[cfg_attr(windows, allow(dead_code))]
+fn cmdline_is_game(cmdline: &[u8]) -> bool {
+    cmdline.split(|b| *b == 0).any(|arg| {
+        let arg = String::from_utf8_lossy(arg);
+        let arg = arg.trim().trim_matches('"');
+        (arg.contains('/') || arg.contains('\\')) && arg.rsplit(['/', '\\']).next().is_some_and(|name| name.eq_ignore_ascii_case(EXE))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_path_to_the_exe_counts_as_the_game() {
+        let mut wine = b"Z:\\games\\Toy Story 3 Complete Edition\\".to_vec();
+        wine.extend_from_slice(EXE.as_bytes());
+        wine.push(0);
+        assert!(cmdline_is_game(&wine));
+        assert!(cmdline_is_game(b"\"C:\\Games\\Toy Story 3 Complete Edition.exe\"\0-dxresolution 1920x1080\0"));
+        assert!(cmdline_is_game(b"wine\0/home/deck/.local/share/Steam/steamapps/common/Toy Story 3 Complete Edition/Toy Story 3 Complete Edition.exe\0"));
+        // mentioning the exe in an argument is not running it
+        assert!(!cmdline_is_game(b"pgrep\0-af\0Toy Story 3 Complete Edition.exe\0"));
+        assert!(!cmdline_is_game(b"bash\0work/out/linux_port.sh\0"));
+        assert!(!cmdline_is_game(b""));
     }
 }
 
@@ -158,58 +168,16 @@ fn reg_query(key: &str, value: &str) -> Option<String> {
     out.lines().find_map(|l| l.split_once("REG_SZ").map(|(_, v)| v.trim().to_string()))
 }
 
-/// Whether the inbound firewall rule for the game exists.
-pub fn firewall_rule_present() -> bool {
-    cfg!(windows) && output("netsh", &["advfirewall", "firewall", "show", "rule", &format!("name={FIREWALL_RULE}")]).is_some()
-}
-
-/// Adds (or with `add` false, removes) the firewall rule through an elevated `netsh`; Windows asks
-/// the player for administrator rights. True once `netsh` succeeded.
-#[cfg(windows)]
-pub fn firewall(add: bool, exe: &Path, port: u16) -> bool {
-    let args = if add {
-        format!(r#"advfirewall firewall add rule name="{FIREWALL_RULE}" dir=in action=allow protocol=UDP localport={port} program="{}""#, exe.display())
-    } else {
-        format!(r#"advfirewall firewall delete rule name="{FIREWALL_RULE}""#)
-    };
-    elevated("netsh", &args) == Some(0)
-}
-
-#[cfg(not(windows))]
-pub fn firewall(_add: bool, _exe: &Path, _port: u16) -> bool {
-    true
-}
-
-/// Runs `program args` as administrator (UAC prompt) and waits; its exit code, None if refused.
-#[cfg(windows)]
-fn elevated(program: &str, args: &str) -> Option<u32> {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
-    use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
-    use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
-    let w = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
-    let (verb, file, params) = (w("runas"), w(program), w(args));
-    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
-    info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
-    info.fMask = SEE_MASK_NOCLOSEPROCESS;
-    info.lpVerb = verb.as_ptr();
-    info.lpFile = file.as_ptr();
-    info.lpParameters = params.as_ptr();
-    info.nShow = SW_HIDE;
-    if unsafe { ShellExecuteExW(&mut info) } == 0 || info.hProcess.is_null() {
-        return None;
+/// Opens a folder or a web page with the system's default program.
+pub fn open(target: &str) {
+    let r = if cfg!(windows) { Command::new("explorer").arg(target).spawn() } else { Command::new("xdg-open").arg(target).spawn() };
+    if let Err(e) = r {
+        eprintln!("cannot open {target}: {e}");
     }
-    let mut code = 0u32;
-    unsafe {
-        WaitForSingleObject(info.hProcess, INFINITE);
-        GetExitCodeProcess(info.hProcess, &mut code);
-        CloseHandle(info.hProcess);
-    }
-    Some(code)
 }
 
-/// Opens a folder in the file manager.
-pub fn open_folder(dir: &Path) {
-    let program = if cfg!(windows) { "explorer" } else { "xdg-open" };
-    let _ = Command::new(program).arg(dir).spawn();
+/// Whether Tailscale's command is installed.
+pub fn tailscale_installed() -> bool {
+    let pf = std::env::var_os("ProgramFiles").map(|p| PathBuf::from(p).join("Tailscale").join("tailscale.exe"));
+    pf.is_some_and(|p| p.is_file()) || output(if cfg!(windows) { "where" } else { "which" }, &["tailscale"]).is_some()
 }

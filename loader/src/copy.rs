@@ -38,29 +38,43 @@ pub fn normal_root(app_data: &str, local_app_data: &str, n: u32) -> PathBuf {
     }
 }
 
-/// 4 when 1-3 are taken.
-pub fn choose(mut claim: impl FnMut(u32) -> bool) -> u32 {
-    (1..MAX_COPIES).find(|&n| claim(n)).unwrap_or(MAX_COPIES)
+/// The first copy number `claim` takes; None when all are taken.
+pub fn choose(mut claim: impl FnMut(u32) -> bool) -> Option<u32> {
+    (1..=MAX_COPIES).find(|&n| claim(n))
 }
 
-/// The winning mutex handle is leaked on purpose: it must live as long as the process.
+/// A copy that was just closed holds its number for a few seconds while it exits.
+pub const CLAIM_WAIT_MS: u64 = 15_000;
+const CLAIM_RETRY_MS: u64 = 250;
+
+/// (copy number, claimed): when every number stays taken, 4 unclaimed, which shares copy 4's pad,
+/// log and save folder. The winning mutex handle is leaked on purpose: it must live as long as the process.
 #[cfg(windows)]
-pub fn claim() -> u32 {
+pub fn claim() -> (u32, bool) {
+    for _ in 0..=CLAIM_WAIT_MS / CLAIM_RETRY_MS {
+        if let Some(n) = choose(try_claim) {
+            return (n, true);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(CLAIM_RETRY_MS));
+    }
+    (MAX_COPIES, false)
+}
+
+#[cfg(windows)]
+fn try_claim(n: u32) -> bool {
     use crate::win::wide;
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::CreateMutexW;
-    choose(|n| {
-        let name = wide(std::ffi::OsStr::new(&mutex_name(n)));
-        let h = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
-        if h.is_null() {
-            return false;
-        }
-        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-            unsafe { CloseHandle(h) };
-            return false;
-        }
-        true
-    })
+    let name = wide(std::ffi::OsStr::new(&mutex_name(n)));
+    let h = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+    if h.is_null() {
+        return false;
+    }
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        unsafe { CloseHandle(h) };
+        return false;
+    }
+    true
 }
 
 #[cfg(test)]
@@ -86,15 +100,15 @@ mod tests {
 
     #[test]
     fn first_free_wins() {
-        assert_eq!(choose(|_| true), 1);
-        assert_eq!(choose(|n| n >= 3), 3);
-        assert_eq!(choose(|_| false), 4);
-        // only 1..=3 are probed: if they are taken, 4 is used without a claim
+        assert_eq!(choose(|_| true), Some(1));
+        assert_eq!(choose(|n| n >= 3), Some(3));
+        assert_eq!(choose(|n| n == 4), Some(4), "4 is claimed like the others");
+        assert_eq!(choose(|_| false), None);
         let mut seen = Vec::new();
         choose(|n| {
             seen.push(n);
             false
         });
-        assert_eq!(seen, [1, 2, 3]);
+        assert_eq!(seen, [1, 2, 3, 4]);
     }
 }

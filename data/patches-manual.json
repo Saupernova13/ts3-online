@@ -47,6 +47,14 @@
    "note": "per-player button bindings (FUN_1405bb170, read by slot init's mapper setup FUN_140281140): players >= 2 got -1 for every rebindable control, so P3/P4 had sticks but no buttons; cmp edx,2/jge -> and edx,1 (P3/P4 use P1/P2's)"
   },
   {
+   "id": "bound_1405d77a0",
+   "group": "bounds",
+   "va": "0x1405d77a0",
+   "orig": "4883fb01",
+   "new": "4883fb03",
+   "note": "level switch (FUN_1405d7760): per view, the slot avatar's ControlMapper only for index <= 1, null (crash in FUN_14055a920) for 2/3 -> <= 3"
+  },
+  {
    "id": "bound_1406a21b4",
    "group": "bounds",
    "va": "0x1406a21b4",

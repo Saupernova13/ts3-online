@@ -347,5 +347,5 @@ town.
   closed client is parked and re-adopted with everything caught up; when the host leaves, a client
   hosts, but it had served its own save and players could drive the wrong character after the
   ids were handed out again (both fixed). Shots: thrown objects are carried forward by the state's
-  age (see the entry above). A copy in the background runs at about 20 fps here and its intro
+  age (#43). A copy in the background runs at about 20 fps here and its intro
   movie stalls until it is in front, which only matters with several copies on one PC.

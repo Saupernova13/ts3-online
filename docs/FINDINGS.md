@@ -848,3 +848,22 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   frame. A background copy's level intro movie barely advances (minutes), and finishes within
   seconds once in front. A copy closed with `taskkill` keeps its UDP port and copy mutex for seconds
   to minutes while it exits.
+- **[obs] Buzz's game crashed every copy after a partner's bind (2026-10-22, `queries/199`-`203`,
+  in game).** A story level brings player 2 back as local co-op does (the partner's virtual pad
+  counts as a second assigned player), and the bind used to spawn a new avatar and swap it in. In
+  `st_buzzgame` both copies then faulted within 8 s in `0x1403fbfe0` (find child by name, null list)
+  from the flight controller `0x1400cf480`, and after a null check there, in `0x140044261`: the
+  swapped-out ship's controller still ticked, its actor no longer a player (`0x1405bcd10` -1), so
+  `0x1405bccd0` gave no view and no SpaceFlight camera. Every view had the full camera set
+  (`work/scratch/views.py`). Binding the partner to the level's own player-2 avatar when it has the
+  owner's class (always, in a level that forces the class) removed the crash.
+- **[obs] Buzz's rail flight (`queries/204`, in game).** `BuzzFlightController` places its ship every
+  frame (update `0x1400431e0`, case at `0x140044202`): the point at distance `+0xac` on rail `+0x88`
+  (`0x14052ef90` on the rails at `+0x68`), plus `+0x90` along the view's SpaceFlight camera right axis
+  (`+0x1b4`) and `+0x8c` along its up axis (`+0x1c0`), plus a fixed height step for player 2
+  (`[0x140b2ef50]+8 > 1`). Placing the actor is overwritten the next frame: a partner placed every
+  frame still drifted to 2 km, as the owners respawned at different checkpoints. `+0xbc` is the
+  controller's mode.
+- **[obs] A story level resets the wallet counters while it loads (2026-10-22).** A client following
+  the host from Toy Box saw gold 1080 -> 0 during the load, reported it as a spend of 1080 (and 95
+  imagination points), and the host deducted it: both copies showed -1080 in the level.

@@ -62,6 +62,10 @@ pub fn set_local_proj(proj: proto::Proj) {
     with(|s| s.set_local_proj(proj));
 }
 
+pub fn set_local_rail(rail: proto::Rail) {
+    with(|s| s.set_local_rail(rail));
+}
+
 pub fn local_id() -> Option<u8> {
     with_ref(|s| s.local_id()).flatten()
 }

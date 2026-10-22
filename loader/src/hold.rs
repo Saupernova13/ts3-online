@@ -214,7 +214,7 @@ mod tests {
     use super::*;
 
     fn st(level: u32, f: u32) -> State {
-        State { id: 1, seq: 1, level, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Default::default(), flags: f, target: 0, proj: Default::default() }
+        State { id: 1, seq: 1, level, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Default::default(), flags: f, target: 0, proj: Default::default(), rail: Default::default() }
     }
 
     #[test]

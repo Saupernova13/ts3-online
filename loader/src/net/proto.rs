@@ -7,7 +7,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 18;
+pub const VERSION: u16 = 19;
 pub const TAG_LEN: usize = 16;
 /// Zero bytes after a `Probe`'s build, so a probe is never shorter than its reply.
 pub const PROBE_PAD: usize = 40;
@@ -100,6 +100,8 @@ pub mod flags {
     pub const DOWN: u32 = 1 << 14;
     /// the owner's player is down and waiting for its partner (`Respawn` state 6)
     pub const WAITING: u32 = 1 << 15;
+    /// the owner flies Buzz's rail; `State.rail` follows on the wire
+    pub const FLYING: u32 = 1 << 16;
 }
 
 /// One player's state, sent by its owner.
@@ -121,6 +123,18 @@ pub struct State {
     pub target: u32,
     /// latest thrown object while in flight (`seq` 0: none)
     pub proj: Proj,
+    /// place on Buzz's flight rail, sent only with `flags::FLYING`
+    pub rail: Rail,
+}
+
+/// A ship's place on Buzz's flight rail (`flight`): the rail's index, the distance along it and the
+/// offsets up and sideways from it.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Rail {
+    pub rail: i32,
+    pub dist: f32,
+    pub up: f32,
+    pub side: f32,
 }
 
 /// A thrown object's physics state, from the thrower's copy.
@@ -140,6 +154,7 @@ pub fn sane(s: &State) -> bool {
     let coord = |v: &f32| v.is_finite() && v.abs() <= MAX_COORD;
     let speed = |v: &f32| v.is_finite() && v.abs() <= MAX_SPEED;
     s.pos.iter().all(coord) && s.yaw.is_finite() && s.cam.is_finite() && s.proj.pos.iter().all(coord) && s.proj.vel.iter().all(speed)
+        && [s.rail.dist, s.rail.up, s.rail.side].iter().all(coord)
 }
 
 /// Thrown-object speeds beyond this (m/s) are not real.
@@ -336,6 +351,12 @@ pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
             o.push(s.proj.seq);
             for v in s.proj.pos.iter().chain(&s.proj.vel) {
                 o.extend_from_slice(&v.to_le_bytes());
+            }
+            if s.flags & flags::FLYING != 0 {
+                o.extend_from_slice(&s.rail.rail.to_le_bytes());
+                for v in [s.rail.dist, s.rail.up, s.rail.side] {
+                    o.extend_from_slice(&v.to_le_bytes());
+                }
             }
         }
         Msg::Bye { id } => o.extend_from_slice(&[T_BYE, *id]),
@@ -597,19 +618,26 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
             }
             T_PING => Msg::Ping { seq: r.u32()?, t_us: r.u64()? },
             T_PONG => Msg::Pong { seq: r.u32()?, t_us: r.u64()? },
-            T_STATE => Msg::State(State {
-                id: r.u8()?,
-                seq: r.u32()?,
-                level: r.u32()?,
-                class: r.u8()?,
-                pos: [r.f32()?, r.f32()?, r.f32()?],
-                yaw: r.f32()?,
-                cam: r.f32()?,
-                pad: Pad { buttons: r.u16()?, lt: r.u8()?, rt: r.u8()?, lx: r.i16()?, ly: r.i16()?, rx: r.i16()?, ry: r.i16()? },
-                flags: r.u32()?,
-                target: r.u32()?,
-                proj: Proj { seq: r.u8()?, pos: [r.f32()?, r.f32()?, r.f32()?], vel: [r.f32()?, r.f32()?, r.f32()?] },
-            }),
+            T_STATE => {
+                let mut st = State {
+                    id: r.u8()?,
+                    seq: r.u32()?,
+                    level: r.u32()?,
+                    class: r.u8()?,
+                    pos: [r.f32()?, r.f32()?, r.f32()?],
+                    yaw: r.f32()?,
+                    cam: r.f32()?,
+                    pad: Pad { buttons: r.u16()?, lt: r.u8()?, rt: r.u8()?, lx: r.i16()?, ly: r.i16()?, rx: r.i16()?, ry: r.i16()? },
+                    flags: r.u32()?,
+                    target: r.u32()?,
+                    proj: Proj { seq: r.u8()?, pos: [r.f32()?, r.f32()?, r.f32()?], vel: [r.f32()?, r.f32()?, r.f32()?] },
+                    rail: Rail::default(),
+                };
+                if st.flags & flags::FLYING != 0 {
+                    st.rail = Rail { rail: r.i32()?, dist: r.f32()?, up: r.f32()?, side: r.f32()? };
+                }
+                Msg::State(st)
+            }
             T_BYE => Msg::Bye { id: r.u8()? },
             T_PROBE => {
                 let build = r.u64()?;
@@ -853,7 +881,10 @@ mod tests {
                 flags: 0xdead_beef,
                 target: 0x1234_5678,
                 proj: Proj { seq: 3, pos: [1.0, 2.0, 3.0], vel: [-4.0, 0.5, 9.0] },
+                // 0xdead_beef carries flags::FLYING
+                rail: Rail { rail: 2, dist: 1834.5, up: -3.25, side: 7.0 },
             }),
+            Msg::State(State { id: 2, seq: 1, level: 7, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: flags::RIDING, target: 0, proj: Proj::default(), rail: Rail::default() }),
             Msg::Bye { id: 3 },
             Msg::Probe { build: 0x6abf29b6_00bdc000 },
             Msg::ProbeReply { build: 5, host: true, players: 2, locked: true, name: "hoster".into() },
@@ -1091,7 +1122,7 @@ b")] {
 
     #[test]
     fn wrong_key_is_bad_key_and_tampering_is_caught() {
-        let m = Msg::State(State { id: 1, seq: 1, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Proj::default() });
+        let m = Msg::State(State { id: 1, seq: 1, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Proj::default(), rail: Rail::default() });
         let b = encode(&m, KEY);
         assert_eq!(decode(&b, b"other"), Err(DecodeError::BadKey));
         assert_eq!(decode(&b, &[]), Err(DecodeError::BadKey));
@@ -1136,7 +1167,7 @@ b")] {
 
     #[test]
     fn sane_states() {
-        let ok = State { id: 1, seq: 1, level: 0, class: 0, pos: [1.0, -2.0, 1.0e6], yaw: 3.0, cam: -3.0, pad: Pad::default(), flags: 0, target: 0, proj: Proj::default() };
+        let ok = State { id: 1, seq: 1, level: 0, class: 0, pos: [1.0, -2.0, 1.0e6], yaw: 3.0, cam: -3.0, pad: Pad::default(), flags: 0, target: 0, proj: Proj::default(), rail: Rail::default() };
         assert!(sane(&ok));
         assert!(!sane(&State { pos: [f32::NAN, 0.0, 0.0], ..ok }));
         assert!(!sane(&State { proj: Proj { seq: 1, pos: [0.0, f32::NAN, 0.0], vel: [0.0; 3] }, ..ok }));

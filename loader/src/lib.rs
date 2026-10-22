@@ -3,6 +3,7 @@
 pub mod actor;
 pub mod ai;
 pub mod checkpoint;
+pub mod flight;
 pub mod config;
 pub mod copy;
 pub mod doc;

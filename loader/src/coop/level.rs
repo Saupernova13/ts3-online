@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn a_loading_host_is_followed_to_the_level_it_loads() {
-        let st = |level, f| State { id: 0, seq: 1, level, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Default::default(), flags: f, target: 0, proj: Default::default() };
+        let st = |level, f| State { id: 0, seq: 1, level, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Default::default(), flags: f, target: 0, proj: Default::default(), rail: Default::default() };
         let train = level_hash("st_train");
         assert_eq!(host_level(Some(&st(0, flags::LOADING)), Some("st_train")), train);
         assert_eq!(host_level(Some(&st(0, flags::LOADING)), None), 0);

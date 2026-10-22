@@ -53,6 +53,8 @@ pub(super) struct Partner {
     /// owner gone or elsewhere: the avatar idles until it returns or the level ends
     pub(super) parked: bool,
     pub(super) ride: Ride,
+    /// owner's speed along Buzz's flight rail
+    pub(super) flight: crate::flight::Follow,
 }
 
 #[derive(Default)]
@@ -107,6 +109,7 @@ impl Partner {
             target_written: None,
             target_lost: 0,
             last_target_log_us: 0,
+            flight: Default::default(),
         }
     }
 
@@ -257,7 +260,7 @@ mod tests {
 
     #[test]
     fn a_newcomer_takes_over_a_parked_avatar_whose_owner_left() {
-        let present = |id: u8| (id, State { id, seq: 0, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Default::default() });
+        let present = |id: u8| (id, State { id, seq: 0, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Default::default(), rail: Default::default() });
         let bound = |slot: usize, avatar: u64, parked: bool| {
             let mut p = Partner::new(slot);
             (p.avatar, p.actor_id, p.class, p.parked) = (avatar, avatar + 1, 2, parked);
@@ -278,7 +281,7 @@ mod tests {
 
     #[test]
     fn regrouped_players_get_their_own_characters_back() {
-        let playing = |id: u8, class: u8| (id, State { id, seq: 0, level: 0, class, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Default::default() });
+        let playing = |id: u8, class: u8| (id, State { id, seq: 0, level: 0, class, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Default::default(), rail: Default::default() });
         let bound = |slot: usize, avatar: u64, class: usize| {
             let mut p = Partner::new(slot);
             (p.avatar, p.actor_id, p.class, p.parked) = (avatar, avatar + 1, class, true);

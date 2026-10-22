@@ -104,7 +104,6 @@ struct Frame<'a> {
 pub unsafe fn update() {
     let (name, level, switched) = current_level();
     follow_levels(level);
-    crate::wallet::update(level);
     crate::perf::section("world", || crate::world::update(level));
     crate::perf::section("npc", || crate::npc::update(level));
     let Ok(mut guard) = PARTNERS.lock() else { return };
@@ -118,6 +117,7 @@ pub unsafe fn update() {
     let mgr = global(MGR_PTR);
     let p0 = if mgr != 0 { slot_avatar(mgr, 0) } else { 0 };
     let loading = level != 0 && !track_load(switched, p0, &name);
+    crate::wallet::update(level, loading);
     crate::hold::update(if loading || p0 == 0 { "" } else { &name });
     let own_flags = if loading { flags::LOADING } else { 0 } | if crate::hold::paused() { flags::PAUSED } else { 0 } | respawn_flags(mgr);
 

@@ -25,6 +25,7 @@ same setup program again: it opens on your settings.
 
 - The Steam version of *Toy Story 3 Complete Edition* on every PC (the current Steam build; the
   loader leaves any other build untouched). Windows, or Linux and Steam Deck through Proton.
+- On Linux, a 64-bit system with glibc 2.35 or newer (SteamOS 3, Ubuntu 22.04 or newer).
 - A controller or the keyboard on every PC. With the keyboard, Q (the game's BACK) and menu keys stay on your own screen.
 - A way for the PCs to reach each other: the same LAN, or [Tailscale](https://tailscale.com)
   (free for personal use) for PCs in different places.
@@ -61,7 +62,9 @@ wizard:
 the mod there (`dinput8.dll`, and `steam_api64.dll` in place of Steam's so Proton loads it without a
 launch option; Steam's own is kept as `ts3-online/steam_api64_o.dll`), copies this setup into
 `ts3-online` so you can run it from there later, and saves your settings. Everything it writes stays
-in the game folder, so that folder can be moved to another PC or drive.
+in the game folder, so that folder can be moved to another PC or drive. Your own copy's save stays
+in the game's usual save folder (`%APPDATA%\Disney\...` on Windows, the game's Proton prefix on
+Linux); the backup in `ts3-online/save backups` moves with the folder.
 
 Run it again at any time for the **settings** page: switch between host and join, pick or type a
 new host address, change your name, password or port, forget games you joined before, check for

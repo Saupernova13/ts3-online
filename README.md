@@ -58,6 +58,8 @@ players yet; their scripts assume at most two avatars, so expect rough edges the
 - Windows 10/11 x64 with the Steam version of *Toy Story 3 Complete Edition*. The loader only
   patches the build it was made for (exe TimeDateStamp `0x6abf29b6`) and leaves any other build
   untouched; a Steam update means the addresses have to be found again.
+- Linux (glibc 2.35+) and Steam Deck through Proton, for the setup program; the loader still only
+  patches the same Windows build.
 - Up to 4 XInput controllers (Xbox pads, or virtual ones).
 - To build: a Rust toolchain with the `x86_64-pc-windows-msvc` target, and Git Bash for the
   helper scripts.

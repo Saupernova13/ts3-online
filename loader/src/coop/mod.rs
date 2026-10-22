@@ -287,7 +287,7 @@ unsafe fn drive(f: &Frame, id: u8, p: &mut Partner, st: State, used: &[usize]) {
     }
     let (out, delta, mag, idle) = partner_pad(mgr, p, st, now);
     if p.avatar != 0 {
-        projectile::follow(id, st.proj);
+        projectile::follow(id, st.proj, net::state_delay_ms(id).unwrap_or(0));
         let want = Target::decode(st.flags, st.target);
         if want != p.target {
             p.target = want;

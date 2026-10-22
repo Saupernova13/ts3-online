@@ -17,7 +17,7 @@ use crate::projectile;
 use crate::target::{self, Target};
 use crate::{log, net, pad};
 use level::{follow_levels, level_loaded, local_level_name};
-use partner::{adopt_parked, choose_class, class_name, free_slot, Class, Partner, CLASSES, SLOTS};
+use partner::{adopt_parked, choose_class, class_name, free_slot, set_aside_mismatched, Class, Partner, CLASSES, SLOTS};
 use steer::{is_idle, mirror_input, pressed_bits, rising, rotate_pad, steer_pad, stick_delta};
 use std::collections::HashMap;
 use std::ffi::c_char;
@@ -151,6 +151,7 @@ pub unsafe fn update() {
             park(*id, p, "left");
         }
     }
+    set_aside_mismatched(partners, &remote);
     for (id, _) in &remote {
         if !partners.contains_key(id) {
             adopt_parked(partners, *id, &remote);

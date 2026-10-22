@@ -151,9 +151,39 @@ pub(super) fn class_name(c: usize) -> String {
     CLASSES.get(c).map_or(String::new(), |c| String::from_utf8_lossy(&c.class[..c.class.len() - 1]).into_owned())
 }
 
-/// A newcomer takes over a departed player's parked avatar instead of a fresh slot.
+/// Keys of avatars set aside: session ids are below 4.
+const SET_ASIDE: u8 = 0x80;
+
+/// Bound avatars whose owner is gone, as (key, class).
+fn orphans(partners: &HashMap<u8, Partner>, remote: &[(u8, State)]) -> Vec<(u8, usize)> {
+    partners.iter().filter(|(i, p)| p.parked && p.avatar != 0 && !remote.iter().any(|(r, _)| r == *i)).map(|(i, p)| (*i, p.class)).collect()
+}
+
+/// After the players regroup under a new host their ids are handed out again, so an id can name a
+/// different player than the avatar it held. Such an avatar is parked under a spare key when an
+/// orphaned avatar of the player's own character exists, which `adopt_parked` then hands over.
+pub(super) fn set_aside_mismatched(partners: &mut HashMap<u8, Partner>, remote: &[(u8, State)]) {
+    for (id, st) in remote {
+        let class = st.class as usize;
+        let Some(p) = partners.get(id) else { continue };
+        if p.avatar == 0 || class >= CLASSES.len() || p.class == class || !orphans(partners, remote).iter().any(|(_, c)| *c == class) {
+            continue;
+        }
+        let Some(key) = (SET_ASIDE..=u8::MAX).find(|k| !partners.contains_key(k)) else { continue };
+        if let Some(mut p) = partners.remove(id) {
+            log!("coop: player {id} plays {} but slot {} holds {}; parking it", class_name(class), p.slot, class_name(p.class));
+            p.parked = true;
+            partners.insert(key, p);
+        }
+    }
+}
+
+/// A newcomer takes over a departed player's parked avatar instead of a fresh slot, one of its own
+/// character if there is one.
 pub(super) fn adopt_parked(partners: &mut HashMap<u8, Partner>, id: u8, remote: &[(u8, State)]) {
-    let old = partners.iter().find(|(i, p)| p.parked && p.avatar != 0 && !remote.iter().any(|(r, _)| r == *i)).map(|(i, _)| *i);
+    let class = remote.iter().find(|(r, _)| *r == id).map(|(_, s)| s.class as usize);
+    let orphans = orphans(partners, remote);
+    let old = orphans.iter().find(|(_, c)| Some(*c) == class).or(orphans.first()).map(|(i, _)| *i);
     let Some(old) = old.and_then(|o| partners.remove(&o).map(|p| (o, p))) else { return };
     let (old_id, p) = old;
     let mut q = Partner::new(p.slot);
@@ -244,5 +274,28 @@ mod tests {
         adopt_parked(&mut partners, 5, &[present(3), present(5)]);
         assert!(!partners.contains_key(&5));
         assert_eq!(partners.len(), 3);
+    }
+
+    #[test]
+    fn regrouped_players_get_their_own_characters_back() {
+        let playing = |id: u8, class: u8| (id, State { id, seq: 0, level: 0, class, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Default::default() });
+        let bound = |slot: usize, avatar: u64, class: usize| {
+            let mut p = Partner::new(slot);
+            (p.avatar, p.actor_id, p.class, p.parked) = (avatar, avatar + 1, class, true);
+            p
+        };
+        // the host (0, woody) left; Four (was 3, jessie) hosts now and has id 0, Three (buzz) keeps 2
+        let mut partners = HashMap::from([(0u8, bound(1, 0x100, 1)), (2u8, bound(2, 0x200, 0)), (3u8, bound(3, 0x300, 2))]);
+        let remote = [playing(0, 2), playing(2, 0)];
+        set_aside_mismatched(&mut partners, &remote);
+        assert!(!partners.contains_key(&0), "the old host's woody is set aside");
+        adopt_parked(&mut partners, 0, &remote);
+        assert_eq!(partners.get(&0).map(|p| (p.slot, p.avatar)), Some((3, 0x300)), "jessie's own avatar");
+        assert_eq!(partners.get(&2).map(|p| p.avatar), Some(0x200));
+        assert!(partners.iter().any(|(k, p)| *k >= SET_ASIDE && p.avatar == 0x100 && p.parked));
+        // nothing of its own to take: the player keeps driving what it has
+        let mut partners = HashMap::from([(0u8, bound(1, 0x100, 1))]);
+        set_aside_mismatched(&mut partners, &[playing(0, 2)]);
+        assert_eq!(partners.get(&0).map(|p| p.avatar), Some(0x100));
     }
 }

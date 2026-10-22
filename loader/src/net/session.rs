@@ -85,7 +85,10 @@ pub struct Session {
     peers: Vec<Peer>,
     roster: Vec<(u8, String)>,
     rtt: BTreeMap<u8, u32>,
-    states: BTreeMap<u8, State>,
+    /// each remote player's latest state and when it arrived
+    states: BTreeMap<u8, (State, u64)>,
+    /// `now_us` of the latest tick
+    clock: u64,
     pending: Option<Local>,
     local_target: u32,
     local_proj: Proj,
@@ -133,6 +136,7 @@ impl Session {
             peers: Vec::new(),
             rtt: BTreeMap::new(),
             states: BTreeMap::new(),
+            clock: 0,
             pending: None,
             local_target: 0,
             local_proj: Proj::default(),
@@ -200,7 +204,15 @@ impl Session {
     }
 
     pub fn remote_states(&self) -> Vec<(u8, State)> {
-        self.states.iter().map(|(i, s)| (*i, *s)).collect()
+        self.states.iter().map(|(i, (s, _))| (*i, *s)).collect()
+    }
+
+    /// How old player `id`'s latest state is: half a round trip per hop (a client's view of
+    /// another client is relayed by the host) plus the time since it arrived.
+    pub fn state_delay_ms(&self, id: u8) -> Option<u32> {
+        let (_, received) = self.states.get(&id)?;
+        let (rtt, hops) = if self.is_host() { (self.rtt_ms(id)?, 1) } else { (self.rtt_ms(0)?, if id == 0 { 1 } else { 2 }) };
+        Some(rtt * hops / 2 + (self.clock.saturating_sub(*received) / 1000) as u32)
     }
 
     /// Sent on the next rate-limited `tick`; unsent buttons are merged in so a short tap survives.
@@ -488,6 +500,7 @@ impl Session {
     }
 
     pub fn tick(&mut self, now_us: u64) {
+        self.clock = now_us;
         if self.is_host() {
             self.host_tick(now_us);
         } else {
@@ -531,11 +544,11 @@ impl Session {
         self.events.push(Event::Rtt { id, ms });
     }
 
-    fn store_state(&mut self, s: State) -> bool {
-        if self.states.get(&s.id).is_some_and(|old| !newer(s.seq, old.seq)) {
+    fn store_state(&mut self, s: State, now: u64) -> bool {
+        if self.states.get(&s.id).is_some_and(|(old, _)| !newer(s.seq, old.seq)) {
             return false;
         }
-        self.states.insert(s.id, s);
+        self.states.insert(s.id, (s, now));
         true
     }
 
@@ -561,7 +574,7 @@ impl Session {
             Msg::Ping { seq, t_us } => self.send(from, &Msg::Pong { seq, t_us }),
             Msg::Pong { t_us, .. } => self.note_rtt(id, t_us, now),
             Msg::State(s) if s.id == id && proto::sane(&s) => {
-                if self.store_state(s) {
+                if self.store_state(s, now) {
                     let m = Msg::State(s);
                     let others: Vec<SocketAddr> = self.peers.iter().filter(|p| p.id != id).map(|p| p.addr).collect();
                     for a in others {
@@ -697,7 +710,7 @@ impl Session {
             Msg::Ping { seq, t_us } => self.send(from, &Msg::Pong { seq, t_us }),
             Msg::Pong { t_us, .. } => self.note_rtt(0, t_us, now),
             Msg::State(s) if Some(s.id) != self.local_id && proto::sane(&s) => {
-                self.store_state(s);
+                self.store_state(s, now);
             }
             Msg::Bye { id: 0 } => self.host_lost(),
             // a changed host level means its world list started over
@@ -1042,6 +1055,29 @@ mod tests {
         host.handle(addr(1), &encode(&Msg::State(spoof)), 102 * MS);
         assert!(host.drain_outgoing().is_empty());
         assert_eq!(host.remote_states().len(), 1);
+    }
+
+    #[test]
+    fn a_states_delay_is_its_trip_plus_its_wait() {
+        let (mut host, mut a, mut b) = two_clients();
+        assert_eq!(b.state_delay_ms(0), None, "no state yet");
+        host.rtt.insert(1, 30);
+        b.rtt.insert(0, 40);
+        a.set_local_state(1, 0, [0.0; 3], 0.0, 0.0, Pad::default(), 0);
+        a.tick(100 * MS);
+        deliver(addr(1), &mut a, addr(H), &mut host, 100 * MS);
+        host.set_local_state(1, 0, [0.0; 3], 0.0, 0.0, Pad::default(), 0);
+        host.tick(110 * MS);
+        for (to, m) in msgs(&mut host) {
+            if to == addr(2) {
+                b.handle(addr(H), &encode(&m), 110 * MS);
+            }
+        }
+        host.tick(112 * MS);
+        b.tick(116 * MS);
+        assert_eq!(host.state_delay_ms(1), Some(15 + 12), "one hop");
+        assert_eq!(b.state_delay_ms(0), Some(20 + 6), "from the host");
+        assert_eq!(b.state_delay_ms(1), Some(40 + 6), "relayed: two hops");
     }
 
     #[test]

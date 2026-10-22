@@ -68,6 +68,11 @@ pub fn remote_states() -> Vec<(u8, State)> {
     with_ref(|s| s.remote_states()).unwrap_or_default()
 }
 
+/// How old player `id`'s latest state is, estimated from the round trips.
+pub fn state_delay_ms(id: u8) -> Option<u32> {
+    with_ref(|s| s.state_delay_ms(id)).flatten()
+}
+
 /// Host: "" outside a level.
 pub fn set_local_level_name(name: &str) {
     with(|s| s.set_local_level_name(name));

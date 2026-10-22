@@ -45,6 +45,7 @@ pub fn choose(mut claim: impl FnMut(u32) -> bool) -> Option<u32> {
 
 /// A copy that was just closed holds its number for a few seconds while it exits.
 pub const CLAIM_WAIT_MS: u64 = 15_000;
+#[cfg_attr(not(windows), allow(dead_code))] // used by the game-side glue only
 const CLAIM_RETRY_MS: u64 = 250;
 
 /// (copy number, claimed): when every number stays taken, 4 unclaimed, which shares copy 4's pad,

@@ -10,10 +10,12 @@
 /// Respawn component states (`0x140645280`): down and waiting for the partner's point, then
 /// respawning at it.
 pub const WAITING_FOR_PARTNER: u32 = 6;
+/// Respawning at the partner's point: the wait ended without a restart.
+pub const RESPAWNING_AT_POINT: u32 = 7;
 /// The game leaves the wait the frame a point exists; this long without one, the point is given.
 pub const GRACE_MS: u64 = 2_000;
-/// A partner's wait is still shown this long after its owner left it: the owner leaves the wait the
-/// frame it sees this copy's player waiting, which may be before this copy has seen it wait.
+/// A player's wait is still sent this long after it restarted: it leaves the wait the frame it sees
+/// everyone else waiting, which may be before they have seen it wait, or a stalled copy never does.
 pub const WAIT_LATCH_MS: u64 = 1_500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,50 +42,28 @@ pub fn together(owners: &[(bool, bool)]) -> Option<(bool, bool)> {
     (!owners.is_empty()).then(|| (owners.iter().all(|o| o.0), owners.iter().all(|o| o.1)))
 }
 
-/// The local player's wait as sent: held `WAIT_LATCH_MS` after it ends, so a copy that stalls for
-/// a few frames still receives it (a player restarts the moment it sees everyone wait).
+/// The local player's (down, waiting) as sent, from its Respawn state: the wait is held
+/// `WAIT_LATCH_MS` after a restart, and dropped at once when the player respawns at a partner instead.
 #[derive(Debug, Default)]
 pub struct SentWait {
     waited_at: Option<u64>,
 }
 
 impl SentWait {
-    pub fn update(&mut self, waiting: bool, now_ms: u64) -> bool {
-        if waiting {
-            self.waited_at = Some(now_ms);
+    pub fn update(&mut self, down: bool, state: u32, now_ms: u64) -> (bool, bool) {
+        match state {
+            WAITING_FOR_PARTNER => self.waited_at = Some(now_ms),
+            RESPAWNING_AT_POINT => self.waited_at = None,
+            _ => {}
         }
-        self.waited_at.is_some_and(|t| now_ms.saturating_sub(t) < WAIT_LATCH_MS)
+        let waiting = self.waited_at.is_some_and(|t| now_ms.saturating_sub(t) < WAIT_LATCH_MS);
+        (down || waiting, waiting)
     }
 }
 
 #[derive(Debug, Default)]
 pub struct Wait {
     since: Option<u64>,
-}
-
-/// What slot 1's stand-in shows of the remote partners: each one's wait is held `WAIT_LATCH_MS`
-/// before they are put `together`, so a slow copy still sees every partner wait at once.
-#[derive(Debug, Default)]
-pub struct Shown {
-    waited_at: std::collections::HashMap<u8, u64>,
-}
-
-impl Shown {
-    /// `owners`: (player id, down, waiting) of each remote partner in the level.
-    pub fn update(&mut self, owners: &[(u8, bool, bool)], now_ms: u64) -> Option<(bool, bool)> {
-        self.waited_at.retain(|id, _| owners.iter().any(|o| o.0 == *id));
-        let shown: Vec<(bool, bool)> = owners
-            .iter()
-            .map(|&(id, down, waiting)| {
-                if waiting {
-                    self.waited_at.insert(id, now_ms);
-                }
-                let waiting = self.waited_at.get(&id).is_some_and(|t| now_ms.saturating_sub(*t) < WAIT_LATCH_MS);
-                (down || waiting, waiting)
-            })
-            .collect();
-        together(&shown)
-    }
 }
 
 impl Wait {
@@ -109,7 +89,7 @@ pub use live::{local_status, update};
 
 #[cfg(windows)]
 mod live {
-    use super::{Down, SentWait, Shown, Source, Wait, WAITING_FOR_PARTNER};
+    use super::{together, Down, SentWait, Source, Wait, WAITING_FOR_PARTNER};
     use crate::actor;
     use crate::game::*;
     use crate::log;
@@ -133,7 +113,6 @@ mod live {
     const POINT_LEN: usize = 0x34;
 
     static WAIT: Mutex<Option<Wait>> = Mutex::new(None);
-    static SHOWN: Mutex<Option<Shown>> = Mutex::new(None);
     static SENT: Mutex<SentWait> = Mutex::new(SentWait { waited_at: None });
     static LAST: Mutex<[u32; 2]> = Mutex::new([0; 2]);
     static START: OnceLock<Instant> = OnceLock::new();
@@ -149,10 +128,9 @@ mod live {
     /// The local player's (down, waiting for its partner) as sent to the partners.
     pub unsafe fn local_status(mgr: u64) -> (bool, bool) {
         let me = if mgr == 0 { 0 } else { respawn(slot_avatar(mgr, 0)) };
-        let (down, waiting) = if me == 0 { (false, false) } else { (rd_u8(me + DOWN) != 0, rd_u32(me + STATE) == WAITING_FOR_PARTNER) };
+        let (down, state) = if me == 0 { (false, 0) } else { (rd_u8(me + DOWN) != 0, rd_u32(me + STATE)) };
         let now = START.get_or_init(Instant::now).elapsed().as_millis() as u64;
-        let waiting = SENT.lock().map_or(waiting, |mut s| s.update(waiting, now));
-        (down, waiting)
+        SENT.lock().map_or((down, state == WAITING_FOR_PARTNER), |mut s| s.update(down, state, now))
     }
 
     /// Per frame on the game thread, with slot 0 (the local player) and slot 1 (its partner);
@@ -165,12 +143,10 @@ mod live {
             return;
         }
         let now = START.get_or_init(Instant::now).elapsed().as_millis() as u64;
-        if partner != 0 {
-            let Ok(mut shown) = SHOWN.lock() else { return };
-            if let Some((down, waiting)) = shown.get_or_insert_with(Shown::default).update(owners, now) {
-                wr_u8(partner + DOWN, down as u8);
-                wr_u8(partner + WAITING, waiting as u8);
-            }
+        let shown: Vec<(bool, bool)> = owners.iter().map(|o| (o.1, o.2)).collect();
+        if let (Some((down, waiting)), true) = (together(&shown), partner != 0) {
+            wr_u8(partner + DOWN, down as u8);
+            wr_u8(partner + WAITING, waiting as u8);
         }
         log_changes(me, partner);
         let d = Down { state: rd_u32(me + STATE), has_point: rd_u8(points + P0_VALID) != 0, own_checkpoint: rd_u8(points + P1_VALID) != 0 };
@@ -247,35 +223,23 @@ mod tests {
     }
 
     #[test]
-    fn a_partners_wait_is_shown_a_while_after_it_ends() {
-        let mut s = Shown::default();
-        assert_eq!(s.update(&[], 0), None);
-        assert_eq!(s.update(&[(1, false, false)], 0), Some((false, false)));
-        assert_eq!(s.update(&[(1, true, false)], 10), Some((true, false)));
-        assert_eq!(s.update(&[(1, true, true)], 20), Some((true, true)));
-        assert_eq!(s.update(&[(1, false, false)], 20 + WAIT_LATCH_MS - 1), Some((true, true)), "the owner already restarted");
-        assert_eq!(s.update(&[(1, false, false)], 20 + WAIT_LATCH_MS), Some((false, false)));
-    }
-
-    #[test]
-    fn the_local_wait_is_sent_a_while_after_it_ends() {
+    fn the_local_wait_is_sent_a_while_after_a_restart() {
         let mut s = SentWait::default();
-        assert!(!s.update(false, 0));
-        assert!(s.update(true, 100));
-        assert!(s.update(false, 100 + WAIT_LATCH_MS - 1), "restarted at once; still sent");
-        assert!(!s.update(false, 100 + WAIT_LATCH_MS));
+        assert_eq!(s.update(false, 0, 0), (false, false));
+        assert_eq!(s.update(true, 4, 50), (true, false));
+        assert_eq!(s.update(true, WAITING_FOR_PARTNER, 100), (true, true));
+        // restarted at the checkpoint (5, then up): still sent as down and waiting
+        assert_eq!(s.update(false, 5, 120), (true, true));
+        assert_eq!(s.update(false, 0, 100 + WAIT_LATCH_MS - 1), (true, true));
+        assert_eq!(s.update(false, 0, 100 + WAIT_LATCH_MS), (false, false));
     }
 
     #[test]
-    fn partners_that_waited_at_different_moments_all_count_as_waiting() {
-        let mut s = Shown::default();
-        // player 1 waits, then restarts as soon as it sees the others wait; player 3 waits last
-        assert_eq!(s.update(&[(1, true, true), (2, true, false), (3, true, false)], 0), Some((true, false)));
-        assert_eq!(s.update(&[(1, true, true), (2, true, true), (3, true, false)], 300), Some((true, false)));
-        assert_eq!(s.update(&[(1, false, false), (2, false, false), (3, true, true)], 800), Some((true, true)));
-        // a partner that left the level is forgotten
-        assert_eq!(s.update(&[(3, false, false)], 900), Some((true, true)));
-        assert_eq!(s.update(&[(3, false, false)], 800 + WAIT_LATCH_MS), Some((false, false)));
+    fn respawning_at_a_partner_ends_the_wait_at_once() {
+        let mut s = SentWait::default();
+        assert_eq!(s.update(true, WAITING_FOR_PARTNER, 100), (true, true));
+        assert_eq!(s.update(true, RESPAWNING_AT_POINT, 200), (true, false));
+        assert_eq!(s.update(false, 0, 220), (false, false));
     }
 
     #[test]

@@ -40,6 +40,22 @@ pub fn together(owners: &[(bool, bool)]) -> Option<(bool, bool)> {
     (!owners.is_empty()).then(|| (owners.iter().all(|o| o.0), owners.iter().all(|o| o.1)))
 }
 
+/// The local player's wait as sent: held `WAIT_LATCH_MS` after it ends, so a copy that stalls for
+/// a few frames still receives it (a player restarts the moment it sees everyone wait).
+#[derive(Debug, Default)]
+pub struct SentWait {
+    waited_at: Option<u64>,
+}
+
+impl SentWait {
+    pub fn update(&mut self, waiting: bool, now_ms: u64) -> bool {
+        if waiting {
+            self.waited_at = Some(now_ms);
+        }
+        self.waited_at.is_some_and(|t| now_ms.saturating_sub(t) < WAIT_LATCH_MS)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Wait {
     since: Option<u64>,
@@ -93,7 +109,7 @@ pub use live::{local_status, update};
 
 #[cfg(windows)]
 mod live {
-    use super::{Down, Shown, Source, Wait, WAITING_FOR_PARTNER};
+    use super::{Down, SentWait, Shown, Source, Wait, WAITING_FOR_PARTNER};
     use crate::actor;
     use crate::game::*;
     use crate::log;
@@ -118,6 +134,7 @@ mod live {
 
     static WAIT: Mutex<Option<Wait>> = Mutex::new(None);
     static SHOWN: Mutex<Option<Shown>> = Mutex::new(None);
+    static SENT: Mutex<SentWait> = Mutex::new(SentWait { waited_at: None });
     static LAST: Mutex<[u32; 2]> = Mutex::new([0; 2]);
     static START: OnceLock<Instant> = OnceLock::new();
 
@@ -129,13 +146,13 @@ mod live {
         }
     }
 
-    /// The local player's (down, waiting for its partner).
+    /// The local player's (down, waiting for its partner) as sent to the partners.
     pub unsafe fn local_status(mgr: u64) -> (bool, bool) {
         let me = if mgr == 0 { 0 } else { respawn(slot_avatar(mgr, 0)) };
-        if me == 0 {
-            return (false, false);
-        }
-        (rd_u8(me + DOWN) != 0, rd_u32(me + STATE) == WAITING_FOR_PARTNER)
+        let (down, waiting) = if me == 0 { (false, false) } else { (rd_u8(me + DOWN) != 0, rd_u32(me + STATE) == WAITING_FOR_PARTNER) };
+        let now = START.get_or_init(Instant::now).elapsed().as_millis() as u64;
+        let waiting = SENT.lock().map_or(waiting, |mut s| s.update(waiting, now));
+        (down, waiting)
     }
 
     /// Per frame on the game thread, with slot 0 (the local player) and slot 1 (its partner);
@@ -238,6 +255,15 @@ mod tests {
         assert_eq!(s.update(&[(1, true, true)], 20), Some((true, true)));
         assert_eq!(s.update(&[(1, false, false)], 20 + WAIT_LATCH_MS - 1), Some((true, true)), "the owner already restarted");
         assert_eq!(s.update(&[(1, false, false)], 20 + WAIT_LATCH_MS), Some((false, false)));
+    }
+
+    #[test]
+    fn the_local_wait_is_sent_a_while_after_it_ends() {
+        let mut s = SentWait::default();
+        assert!(!s.update(false, 0));
+        assert!(s.update(true, 100));
+        assert!(s.update(false, 100 + WAIT_LATCH_MS - 1), "restarted at once; still sent");
+        assert!(!s.update(false, 100 + WAIT_LATCH_MS));
     }
 
     #[test]

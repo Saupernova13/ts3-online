@@ -402,6 +402,15 @@ unsafe fn bind(mgr: u64, id: u8, p: &mut Partner, st: &State, own_class: Option<
         c if (c as usize) < CLASSES.len() => c as usize,
         _ => choose_class(own_class, used, CLASSES.len()),
     };
+    // the level brings back player 2 as local co-op does; swapping that avatar out mid-flight crashes
+    // st_buzzgame (its flight controller outlives the swap and finds no view, FINDINGS 10)
+    let existing = slot_avatar(mgr, slot as u64);
+    if existing != 0 && class_of(existing) == Some(p.class) {
+        p.avatar = existing;
+        p.actor_id = actor::id(existing);
+        log!("coop: player {id} bound: slot {slot} avatar {existing:#x} actor {:#x} class {} (the level's own)", p.actor_id, class_name(p.class));
+        return;
+    }
     let avatar = spawn(mgr, &CLASSES[p.class], st.pos, st.yaw);
     if avatar == 0 {
         input_release(input, slot as u32);

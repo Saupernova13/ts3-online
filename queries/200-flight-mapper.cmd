@@ -2,4 +2,4 @@
 maxlen 5000
 func 1405bccd0
 func 1405bcd10
-xrefs 1405bccd0
+refsonly 1405bccd0

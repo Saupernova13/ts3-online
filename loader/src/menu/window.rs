@@ -244,7 +244,7 @@ unsafe fn child(parent: HWND, class: &str, text: &str, style: u32, ex: u32, rect
 }
 
 /// Runs the window to completion on the calling thread; `None` when it could not open.
-pub(super) unsafe fn show(opts: &net::Options, last: &str, build: u64) -> Option<Picked> {
+pub(super) unsafe fn show(opts: &net::Options, last: &str, join_to: Option<&str>, build: u64) -> Option<Picked> {
     let app = match App::new(opts, build) {
         Ok(a) => a,
         Err(e) => {
@@ -293,7 +293,7 @@ pub(super) unsafe fn show(opts: &net::Options, last: &str, build: u64) -> Option
     child(hwnd, "STATIC", "Games found", SS_LEFT as u32, 0, (16, 84, 368, 18), 0);
     let list = child(hwnd, "LISTBOX", "", tab | WS_VSCROLL | WS_BORDER | (LBS_NOTIFY | LBS_NOINTEGRALHEIGHT) as u32, WS_EX_CLIENTEDGE, (16, 104, 368, 124), ID_LIST);
     label("Address", 240);
-    let addr = child(hwnd, "EDIT", last, edit_style, WS_EX_CLIENTEDGE, (110, 240, 274, 24), ID_ADDR);
+    let addr = child(hwnd, "EDIT", join_to.unwrap_or(last), edit_style, WS_EX_CLIENTEDGE, (110, 240, 274, 24), ID_ADDR);
     let join = child(hwnd, "BUTTON", "Join", tab | BS_PUSHBUTTON as u32, 0, (16, 280, 176, 30), ID_JOIN);
     let host = child(hwnd, "BUTTON", "Host", tab | BS_PUSHBUTTON as u32, 0, (208, 280, 176, 30), ID_HOST);
     let own = child(hwnd, "STATIC", "This PC: ...", SS_LEFT as u32, 0, (16, 320, 368, 18), 0);
@@ -322,6 +322,11 @@ pub(super) unsafe fn show(opts: &net::Options, last: &str, build: u64) -> Option
     SetForegroundWindow(hwnd);
     SetFocus(name);
     SetTimer(hwnd, TIMER_ID, TIMER_MS, None);
+    if let Some(j) = join_to {
+        // the saved game: the window closes by itself once it answers
+        log!("menu: joining {j}");
+        try_join(hwnd, Choice::Join(j.to_string()));
+    }
 
     let mut msg: MSG = std::mem::zeroed();
     while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {

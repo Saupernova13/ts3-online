@@ -1,4 +1,4 @@
-//! `dev_cmds=1`: once a second the game thread runs and empties `%LOCALAPPDATA%\ts3online\cmd.copyN.txt`.
+//! `dev_cmds=1`: once a second the game thread runs and empties `<game>\ts3-online\cmd.copyN.txt`.
 //! For research: post game events by name and mark the log.
 use crate::game::*;
 use crate::{hooks, log};
@@ -64,8 +64,8 @@ pub fn enable(copy: u32) {
     COPY.store(copy.max(1), Ordering::Relaxed);
 }
 
-pub fn cmd_path(local_app_data: &str, copy: u32) -> std::path::PathBuf {
-    std::path::PathBuf::from(local_app_data).join("ts3online").join(format!("cmd.copy{copy}.txt"))
+pub fn cmd_path(base: &std::path::Path, copy: u32) -> std::path::PathBuf {
+    base.join(format!("cmd.copy{copy}.txt"))
 }
 
 /// The game's broadcast post entry; the hooks group detours it into `hooks::post_broadcast`.
@@ -302,7 +302,7 @@ pub unsafe fn tick() {
         }
         *last = Some(Instant::now());
     }
-    let path = cmd_path(&std::env::var("LOCALAPPDATA").unwrap_or_default(), copy);
+    let path = cmd_path(&crate::copy::base(), copy);
     let Ok(text) = std::fs::read_to_string(&path) else { return };
     if text.trim().is_empty() {
         return;
@@ -368,8 +368,8 @@ mod tests {
 
     #[test]
     fn command_file_path_follows_the_copy() {
-        let p = cmd_path(r"C:\L", 2);
-        assert!(p.ends_with("cmd.copy2.txt") && p.to_string_lossy().contains("ts3online"));
+        let p = cmd_path(std::path::Path::new(r"G:\Game\ts3-online"), 2);
+        assert!(p.ends_with("cmd.copy2.txt") && p.to_string_lossy().contains("ts3-online"));
     }
 
     #[test]

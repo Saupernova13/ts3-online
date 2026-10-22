@@ -1,5 +1,23 @@
-//! Which copy of the game this is (1-4), claimed through named mutexes, and the per-copy file names.
-use std::path::PathBuf;
+//! Which copy of the game this is (1-4), claimed through named mutexes, and where its files go:
+//! everything the mod writes stays in `<game>/ts3-online`, so the game folder can move between PCs.
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+/// The mod's folder inside the game folder.
+pub const MOD_DIR: &str = "ts3-online";
+/// Steam's own `steam_api64.dll`, moved into the mod's folder when the mod takes its place.
+pub const STEAM_ORIGINAL: &str = "steam_api64_o.dll";
+static BASE: OnceLock<PathBuf> = OnceLock::new();
+
+/// Sets the mod's folder from the game folder, once; returns it.
+pub fn set_base(game_dir: &Path) -> PathBuf {
+    BASE.get_or_init(|| game_dir.join(MOD_DIR)).clone()
+}
+
+/// The mod's folder (`ts3-online` beside the exe once `set_base` ran).
+pub fn base() -> PathBuf {
+    BASE.get().cloned().unwrap_or_else(|| PathBuf::from(MOD_DIR))
+}
 
 pub const MAX_COPIES: u32 = 4;
 
@@ -16,13 +34,13 @@ pub fn log_name(n: u32) -> String {
 }
 
 /// Redirected save root of copy n.
-pub fn save_root(local_app_data: &str, n: u32) -> PathBuf {
-    PathBuf::from(local_app_data).join("ts3online").join(format!("copy{n}"))
+pub fn save_root(base: &Path, n: u32) -> PathBuf {
+    base.join(format!("copy{n}"))
 }
 
 /// App data root a client uses to play the host's save.
-pub fn session_root(local_app_data: &str) -> PathBuf {
-    PathBuf::from(local_app_data).join("ts3online").join("session")
+pub fn session_root(base: &Path) -> PathBuf {
+    base.join("session")
 }
 
 /// Holds `Saved Game` and `newsettings.bin`.
@@ -30,11 +48,11 @@ pub fn savedata_dir(root: &std::path::Path) -> PathBuf {
     root.join("Disney").join("Toy Story 3 Complete Edition").join("savedata")
 }
 
-pub fn normal_root(app_data: &str, local_app_data: &str, n: u32) -> PathBuf {
+pub fn normal_root(app_data: &str, base: &Path, n: u32) -> PathBuf {
     if n <= 1 {
         PathBuf::from(app_data)
     } else {
-        save_root(local_app_data, n)
+        save_root(base, n)
     }
 }
 
@@ -45,6 +63,7 @@ pub fn choose(mut claim: impl FnMut(u32) -> bool) -> Option<u32> {
 
 /// A copy that was just closed holds its number for a few seconds while it exits.
 pub const CLAIM_WAIT_MS: u64 = 15_000;
+#[cfg_attr(not(windows), allow(dead_code))] // used by the game-side glue only
 const CLAIM_RETRY_MS: u64 = 250;
 
 /// (copy number, claimed): when every number stays taken, 4 unclaimed, which shares copy 4's pad,
@@ -86,16 +105,18 @@ mod tests {
         assert_eq!(mutex_name(2), "Local\\ts3online-copy-2");
         assert_eq!(log_name(1), "ts3online.log");
         assert_eq!(log_name(3), "ts3online.copy3.log");
-        assert_eq!(save_root(r"C:\L", 2), PathBuf::from(r"C:\L").join("ts3online").join("copy2"));
-        assert_eq!(session_root(r"C:\L"), PathBuf::from(r"C:\L").join("ts3online").join("session"));
+        let base = Path::new(r"G:\Game").join(MOD_DIR);
+        assert_eq!(save_root(&base, 2), Path::new(r"G:\Game").join("ts3-online").join("copy2"));
+        assert_eq!(session_root(&base), Path::new(r"G:\Game").join("ts3-online").join("session"));
     }
 
     #[test]
     fn save_folders() {
-        let root = session_root(r"C:\L");
+        let base = Path::new(r"G:\Game").join(MOD_DIR);
+        let root = session_root(&base);
         assert!(savedata_dir(&root).ends_with(PathBuf::from("Disney").join("Toy Story 3 Complete Edition").join("savedata")));
-        assert_eq!(normal_root(r"C:\A", r"C:\L", 1), PathBuf::from(r"C:\A"));
-        assert_eq!(normal_root(r"C:\A", r"C:\L", 3), save_root(r"C:\L", 3));
+        assert_eq!(normal_root(r"C:\A", &base, 1), PathBuf::from(r"C:\A"));
+        assert_eq!(normal_root(r"C:\A", &base, 3), save_root(&base, 3));
     }
 
     #[test]

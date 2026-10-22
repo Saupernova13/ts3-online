@@ -1,6 +1,7 @@
 # Testing
 
-In-game checks for the loader, in order. Every run writes `ts3online.log` next to the game exe.
+In-game checks for the loader, in order. Every run writes `ts3online.log` in `ts3-online` in the
+game folder.
 The watcher logs manager, input and split-screen values whenever they change.
 
 ## Setup
@@ -72,10 +73,12 @@ Board note: the pencil cursor keeps its last position; from Toy Box's spot `A` a
 
 ## T7: two copies on one PC (H0, passed 2026-10-17 except input focus)
 
-Config in `%LOCALAPPDATA%\ts3online\ts3online.ini`: `enable=instances`, then `[copy1]` with `pad=1` and
+Config in `ts3-online/settings.ini` in the game folder (a `ts3online.ini` beside the exe is read
+first when present): `enable=instances`, then `[copy1]` with `pad=1` and
 `window=0,0,960,540`, `[copy2]` with `pad=2` and `window=960,0,960,540`. Start 2 virtual pads, launch
 copy 1 from Steam, then `tools/launch_copy.ps1 -CopySave`. Expect `copy 1 of 4` / `copy 2 of 4` in
-`ts3online.log` / `ts3online.copy2.log`, both pad hooks, and the saves redirect in copy 2's log. Use
+`ts3-online/ts3online.log` / `ts3-online/ts3online.copy2.log`, both pad hooks, and the saves redirect
+in copy 2's log. Use
 `tools/focus.ps1 -ProcessId` and `tools/shot.ps1 -ProcessId` to pick a copy. Known gap: only the
 focused copy reacts to its pad. To see where: press a button on the unfocused copy's pad and check
 its log for `pad: result=0 buttons=...`. No line, or `foreground=false` with `buttons=0x0000` while

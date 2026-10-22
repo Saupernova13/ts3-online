@@ -51,8 +51,10 @@ mod window;
 
 #[cfg(windows)]
 mod win;
+#[cfg(windows)]
+pub mod steamproxy;
 
-/// Read by `install.ps1 -Update` to tell which release is installed.
+/// Read by ts3-online-setup to tell which release is installed.
 #[used]
 static VERSION_MARK: &str = concat!("ts3online-version=", env!("CARGO_PKG_VERSION"), ";");
 
@@ -101,26 +103,53 @@ mod entry {
     pub unsafe extern "system" fn DllMain(hmodule: HINSTANCE, reason: u32, _reserved: *mut c_void) -> BOOL {
         if reason == DLL_PROCESS_ATTACH {
             DisableThreadLibraryCalls(hmodule);
-            attach();
+            if first_in_process() {
+                attach();
+            }
         }
         TRUE
     }
+
+    /// The mod is installed as `dinput8.dll` and as `steam_api64.dll`; Windows loads both, Proton
+    /// only the second. The first to load runs the mod, the other only forwards its calls.
+    fn first_in_process() -> bool {
+        use windows_sys::Win32::System::Environment::GetEnvironmentVariableW;
+        let name = win::wide(std::ffi::OsStr::new(ACTIVE_VAR));
+        if unsafe { GetEnvironmentVariableW(name.as_ptr(), std::ptr::null_mut(), 0) } != 0 {
+            return false;
+        }
+        unsafe { SetEnvironmentVariableW(name.as_ptr(), win::wide(std::ffi::OsStr::new("1")).as_ptr()) };
+        true
+    }
+
+    /// Process-wide marker of the copy of the loader that runs the mod.
+    const ACTIVE_VAR: &str = "TS3ONLINE_ACTIVE";
 
     fn attach() {
         let Some(exe) = win::exe_path() else { return };
         let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let (n, claimed) = copy::claim();
-        log::init(&dir.join(copy::log_name(n)));
+        let base = copy::set_base(&dir);
+        let made = std::fs::create_dir_all(&base);
+        log::init(&base.join(copy::log_name(n)));
         // the build aborts on panic; without this the log would end without a trace
         std::panic::set_hook(Box::new(|info| log!("panic: {info}")));
         log!("ts3online {} loaded in {}", env!("CARGO_PKG_VERSION"), exe.display());
         log!("copy {n} of {}", copy::MAX_COPIES);
+        if let Err(e) = made {
+            log!("cannot create {}: {e}; the mod's files cannot be written", base.display());
+        }
         if !claimed {
             log!("copy: every copy number stayed taken for {} s; running as copy {n} alongside the copy that has it (shared pad, log and saves)", copy::CLAIM_WAIT_MS / 1000);
         }
 
-        let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-        let (cfg, ini_path) = config::load(&dir, local.as_deref(), n);
+        // a game-folder ini first (the two-copy test script writes one), then the setup's settings,
+        // then where releases before 1.7 could keep it
+        let mut files = vec![dir.join("ts3online.ini"), base.join(config::SETTINGS)];
+        if let Some(l) = std::env::var_os("LOCALAPPDATA") {
+            files.push(PathBuf::from(l).join("ts3online").join("ts3online.ini"));
+        }
+        let (cfg, ini_path) = config::load(&files, n);
         log!("config: {cfg:?}");
         if !cfg.enabled {
             log!("disabled by ts3online.ini");
@@ -176,7 +205,7 @@ mod entry {
         if let Some(mode) = &cfg.net {
             let opts = net::Options { name: cfg.name.clone(), sim: cfg.net_sim, copy: n, port: cfg.net_port, peers: cfg.net_peers.clone(), key: cfg.net_key.clone() };
             if *mode == config::Net::Menu {
-                menu::start(menu::Init { ini: ini_path, opts, last: cfg.menu_last.clone() });
+                menu::start(menu::Init { ini: ini_path, opts, last: cfg.menu_last.clone(), join: cfg.join.clone(), recent: cfg.recent_hosts.clone() });
             } else {
                 net::start(mode, opts);
             }

@@ -297,17 +297,17 @@ fn install(session: Session) {
 }
 
 /// `<copy's app data>\Disney\Toy Story 3 Complete Edition\savedata\Saved Game`.
-pub fn host_save_path(app_data: &str, local_app_data: &str, copy: u32) -> PathBuf {
-    copy::savedata_dir(&copy::normal_root(app_data, local_app_data, copy)).join("Saved Game")
+pub fn host_save_path(app_data: &str, base: &Path, copy: u32) -> PathBuf {
+    copy::savedata_dir(&copy::normal_root(app_data, base, copy)).join("Saved Game")
 }
 
 /// The save a host hands joiners: the one its game plays, so a client that takes over hosting
 /// passes on the session's save, not its own.
-pub fn served_save_path(app_data: &str, local_app_data: &str, copy: u32, plays_session: bool) -> PathBuf {
+pub fn served_save_path(app_data: &str, base: &Path, copy: u32, plays_session: bool) -> PathBuf {
     if plays_session {
-        copy::savedata_dir(&copy::session_root(local_app_data)).join("Saved Game")
+        copy::savedata_dir(&copy::session_root(base)).join("Saved Game")
     } else {
-        host_save_path(app_data, local_app_data, copy)
+        host_save_path(app_data, base, copy)
     }
 }
 
@@ -325,8 +325,8 @@ fn client_session(build: u64, name: &str, host: SocketAddr, key: &NetKey) -> Ses
 fn host_session(build: u64, name: &str, copy: u32, key: &NetKey) -> Session {
     let mut s = Session::host(build, name);
     s.set_key(key.as_str().as_bytes());
-    let (app_data, local) = (std::env::var("APPDATA").unwrap_or_default(), std::env::var("LOCALAPPDATA").unwrap_or_default());
-    s.set_save_source(move || std::fs::read(served_save_path(&app_data, &local, copy, PLAYS_SESSION.load(Ordering::Relaxed))).ok());
+    let (app_data, base) = (std::env::var("APPDATA").unwrap_or_default(), copy::base());
+    s.set_save_source(move || std::fs::read(served_save_path(&app_data, &base, copy, PLAYS_SESSION.load(Ordering::Relaxed))).ok());
     s
 }
 
@@ -366,16 +366,18 @@ mod tests {
 
     #[test]
     fn a_host_serves_the_save_its_game_plays() {
-        assert_eq!(served_save_path(r"C:\A", r"C:\L", 2, false), host_save_path(r"C:\A", r"C:\L", 2));
-        let s = served_save_path(r"C:\A", r"C:\L", 2, true);
-        assert!(s.starts_with(PathBuf::from(r"C:\L").join("ts3online").join("session")) && s.ends_with("Saved Game"));
+        let base = Path::new(r"G:\Game\ts3-online");
+        assert_eq!(served_save_path(r"C:\A", base, 2, false), host_save_path(r"C:\A", base, 2));
+        let s = served_save_path(r"C:\A", base, 2, true);
+        assert!(s.starts_with(base.join("session")) && s.ends_with("Saved Game"));
     }
 
     #[test]
     fn host_save_path_follows_the_copy() {
-        let p1 = host_save_path(r"C:\A", r"C:\L", 1);
+        let base = Path::new(r"G:\Game\ts3-online");
+        let p1 = host_save_path(r"C:\A", base, 1);
         assert!(p1.starts_with(r"C:\A") && p1.ends_with("Saved Game") && p1.to_string_lossy().contains("savedata"));
-        let p2 = host_save_path(r"C:\A", r"C:\L", 2);
-        assert!(p2.starts_with(PathBuf::from(r"C:\L").join("ts3online").join("copy2")));
+        let p2 = host_save_path(r"C:\A", base, 2);
+        assert!(p2.starts_with(base.join("copy2")));
     }
 }

@@ -18,6 +18,10 @@ pub struct Init {
     pub opts: net::Options,
     /// the ini's `menu_last`
     pub last: String,
+    /// the game to join at once (`join`); the window stays only if it does not answer
+    pub join: Option<String>,
+    /// `recent_hosts`, probed with the other games
+    pub recent: Vec<String>,
 }
 
 struct Picked {
@@ -43,8 +47,9 @@ pub fn start(init: Init) {
 
 fn run(init: Init, build: u64) {
     log!("menu: shown");
-    let Init { ini, mut opts, last } = init;
-    let Some(picked) = (unsafe { window::show(&opts, &last, build) }) else {
+    let Init { ini, mut opts, last, join, recent } = init;
+    opts.peers.extend(recent.iter().cloned());
+    let Some(picked) = (unsafe { window::show(&opts, &last, join.as_deref(), build) }) else {
         log!("menu: no window; finding a host automatically");
         net::start(&Net::Auto, opts);
         return net::set_menu_open(false);
@@ -59,7 +64,10 @@ fn run(init: Init, build: u64) {
             Some(a.clone())
         }
     };
-    let changes = model::ini_changes(&opts.name, opts.key.as_str(), &last, &picked.name, &picked.key, joined.as_deref());
+    let mut changes = model::ini_changes(&opts.name, opts.key.as_str(), &last, &picked.name, &picked.key, joined.as_deref());
+    if let Some(a) = &joined {
+        changes.extend(model::host_changes(&recent, join.as_deref(), a));
+    }
     if let (false, Some(path)) = (changes.is_empty(), &ini) {
         save_settings(path, &changes);
     }

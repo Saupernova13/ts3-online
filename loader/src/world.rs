@@ -16,6 +16,7 @@ pub const GIVE_UP_MS: u64 = 10_000;
 /// Replays wait this long after the local player appears in the level.
 pub const SETTLE_MS: u64 = 3_000;
 
+#[cfg_attr(not(windows), allow(dead_code))] // used by the game-side glue only
 const MAX_CAPTURED: usize = 256;
 
 pub fn synced(event: &str) -> bool {
@@ -39,6 +40,7 @@ pub fn log_nth(n: u32) -> bool {
     n < 30 || n.is_multiple_of(25)
 }
 
+#[cfg_attr(not(windows), allow(dead_code))] // used by the game-side glue only
 fn push_capture(q: &mut Vec<(String, String)>, event: &str, name: &str) {
     if q.len() < MAX_CAPTURED && !q.iter().any(|(e, n)| e == event && n == name) {
         q.push((event.to_string(), name.to_string()));

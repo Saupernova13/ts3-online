@@ -10,3 +10,4 @@ work/
 __pycache__/
 *.pyc
 loader/target/
+setup/target/

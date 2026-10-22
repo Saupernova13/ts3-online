@@ -64,6 +64,8 @@ impl SentWait {
 #[derive(Debug, Default)]
 pub struct Wait {
     since: Option<u64>,
+    /// a point was given and the player has not been up since
+    given: bool,
 }
 
 impl Wait {
@@ -80,7 +82,18 @@ impl Wait {
         }
         // a later frame of the same wait starts a new grace, in case the point did not take
         self.since = Some(now_ms);
+        self.given = true;
         Some(if d.own_checkpoint { Source::OwnCheckpoint } else { Source::Partner })
+    }
+
+    /// Whether to take back the given point: the player is up again, and the next down chooses
+    /// afresh where the partners are then (left in place, it would respawn there at once).
+    pub fn take_back(&mut self, state: u32) -> bool {
+        let up = self.given && state == 0;
+        if up {
+            self.given = false;
+        }
+        up
     }
 }
 
@@ -152,7 +165,11 @@ mod live {
         let d = Down { state: rd_u32(me + STATE), has_point: rd_u8(points + P0_VALID) != 0, own_checkpoint: rd_u8(points + P1_VALID) != 0 };
         let partner_down = partner != 0 && rd_u8(partner + DOWN) != 0;
         let Ok(mut guard) = WAIT.lock() else { return };
-        let Some(source) = guard.get_or_insert_with(Wait::default).update(d, partner_down, now) else { return };
+        let wait = guard.get_or_insert_with(Wait::default);
+        if wait.take_back(d.state) {
+            wr_u8(points + P0_VALID, 0);
+        }
+        let Some(source) = wait.update(d, partner_down, now) else { return };
         let dst = (points + P0_POINT) as *mut u8;
         match source {
             Source::OwnCheckpoint => std::ptr::copy_nonoverlapping((points + P1_POINT) as *const u8, dst, POINT_LEN),
@@ -249,6 +266,18 @@ mod tests {
         assert_eq!(together(&[(true, true), (false, false)]), Some((false, false)), "one still stands");
         assert_eq!(together(&[(true, true), (true, false), (true, true)]), Some((true, false)), "all down, one not waiting yet");
         assert_eq!(together(&[(true, true), (true, true), (true, true)]), Some((true, true)));
+    }
+
+    #[test]
+    fn a_given_point_is_taken_back_once_the_player_is_up() {
+        let mut w = Wait::default();
+        assert!(!w.take_back(0), "nothing given");
+        w.update(down(WAITING_FOR_PARTNER, false, false), false, 0);
+        assert_eq!(w.update(down(WAITING_FOR_PARTNER, false, false), false, GRACE_MS), Some(Source::Partner));
+        assert!(!w.take_back(WAITING_FOR_PARTNER));
+        assert!(!w.take_back(RESPAWNING_AT_POINT), "still respawning");
+        assert!(w.take_back(0));
+        assert!(!w.take_back(0), "once");
     }
 
     #[test]

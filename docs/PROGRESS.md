@@ -337,6 +337,12 @@ town.
   horses kept running and both copies reached the same checkpoint. A level with walking enemies
   is still to be played.
 
+- 2026-10-22, thrown objects on time: with 50 ms of simulated delay each way, a ball the host threw
+  ran 75 ms behind on the client, 3-5 m at throwing speed. Each copy now estimates how old a
+  partner's state is from the round trips and carries the report forward by that age. Placing the
+  ball there directly threw one out of the level at a bounce (it was put inside the wall), so the
+  follower is steered by velocity instead and placed only when 3 m off. Measured both ways: 5-20 ms
+  behind, 0.2-0.4 m in flight, centimetres after the bounces.
 - 2026-10-22, four players, joining and leaving, shots: everything two players had was played
   with four copies on this PC (T31, T32). Four things only broke with more players: players 3 and 4
   had sticks but no buttons (their binding lookup answers -1; patched), a level switch with 3 or 4

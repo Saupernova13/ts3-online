@@ -108,12 +108,15 @@ mod entry {
     fn attach() {
         let Some(exe) = win::exe_path() else { return };
         let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-        let n = copy::claim();
+        let (n, claimed) = copy::claim();
         log::init(&dir.join(copy::log_name(n)));
         // the build aborts on panic; without this the log would end without a trace
         std::panic::set_hook(Box::new(|info| log!("panic: {info}")));
         log!("ts3online {} loaded in {}", env!("CARGO_PKG_VERSION"), exe.display());
         log!("copy {n} of {}", copy::MAX_COPIES);
+        if !claimed {
+            log!("copy: every copy number stayed taken for {} s; running as copy {n} alongside the copy that has it (shared pad, log and saves)", copy::CLAIM_WAIT_MS / 1000);
+        }
 
         let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
         let (cfg, ini_path) = config::load(&dir, local.as_deref(), n);

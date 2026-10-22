@@ -162,13 +162,16 @@ host and `npc: client following N actors` on the client.
 `work/scratch/npcdiff.py <host pid> <client pid>` compares named actors: none should be more than
 0.5 m apart (townspeople are a few tenths of a metre behind the host).
 
-## T17: thrown objects (passed 2026-10-20)
+## T17: thrown objects (passed 2026-10-20; with 50 ms each way, 2026-10-22)
 
 Start as for T11. Take the ball out (B), then throw it (RT) towards a wall so it bounces.
 `work/scratch/balltrace.py <pid> <s> <out.csv>` records the next spawned ball's physics position on
 one copy; run it on both copies, then throw. Expect `projectile: threw ... (seq N)` on the thrower's
-copy and `projectile: player P seq N -> ... following` on the other, and both traces within a few
-tenths of a metre through the bounces (the follower trails by the network delay).
+copy and `projectile: player P seq N -> ... following, M ms ahead` on the other, and both traces within a few
+tenths of a metre through the bounces. `work/scratch/throwlag.sh <thrower pid> <pad> <follower pid> <tag>`
+throws and runs `balllag.py`, which samples both copies at once and prints the follower's lag. With
+`net_sim=50,0,0` on both copies: lag 5-20 ms, mean distance in flight 0.2-0.4 m, both ways (75 ms and
+3-5 m behind before the report was carried forward).
 
 ## T18: join checks in the connect window (passed 2026-10-20)
 

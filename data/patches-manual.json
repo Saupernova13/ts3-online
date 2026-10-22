@@ -39,6 +39,14 @@
    "note": "ForceMountNode handler (FUN_14018d7d0): player index from FUN_1405bcd10 <= 1 -> <= 3 before the per-slot disable add/remove (both bounds-patched)"
   },
   {
+   "id": "bound_1405bb170",
+   "group": "bounds",
+   "va": "0x1405bb170",
+   "orig": "83fa027d1f",
+   "new": "83e2019090",
+   "note": "per-player button bindings (FUN_1405bb170, read by slot init's mapper setup FUN_140281140): players >= 2 got -1 for every rebindable control, so P3/P4 had sticks but no buttons; cmp edx,2/jge -> and edx,1 (P3/P4 use P1/P2's)"
+  },
+  {
    "id": "bound_1406a21b4",
    "group": "bounds",
    "va": "0x1406a21b4",

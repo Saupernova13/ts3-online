@@ -334,6 +334,25 @@ level and brings each copy to the front until it is past the intro movie.
 2. Close the host: after the old process lets go of the port, one client hosts and the others join
    it; each takes back its own avatar, and the joiners receive the session's save.
 
+## T33: every story level online (passed 2026-10-22, two copies, `net_sim=40,10,2`)
+
+`work/scratch/sweep.sh <level> [secs]` switches the host to a level, brings each copy to the front
+until it has loaded, waits, then prints each copy's binds, holds, respawns and drift and
+screenshots both windows. `samepos.py <pid_a> <pid_b> <secs>` compares each player with its partner
+on the other copy at the same moment.
+
+| Level | Result |
+|---|---|
+| `st_train`, `st_bonnie_woody`, `st_hauntedbakery`, `st_daycare`, `st_prisonbreak`, `st_junkyard`, `st_andysroom`, `st_woodybullseyechase_world`, `st_andysbasement` | loads on both, the hold resumes, the partner binds; idle drift under 3 m (spikes at respawns) |
+| `st_buzzgame`, `st_buzzflight` | both crashed every copy until the partner took the level's own ship; with the rail sync, partner and owner 4.5-5 m apart at the same moment (median, about 80 m/s; p90 9-13 m) |
+
+Entering a story level leaves both wallets untouched (`wallet:` lines show no spend).
+
+With four copies in `st_buzzgame`: no crash, slot 1 takes the level's ship and slots 2-3 a spawned
+one, and every partner's controller is in flight on the owner's rail (`flight` dev command).
+While the owner runs and jumps in Toy Box, its partner on the other copy stays 0.3 m from it
+(median, p90 0.8 m, max 1.2 m; `samepos.py`).
+
 ## T28: the host's enemies hurt clients (passed 2026-10-21, with dev hits)
 
 In Train Rescue, `healths` lists the level's enemies (`DrPorkchopUFO`); the bind line gives the

@@ -104,7 +104,6 @@ struct Frame<'a> {
 pub unsafe fn update() {
     let (name, level, switched) = current_level();
     follow_levels(level);
-    crate::wallet::update(level);
     crate::perf::section("world", || crate::world::update(level));
     crate::perf::section("npc", || crate::npc::update(level));
     let Ok(mut guard) = PARTNERS.lock() else { return };
@@ -118,6 +117,7 @@ pub unsafe fn update() {
     let mgr = global(MGR_PTR);
     let p0 = if mgr != 0 { slot_avatar(mgr, 0) } else { 0 };
     let loading = level != 0 && !track_load(switched, p0, &name);
+    crate::wallet::update(level, loading);
     crate::hold::update(if loading || p0 == 0 { "" } else { &name });
     let own_flags = if loading { flags::LOADING } else { 0 } | if crate::hold::paused() { flags::PAUSED } else { 0 } | respawn_flags(mgr);
 
@@ -246,7 +246,11 @@ unsafe fn publish_local(mgr: u64, p0: u64, level: u32, own_class: Option<usize>,
         log!("coop: keyboard buttons {:#06x} lt {} rt {}", keys.buttons, keys.lt, keys.rt);
     }
     let held = pad::merge(held, keys);
-    let state_flags = carry | extra_flags | if controls { 0 } else { flags::CONTROLS_OFF } | if riding { flags::RIDING } else { 0 };
+    let ship = crate::flight::controller(p0);
+    if ship != 0 {
+        net::set_local_rail(crate::flight::read(ship));
+    }
+    let state_flags = carry | extra_flags | if controls { 0 } else { flags::CONTROLS_OFF } | if riding { flags::RIDING } else { 0 } | if ship != 0 { flags::FLYING } else { 0 };
     let mut players: Vec<(u64, u8)> = partners.iter().filter(|(_, p)| p.avatar != 0).map(|(id, p)| (p.actor_id, *id)).collect();
     if let Some(me) = net::local_id() {
         players.push((actor::id(p0), me));
@@ -272,6 +276,9 @@ unsafe fn drive(f: &Frame, id: u8, p: &mut Partner, st: State, used: &[usize]) {
         log!("coop: player {id} is back: slot {} avatar {:#x}", p.slot, p.avatar);
     }
     let fresh = p.track(st.seq, st.pos, now);
+    if fresh && st.flags & flags::FLYING != 0 {
+        p.flight.observe(st.rail, now);
+    }
     if p.avatar != 0 && slot_avatar(mgr, p.slot as u64) != p.avatar {
         log!("coop: player {id} lost slot {} (avatar {:#x}); will rebind", p.slot, p.avatar);
         p.avatar = 0;
@@ -402,6 +409,15 @@ unsafe fn bind(mgr: u64, id: u8, p: &mut Partner, st: &State, own_class: Option<
         c if (c as usize) < CLASSES.len() => c as usize,
         _ => choose_class(own_class, used, CLASSES.len()),
     };
+    // the level brings back player 2 as local co-op does; swapping that avatar out mid-flight crashes
+    // st_buzzgame (its flight controller outlives the swap and finds no view, FINDINGS 10)
+    let existing = slot_avatar(mgr, slot as u64);
+    if existing != 0 && class_of(existing) == Some(p.class) {
+        p.avatar = existing;
+        p.actor_id = actor::id(existing);
+        log!("coop: player {id} bound: slot {slot} avatar {existing:#x} actor {:#x} class {} (the level's own)", p.actor_id, class_name(p.class));
+        return;
+    }
     let avatar = spawn(mgr, &CLASSES[p.class], st.pos, st.yaw);
     if avatar == 0 {
         input_release(input, slot as u32);
@@ -468,6 +484,11 @@ unsafe fn correct(p: &mut Partner, id: u8, st: &State, now: u64, delta: f32, mag
     if now.saturating_sub(p.last_drift_us) >= LOG_US {
         p.last_drift_us = now;
         log!("coop: player {id} slot {} drift {:.1} m, cam delta {:.1} deg, steer {:.2}", p.slot, dist(cur, st.pos), delta.to_degrees(), mag);
+        let ship = crate::flight::controller(p.avatar);
+        if ship != 0 {
+            let r = crate::flight::read(ship);
+            log!("coop: player {id} flight mode {} rail {} dist {:.1}, owner rail {} dist {:.1}", crate::flight::mode(ship), r.rail, r.dist, st.rail.rail, st.rail.dist);
+        }
     }
     // a summoned horse does not answer its rider's stick, nor carry its rider when placed: both
     // are placed on the owner every frame (a rider's position is its horse's)
@@ -476,6 +497,12 @@ unsafe fn correct(p: &mut Partner, id: u8, st: &State, now: u64, delta: f32, mag
     if horse != 0 {
         actor::place_pose(horse, st.pos, st.yaw);
         actor::place_pose(p.avatar, st.pos, st.yaw);
+        return;
+    }
+    // Buzz's flight places the ship from its rail state every frame, over any placing
+    let ship = if st.flags & flags::FLYING != 0 { crate::flight::controller(p.avatar) } else { 0 };
+    if ship != 0 {
+        crate::flight::write(ship, p.flight.now(st.rail, net::state_delay_ms(id).unwrap_or(0) as u64));
         return;
     }
     if dist2(cur, st.pos) <= SNAP_DIST * SNAP_DIST {

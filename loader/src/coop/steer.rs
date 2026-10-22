@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn an_owner_on_a_screen_drives_only_a_partner_on_the_same_screen() {
         let pad = Pad { buttons: 0x1000, rt: 255, ..Pad::default() };
-        let st = |flags| State { id: 1, seq: 1, level: 7, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad, flags, target: 0, proj: Default::default() };
+        let st = |flags| State { id: 1, seq: 1, level: 7, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad, flags, target: 0, proj: Default::default(), rail: Default::default() };
         // both on the same screen: the input goes through
         assert_eq!(mirror_input(st(flags::CONTROLS_OFF), true).pad, pad);
         // owner alone on a screen: the partner stands still

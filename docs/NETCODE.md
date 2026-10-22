@@ -188,6 +188,15 @@ rider's stick, so while owner and partner ride, the horse and the partner are pl
 position and heading every frame (`coop::ride`). A partner is also bound with player 1's level
 region and P2 start locator, as a local join is, so vehicle levels can auto-drive it.
 
+**Buzz's flight.** In the rail-flight levels (`st_buzzgame`, `st_buzzflight`) the flight controller
+places the ship from its own rail state every frame, so placing a partner does nothing. An owner
+whose player has a `BuzzFlightController` sends `flags::FLYING` and its rail state (rail index,
+distance along it, offsets up and sideways: `State.rail`, 16 bytes after the projectile); the
+other copies write it into the partner's controller every frame, the distance carried forward by
+the state's age at the owner's measured rail speed (at most 200 ms; a jump back to a checkpoint or
+onto another rail is not a speed). The partner is the level's own player-2 ship when it has the
+owner's class: swapping that ship for a new one crashed the level (FINDINGS 10).
+
 **Wallets (H6a).** The host owns the two HUD counters, `Stat_GOLD_COLLECTED` and
 `Stat_IMAGINATION_POINTS_COLLECTED` (`wallet::WALLETS`). It sends `Wallet { values, acked }` to each
 client when a value changes and once a second; the client writes the values into its stats table (the

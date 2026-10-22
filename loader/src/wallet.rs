@@ -160,7 +160,7 @@ mod live {
     }
 
     /// Per frame on the game thread; `level` is the play level's hash, 0 outside one.
-    pub unsafe fn update(level: u32) {
+    pub unsafe fn update(level: u32, loading: bool) {
         let stats = global(STATS_PTR);
         if level == 0 || stats == 0 || !net::active() {
             return;
@@ -187,6 +187,11 @@ mod live {
                 net::confirm_spends(client, upto);
             }
             net::set_local_wallet(&read(&live.idx));
+            return;
+        }
+        if loading {
+            // a level resets its counters while it loads, which is no spend
+            live.client.reset_applied();
             return;
         }
         let current = read(&live.idx);

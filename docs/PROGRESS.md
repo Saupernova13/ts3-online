@@ -355,3 +355,12 @@ town.
   ids were handed out again (both fixed). Shots: thrown objects are carried forward by the state's
   age (#43). A copy in the background runs at about 20 fps here and its intro
   movie stalls until it is in front, which only matters with several copies on one PC.
+- 2026-10-22, every story level online (T33): a sweep through all ten story levels with two copies
+  and 80 ms of simulated round trip. Three faults, all fixed: Buzz's game crashed both copies a
+  few seconds in (the partner's bind swapped out the level's own player-2 ship, whose flight
+  controller then found no view; the partner now takes the level's ship); in both flight levels
+  the partner drifted kilometres from its owner, because the flight controller places the ship from
+  its rail state (now synced, protocol 19: about 5 m apart at 80 m/s); and a client entering any
+  story level reported the level's reset of the coin counters as a purchase, which the host
+  deducted from the shared wallet (counters are now ignored while a level loads). The other eight
+  levels loaded, held and bound on both copies.

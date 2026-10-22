@@ -40,6 +40,8 @@ pub enum Cmd {
     Down(Option<u64>),
     /// log the story checkpoints
     Checkpoints,
+    /// log each slot's place on Buzz's flight rail
+    Flight,
     /// log every mission and unlock with its state
     Progress,
     /// set a mission or unlock (by name) through the game's own setter
@@ -133,6 +135,7 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
         "healths" => Ok(Cmd::Healths),
         "devices" => Ok(Cmd::Devices),
         "checkpoints" => Ok(Cmd::Checkpoints),
+        "flight" => Ok(Cmd::Flight),
         "down" => Ok(Cmd::Down(if rest.is_empty() { None } else { Some(rest.parse().map_err(|_| "down takes a Unix time in ms")?) })),
         "screen" if !rest.is_empty() => Ok(Cmd::Screen(rest.to_string())),
         "progress" => Ok(Cmd::Progress),
@@ -226,6 +229,7 @@ unsafe fn run(cmd: &Cmd) {
         }
         Cmd::Healths => crate::health::dev_list(),
         Cmd::Checkpoints => crate::checkpoint::dev_list(),
+        Cmd::Flight => crate::flight::dev_list(),
         Cmd::Down(at) => {
             if let Some(at) = at {
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);

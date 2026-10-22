@@ -68,6 +68,10 @@ pub unsafe fn wr_i32(addr: u64, v: i32) {
     std::ptr::write_unaligned(addr as *mut i32, v)
 }
 
+pub unsafe fn wr_f32(addr: u64, v: f32) {
+    std::ptr::write_unaligned(addr as *mut f32, v)
+}
+
 pub unsafe fn wr_u64(addr: u64, v: u64) {
     std::ptr::write_unaligned(addr as *mut u64, v)
 }
@@ -221,6 +225,17 @@ pub const LOCK_STATE: u64 = 0xa0;
 pub const LOCK_DEFAULT: u64 = 0x9c;
 /// Sets a lock's state, posting `LockUnlocked` when it leaves 0.
 pub const LOCK_SET_STATE: u64 = 0x1_405f_2480;
+
+/// `BuzzFlightController` (Buzz's rail flight, update `0x1400431e0`, FINDINGS 10): the ship sits on
+/// rail `FLIGHT_RAIL` (i32, an index into the rails at `+0x68`) at distance `FLIGHT_DIST`, offset by
+/// `FLIGHT_SIDE` along its view's SpaceFlight camera right axis and `FLIGHT_UP` along its up axis;
+/// the update writes that position over the actor's every frame. `FLIGHT_MODE` is its state (i32).
+pub const STR_FLIGHT_CONTROLLER: &std::ffi::CStr = c"BuzzFlightController";
+pub const FLIGHT_RAIL: u64 = 0x88;
+pub const FLIGHT_UP: u64 = 0x8c;
+pub const FLIGHT_SIDE: u64 = 0x90;
+pub const FLIGHT_DIST: u64 = 0xac;
+pub const FLIGHT_MODE: u64 = 0xbc;
 
 /// `CheckpointSystem`: up to `CHECKPOINT_MAX` entries of `CHECKPOINT_STRIDE` bytes from
 /// `CHECKPOINT_ENTRIES`, each an interned name `char*`, then a started and a finished byte; the

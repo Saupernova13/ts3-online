@@ -1,5 +1,5 @@
 //! Sans-IO session state machine: bytes and the clock go in, datagrams and events come out.
-use super::proto::{self, clamp_name, DecodeError, Msg, Pad, Proj, State};
+use super::proto::{self, clamp_name, DecodeError, Msg, Pad, Proj, Rail, State};
 use super::save::{self, Reassembler};
 use super::world_sync::{HurtInbox, ProgressInbox, WorldSync};
 use crate::health::Key;
@@ -92,6 +92,7 @@ pub struct Session {
     pending: Option<Local>,
     local_target: u32,
     local_proj: Proj,
+    local_rail: Rail,
     state_seq: u32,
     last_state: Option<u64>,
     last_hello: Option<u64>,
@@ -140,6 +141,7 @@ impl Session {
             pending: None,
             local_target: 0,
             local_proj: Proj::default(),
+            local_rail: Rail::default(),
             state_seq: 0,
             last_state: None,
             last_hello: None,
@@ -232,6 +234,11 @@ impl Session {
     /// Object in flight (`State.proj`).
     pub fn set_local_proj(&mut self, proj: Proj) {
         self.local_proj = proj;
+    }
+
+    /// Place on Buzz's flight rail (`State.rail`), sent while the state carries `flags::FLYING`.
+    pub fn set_local_rail(&mut self, rail: Rail) {
+        self.local_rail = rail;
     }
 
     /// Host: "" outside a level; a change is sent at once.
@@ -530,7 +537,7 @@ impl Session {
             if Self::due(&mut self.last_state, now, STATE_US) {
                 self.pending = None;
                 self.state_seq = self.state_seq.wrapping_add(1);
-                let m = Msg::State(State { id, seq: self.state_seq, level: l.level, class: l.class, pos: l.pos, yaw: l.yaw, cam: l.cam, pad: l.pad, flags: l.flags, target: self.local_target, proj: self.local_proj });
+                let m = Msg::State(State { id, seq: self.state_seq, level: l.level, class: l.class, pos: l.pos, yaw: l.yaw, cam: l.cam, pad: l.pad, flags: l.flags, target: self.local_target, proj: self.local_proj, rail: self.local_rail });
                 for a in &addrs {
                     self.send(*a, &m);
                 }
@@ -1039,7 +1046,7 @@ mod tests {
         a.set_local_state(77, 1, [1.0, 2.0, 3.0], 0.5, 0.25, pad, 7);
         a.tick(100 * MS);
         deliver(addr(1), &mut a, addr(H), &mut host, 100 * MS);
-        let want = State { id: 1, seq: 1, level: 77, class: 1, pos: [1.0, 2.0, 3.0], yaw: 0.5, cam: 0.25, pad, flags: 7, target: 0, proj: Proj::default() };
+        let want = State { id: 1, seq: 1, level: 77, class: 1, pos: [1.0, 2.0, 3.0], yaw: 0.5, cam: 0.25, pad, flags: 7, target: 0, proj: Proj::default(), rail: Rail::default() };
         assert_eq!(host.remote_states(), vec![(1, want)]);
         // relayed to b only, unchanged
         let relayed = msgs(&mut host);
@@ -1397,7 +1404,7 @@ mod tests {
         host.drain_events();
         host.drain_outgoing();
         // wrong-key state and bye: no effect, no answer
-        let st = State { id: 1, seq: 9, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Proj::default() };
+        let st = State { id: 1, seq: 9, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Proj::default(), rail: Rail::default() };
         host.handle(addr(1), &encode(&Msg::State(st)), MS);
         host.handle(addr(1), &encode(&Msg::Bye { id: 1 }), MS);
         assert!(host.remote_states().is_empty());
@@ -1536,7 +1543,7 @@ mod tests {
     }
 
     fn state_at(pos: [f32; 3], yaw: f32) -> State {
-        State { id: 1, seq: 1, level: 0, class: 0, pos, yaw, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Proj::default() }
+        State { id: 1, seq: 1, level: 0, class: 0, pos, yaw, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Proj::default(), rail: Rail::default() }
     }
 
     #[test]

@@ -3,7 +3,7 @@
 **Online co-op for *Disney/Pixar Toy Story 3* on PC: each player on their own PC and screen, as
 co-op partners in one game. Also 4-player local split screen.**
 
-Players: see **[docs/PLAYING.md](docs/PLAYING.md)** to install and play online over a tailnet.
+Players: download the [latest release](https://github.com/Saupernova13/ts3-online/releases/latest) and run `ts3-online-setup` (Windows, or Linux and Steam Deck through Proton); **[docs/PLAYING.md](docs/PLAYING.md)** explains it.
 
 The PC release (*Toy Story 3 Complete Edition*, Steam app 4049180) has 2-player local split
 screen and no network play. This project raises the player limit to 4 with a runtime patch loader,
@@ -177,6 +177,7 @@ Query files are numbered in the order they were run; their commands are listed a
 
 ```
 loader/          Rust dinput8.dll patch loader; patches.json is its generated patch set
+setup/           ts3-online-setup: the install wizard and settings program (egui; Windows and Linux)
 data/            hand-reviewed patches and classified patch sites
 docs/            findings, patch catalogue, plan, progress, testing
 ghidra_scripts/  headless Ghidra scripts (Java)

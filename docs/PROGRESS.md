@@ -364,3 +364,16 @@ town.
   story level reported the level's reset of the coin counters as a purchase, which the host
   deducted from the shared wallet (counters are now ignored while a level loads). The other eight
   levels loaded, held and bound on both copies.
+- 2026-10-22, setup wizard: `ts3-online-setup` (`setup/`, egui) replaces Setup.cmd, Update.cmd,
+  Uninstall.cmd and install.ps1, and runs on Windows and Linux. First run: find the game, Host /
+  Join a friend / Choose each time, then name, password and (to join) the host's game from a live
+  list of games on the tailnet and network, with a Test that runs the connect window's own check.
+  Later runs open a settings page (role, address, past games, port, update, uninstall). Settings
+  live outside the game folder (`%LOCALAPPDATA%` on Windows; `~/.config/ts3-online` on Linux, named
+  to the game by the `TS3ONLINE_CONFIG` launch option, set beside Proton's dinput8 override). The
+  loader gained `join=` (the window joins that game at once and closes, staying open only when it
+  does not answer) and `recent_hosts=` (every join, probed by the window). Tested: both platforms'
+  command-line mode against fake Steam trees (install, migrate an old game-folder ini, switch role,
+  uninstall restoring Steam's file byte for byte), every page rendered on both, and in game with two
+  copies: a host with no window, an automatic join with the save in 0.5 s, and a dead address that
+  keeps the window open and saves the game picked instead.

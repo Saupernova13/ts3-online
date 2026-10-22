@@ -4,7 +4,8 @@
 //! this module gives the game a point: the downed player's own last checkpoint, else the partner.
 //! The game also holds a downed player while its partner is down, and restarts both from the
 //! checkpoint once both wait; the stand-in's Respawn component shows its owner's down and waiting
-//! status so every copy makes that call the same way.
+//! status so every copy makes that call the same way. The game pairs slots 0 and 1 only, so with
+//! more players slot 1's stand-in speaks for every remote partner (`together`).
 
 /// Respawn component states (`0x140645280`): down and waiting for the partner's point, then
 /// respawning at it.
@@ -31,6 +32,12 @@ pub struct Down {
     pub has_point: bool,
     /// the point this player set for its partner at its own last checkpoint
     pub own_checkpoint: bool,
+}
+
+/// What slot 1's stand-in shows for the (down, waiting) status of every remote partner in the
+/// level: down while all are down, waiting while all wait; None with no partner in the level.
+pub fn together(owners: &[(bool, bool)]) -> Option<(bool, bool)> {
+    (!owners.is_empty()).then(|| (owners.iter().all(|o| o.0), owners.iter().all(|o| o.1)))
 }
 
 #[derive(Debug, Default)]
@@ -123,8 +130,9 @@ mod live {
     }
 
     /// Per frame on the game thread, with slot 0 (the local player) and slot 1 (its partner);
-    /// `owner`: the (down, waiting) status the partner's owner sends, None for a local partner.
-    pub unsafe fn update(mgr: u64, owner: Option<(bool, bool)>) {
+    /// `owner`: the (down, waiting) status slot 1 shows (`together`), None for a local partner;
+    /// `standing`: a partner's avatar whose owner is not down, to respawn at, else 0 for slot 1's.
+    pub unsafe fn update(mgr: u64, owner: Option<(bool, bool)>, standing: u64) {
         let points = global(RESPAWN_POINTS);
         let (me, partner) = (respawn(slot_avatar(mgr, 0)), respawn(slot_avatar(mgr, 1)));
         if points == 0 || me == 0 {
@@ -146,7 +154,7 @@ mod live {
         match source {
             Source::OwnCheckpoint => std::ptr::copy_nonoverlapping((points + P1_POINT) as *const u8, dst, POINT_LEN),
             Source::Partner => {
-                let p1 = slot_avatar(mgr, 1);
+                let p1 = if standing != 0 { standing } else { slot_avatar(mgr, 1) };
                 if p1 == 0 {
                     log!("respawn: waiting for the partner's checkpoint, with no checkpoint and no partner to respawn at");
                     return;
@@ -219,6 +227,15 @@ mod tests {
         assert_eq!(s.update(true, true, 20), (true, true));
         assert_eq!(s.update(false, false, 20 + WAIT_LATCH_MS - 1), (true, true), "the owner already restarted");
         assert_eq!(s.update(false, false, 20 + WAIT_LATCH_MS), (false, false));
+    }
+
+    #[test]
+    fn slot_one_speaks_for_every_partner() {
+        assert_eq!(together(&[]), None);
+        assert_eq!(together(&[(true, true)]), Some((true, true)));
+        assert_eq!(together(&[(true, true), (false, false)]), Some((false, false)), "one still stands");
+        assert_eq!(together(&[(true, true), (true, false), (true, true)]), Some((true, false)), "all down, one not waiting yet");
+        assert_eq!(together(&[(true, true), (true, true), (true, true)]), Some((true, true)));
     }
 
     #[test]

@@ -348,6 +348,11 @@ on the other copy at the same moment.
 
 Entering a story level leaves both wallets untouched (`wallet:` lines show no spend).
 
+With four copies in `st_buzzgame`: no crash, slot 1 takes the level's ship and slots 2-3 a spawned
+one, and every partner's controller is in flight on the owner's rail (`flight` dev command).
+While the owner runs and jumps in Toy Box, its partner on the other copy stays 0.3 m from it
+(median, p90 0.8 m, max 1.2 m; `samepos.py`).
+
 ## T28: the host's enemies hurt clients (passed 2026-10-21, with dev hits)
 
 In Train Rescue, `healths` lists the level's enemies (`DrPorkchopUFO`); the bind line gives the

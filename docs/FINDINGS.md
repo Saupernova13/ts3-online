@@ -321,6 +321,19 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `DefaultAvatar3/4` exists). Deferred until the basics are tested in game.
 - **[obs]** `0x1401b5bc0` disables controls for players `< 2` from a list; its guard
   (`0x1401b5bec`) was already patched by the bounds pass.
+- **[obs] P3/P4 had no buttons (2026-10-22, `queries/197`, in game).** Slot init (`0x1405f0cf0`)
+  calls `0x140281140(mapper, index)` for a pad, which writes the per-player binding
+  `0x1405bb170(settings, player, action)` into every control of each rebindable action; the lookup
+  answers -1 for players 2 and 3 (`cmp edx,2; jge`, a 2 x 12 table at `0x140b2eaa8`). Players 3 and
+  4 kept the sticks (read directly) and lost jump, tool and throw: their device saw the A press, the
+  avatar did not jump. Patch `bound_1405bb170`: `and edx,1`, so players 3 and 4 use players 1 and
+  2's bindings; after it, P3 jumps and P4 throws on every copy.
+- **[obs] A level switch with 3 or 4 players crashed (2026-10-22, `queries/198`, dump).** The level
+  switch handler `0x1405d7760` (posted `SwitchLevel`) loops over the views and releases each slot
+  avatar's `ControlMapper`, but reads the avatar only for index `<= 1` (`cmp rbx,1; ja` at
+  `0x1405d77a0`) and passes null for 2/3 to `0x14055a920`, which reads `+0x3b0`. Patch
+  `bound_1405d77a0`: `<= 3`; Toy Box to Train Rescue and back with 4 players then ran clean. Exit to
+  Game Board (T6) takes another path.
 
 ### 5f. Conversation camera crash on views 2/3 (`queries/87`)
 
@@ -821,3 +834,17 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   (`0x1405d6360`) and cleared by `Unpause` (`0x1405f8d60`); the timer pause of the level start hold
   leaves it alone. A partner's mirrored START opened the pause menu on the other copy as well (the
   game's local co-op lets any player pause), and its B closed it.
+- **[obs] Respawn with 3 or 4 players (2026-10-22, in game).** The two-player rule pairs slots 0 and
+  1 only, so slot 1's stand-in now shows every remote partner: down while all are down, waiting
+  while all wait. Two timing facts shaped it. A waiting player leaves the wait the frame it sees the
+  others wait, often within 150 ms, and a copy whose frames stall (background copies here) missed it
+  entirely, so the owner keeps sending its wait 1.5 s after a restart (state 5), and drops it at
+  once when it respawns at a partner (state 7) instead; held longer, partners going down just after
+  restarted without it. And the point the loader gives a player with no checkpoint stayed valid:
+  every later down respawned at once where a partner had stood the first time, so it is cleared
+  once the player is up.
+- **[obs] Four copies on one PC (2026-10-22).** The copy in front runs at 60 fps, the others at about
+  20 with stalls of 100 ms to 1 s, whichever copy hosts; the loader's work stays about 0.1-0.3 ms a
+  frame. A background copy's level intro movie barely advances (minutes), and finishes within
+  seconds once in front. A copy closed with `taskkill` keeps its UDP port and copy mutex for seconds
+  to minutes while it exits.

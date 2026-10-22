@@ -343,3 +343,15 @@ town.
   ball there directly threw one out of the level at a bounce (it was put inside the wall), so the
   follower is steered by velocity instead and placed only when 3 m off. Measured both ways: 5-20 ms
   behind, 0.2-0.4 m in flight, centimetres after the bounces.
+- 2026-10-22, four players, joining and leaving, shots: everything two players had was played
+  with four copies on this PC (T31, T32). Four things only broke with more players: players 3 and 4
+  had sticks but no buttons (their binding lookup answers -1; patched), a level switch with 3 or 4
+  players crashed (a 2-player guard in the switch handler; patched), the down-together restart
+  paired slots 0 and 1 only (slot 1 now stands for every partner, and three timing problems found
+  on the way are fixed: the wait latch, a stale given point, a slow copy missing a short wait), and
+  a copy started while another was still exiting ran as a second copy 4. Joining and leaving: a
+  closed client is parked and re-adopted with everything caught up; when the host leaves, a client
+  hosts, but it had served its own save and players could drive the wrong character after the
+  ids were handed out again (both fixed). Shots: thrown objects are carried forward by the state's
+  age (#43). A copy in the background runs at about 20 fps here and its intro
+  movie stalls until it is in front, which only matters with several copies on one PC.

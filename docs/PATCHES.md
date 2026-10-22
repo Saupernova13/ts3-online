@@ -12,7 +12,7 @@ Relocation: `0x258` bytes at RVA `0x9582b0` -> a `0x400` buffer; fields from `+0
 | group | patches | what it does | source | status |
 |---|---|---|---|---|
 | relocate | 78 | Moves the player manager (static at `0x1409582b0`, 0x258 bytes, pointer at `0x140b2ef50`) into a 0x400-byte buffer next to the module, so 4 player slots fit. `rip_reloc` entries repoint instructions at the buffer; `slots_*` raise the slot vector count from 2 to 4; `tail_*` move the fields after the slot array by +0xb0. | FINDINGS 3a, 3b; `tools/scan_player_mgr.py`, `gen_patches.py` | verified in game 2026-10-16 |
-| bounds | 121 | Raises `idx < 2` player-index guards to `< 4` (or loops over 2 players to 4). | FINDINGS 3a, 5e; `SlotBounds.java` + `tools/classify_bounds.py`, `IndexChecks.java`, hand review | verified in game 2026-10-16 (the 4 from IndexChecks: 2026-10-17) |
+| bounds | 123 | Raises `idx < 2` player-index guards to `< 4` (or loops over 2 players to 4). | FINDINGS 3a, 5e; `SlotBounds.java` + `tools/classify_bounds.py`, `IndexChecks.java`, hand review | verified in game 2026-10-16 (the 4 from IndexChecks: 2026-10-17; P3/P4 buttons and the level switch: 2026-10-22) |
 | join | 1 | Lets the join event through while fewer than 4 players are in. | FINDINGS 5a | verified in game 2026-10-16 |
 | memory | 1 | Doubles the "System" heap (512 MB to 1 GB) as headroom for 4 players. | FINDINGS 5b | verified in game 2026-10-16 |
 | views | 11 | Level setup creates 4 per-player views instead of 2, and the inline view-array guards accept 4. | FINDINGS 5c | verified in game 2026-10-16 |
@@ -21,7 +21,7 @@ Relocation: `0x258` bytes at RVA `0x9582b0` -> a `0x400` buffer; fields from `+0
 | instances (optional) | 3 | Optional (`enable=instances`): lets a second copy of the game run on the same PC for host/client play. | FINDINGS 9 | not tested in game |
 | hooks | 14 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5f | verified in game (teardown and the controls fix 2026-10-17) except level_player_setup (T8) |
 
-Total: 233 patches.
+Total: 235 patches.
 
 ## relocate
 
@@ -203,10 +203,12 @@ Total: 233 patches.
 | `0x1405b043e` | `83fb01` -> `83fb03` | FUN_1405b0420 entry guard idx < 2 -> < 4 |
 | `0x1405baed0` | `83fa01` -> `83fa03` | guard_moved: CMP EDX,1 JA in FUN_1405baed0 |
 | `0x1405bb090` | `83fa01` -> `83fa03` | GetPlayerObject(mgr, idx): idx < 2 -> < 4; also bounded by the +0xd8 array count |
+| `0x1405bb170` | `83fa027d1f` -> `83e2019090` | per-player button bindings (FUN_1405bb170, read by slot init's mapper setup FUN_140281140): players >= 2 got -1 for every rebindable control, so P3/P4 had sticks but no buttons; cmp edx,2/jge -> and edx,1 (P3/P4 use P1/P2's) |
 | `0x1405bb680` | `83fa01` -> `83fa03` | guard_moved: CMP EDX,1 JA in FUN_1405bb680 |
 | `0x1405bbe70` | `83fa01` -> `83fa03` | guard_moved: CMP EDX,1 JA in FUN_1405bbe70 |
 | `0x1405cdff0` | `83fb01` -> `83fb03` | guard: CMP EBX,1 JA in FUN_1405cdfd0 |
 | `0x1405d3363` | `83ff01` -> `83ff03` | guard: CMP EDI,1 JA in FUN_1405d3340 |
+| `0x1405d77a0` | `4883fb01` -> `4883fb03` | level switch (FUN_1405d7760): per view, the slot avatar's ControlMapper only for index <= 1, null (crash in FUN_14055a920) for 2/3 -> <= 3 |
 | `0x1405dc984` | `83f901` -> `83f903` | guard_moved: CMP ECX,1 JA in FUN_1405dc970 |
 | `0x1405e7739` | `83f901` -> `83f903` | guard: CMP ECX,1 JA in FUN_1405e7720 |
 | `0x1405ec226` | `83f901` -> `83f903` | guard: CMP ECX,1 JA in FUN_1405ec210 |

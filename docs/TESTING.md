@@ -291,7 +291,7 @@ Start as for T11, both copies in Toy Box, `dev_cmds=1`. `progress` logs every ch
    game paused` and its screen stops without a menu. Host B: `hold: partners resumed`.
 2. The same from the client (pad 2).
 
-## T27: down together, restart together (passed 2026-10-21)
+## T27: down together, restart together (passed 2026-10-21; again 2026-10-22)
 
 Start as for T20 in Train Rescue. `down` in a command file downs the local player through the game's
 damage.
@@ -301,6 +301,38 @@ damage.
 2. `down` on the client 0.6 s after the host: the host is held in state 4-6 while the partner is
    down; both then restart as in 1.
 3. `down` on the host only: state 7 (respawn at the partner), no `StartingRespawn`.
+
+`down T` waits until Unix time `T` (ms, at most 2 s ahead), so several copies go down together:
+`work/scratch/downat.sh 1 2` does that and prints each copy's respawn lines. Both copies always
+end the same way, a restart or a respawn at the partner.
+
+## T31: four players (passed 2026-10-22, four copies on one PC)
+
+`ts3online.ini`: `[copy1]`-`[copy4]` with `pad=N`, `window=` quadrants of the screen, `net=auto`,
+`net_sim=50,0,0`. `work/scratch/start4.sh [N]` starts N copies into Toy Box (copy 2 picks LEFT,
+copy 3 RIGHT). Only the copy in front runs at full speed; `loadall.sh <level> [copy]` switches a
+level and brings each copy to the front until it is past the intro movie.
+
+1. Every copy logs three `bound:` lines; every screen shows the same four players and wallet.
+2. P3 jumps on the host's screen (`slotY.py <pid> 2 4`: rise above 1 m); P4 takes out the ball and
+   throws: three `following` lines; P4 picks up the host and throws him: `CARRY_START` on all four,
+   landing within 0.3 m everywhere.
+3. `setprogress` and `build` on copies 3 and 4 reach the host and every client; START on pad 3
+   pauses the other three (`hold: player(s) [2] paused`).
+4. Host `post SwitchLevel st_train` with all four in Toy Box: no crash, three `following the host`,
+   one `hold: game resumed`, every partner rides. A client's switch back to Toy Box: all follow.
+5. `downat.sh 1 2 3 4`: all four restart (state 5), three times out of three; `downat.sh 1 2 3`:
+   the three respawn at a partner (state 7); host alone: state 7.
+6. Clients log `ai: ... enemy behaviour ticks skipped` and `npc: client following`; host `hit
+   <stand-in> N <UFO>` for each stand-in raises that client's `took N from the host`.
+
+## T32: joining and leaving (passed 2026-10-22)
+
+1. Close a client: within 5 s every other copy logs `player N left: slot S parked`. Change progress
+   on the host, start the client again (`work/scratch/rejoinN.sh <copy> [pick]`): it takes the same
+   copy number, the others log `player N is back`, and it catches up (`(the host's)` lines).
+2. Close the host: after the old process lets go of the port, one client hosts and the others join
+   it; each takes back its own avatar, and the joiners receive the session's save.
 
 ## T28: the host's enemies hurt clients (passed 2026-10-21, with dev hits)
 

@@ -143,4 +143,5 @@ the traffic but does not encrypt it (Tailscale encrypts it).
   play their attacks; their hits arrive from the host, so a hit can land a moment late.
 - One player's pause pauses everyone, with the menu on that player's screen only. When every
   player is down, everyone restarts at the checkpoint together.
-- Tested in Toy Box and the start of Train Rescue, with two players.
+- Tested in Toy Box and the start of Train Rescue, with two and with four players (four copies on
+  one PC). If the host leaves, one of the others takes over hosting and the rest rejoin it.

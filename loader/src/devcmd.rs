@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 static COPY: AtomicU32 = AtomicU32::new(0);
 static LAST: Mutex<Option<Instant>> = Mutex::new(None);
 const EVERY: Duration = Duration::from_secs(1);
+/// `down AT` waits at most this long on the game thread.
+const MAX_DOWN_WAIT_MS: u64 = 2_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cmd {
@@ -34,7 +36,8 @@ pub enum Cmd {
     /// open a front-end screen by name, as a script would
     Screen(String),
     /// down the local player through the game's own damage
-    Down,
+    /// at this Unix time in ms, if given (lines several copies up)
+    Down(Option<u64>),
     /// log the story checkpoints
     Checkpoints,
     /// log every mission and unlock with its state
@@ -130,7 +133,7 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
         "healths" => Ok(Cmd::Healths),
         "devices" => Ok(Cmd::Devices),
         "checkpoints" => Ok(Cmd::Checkpoints),
-        "down" => Ok(Cmd::Down),
+        "down" => Ok(Cmd::Down(if rest.is_empty() { None } else { Some(rest.parse().map_err(|_| "down takes a Unix time in ms")?) })),
         "screen" if !rest.is_empty() => Ok(Cmd::Screen(rest.to_string())),
         "progress" => Ok(Cmd::Progress),
         "lots" => Ok(Cmd::Lots),
@@ -223,7 +226,11 @@ unsafe fn run(cmd: &Cmd) {
         }
         Cmd::Healths => crate::health::dev_list(),
         Cmd::Checkpoints => crate::checkpoint::dev_list(),
-        Cmd::Down => {
+        Cmd::Down(at) => {
+            if let Some(at) = at {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+                std::thread::sleep(std::time::Duration::from_millis(at.saturating_sub(now).min(MAX_DOWN_WAIT_MS)));
+            }
             let me = slot_avatar(global(MGR_PTR), 0);
             let iface = if me == 0 { 0 } else { crate::actor::interface(me, TYPE_HEALTH) };
             if iface == 0 {
@@ -314,6 +321,9 @@ mod tests {
     #[test]
     fn parses_commands() {
         assert_eq!(parse("event Jump"), Ok(Cmd::Event { name: "Jump".into(), arg: None }));
+        assert_eq!(parse("down"), Ok(Cmd::Down(None)));
+        assert_eq!(parse("down 1761200000000"), Ok(Cmd::Down(Some(1_761_200_000_000))));
+        assert!(parse("down soon").is_err());
         assert_eq!(parse("  event   Jump   some text here "), Ok(Cmd::Event { name: "Jump".into(), arg: Some("some text here".into()) }));
         assert_eq!(parse("event_actor Hit 1f2a"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x1f2a, arg: None }));
         assert_eq!(parse("event_actor Hit 0x10 STR"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x10, arg: Some("STR".into()) }));

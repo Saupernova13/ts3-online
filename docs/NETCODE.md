@@ -212,9 +212,12 @@ actor) is seen by the targeted-post detour on every copy: on the thrower's copy 
 seq and, for 6 s or until it despawns, its rigid-body position and velocity ride in the player's
 `State.proj`. On the other copies the partner's replayed throw spawns their own object; the first
 report of a new seq is paired with the partner's latest throw there (within 1.5 s), and from then
-on that object's rigid body takes the owner's position and velocity every frame. A body is only
-written when its origin is within 2 m of the actor's own copy of it. Thrown players are left out
-(their owner already drives them).
+on that object's rigid body follows the owner's every frame. The report is carried forward by the
+state's age (half the round trip per hop, a client seeing another client through the host, plus the
+time since it arrived; at most 200 ms) to where the owner's object is now, and the body gets the
+owner's velocity plus whatever closes the gap in 0.1 s, so the game's collisions still stop it; it
+is placed outright only when more than 3 m off. A body is only written when its origin is within
+2 m of the actor's own copy of it. Thrown players are left out (their owner already drives them).
 
 **World events (H6b).** Actor ids differ between copies, so a one-off event on an actor is carried
 by the actor's reference name (`actor+0x150`, unique and equal in both copies for most actors;

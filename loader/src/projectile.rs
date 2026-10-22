@@ -6,6 +6,12 @@ use crate::net::proto::Proj;
 pub const FLY_MS: u64 = 6000;
 /// Window for pairing a partner's throw here with its owner's report.
 pub const LINK_MS: u64 = 1500;
+/// A report is carried forward by at most this much of its age.
+pub const MAX_LEAD_MS: u32 = 200;
+/// The follower's own body closes the gap to where the owner's is now in this long.
+pub const CATCH_UP_S: f32 = 0.1;
+/// Farther than this, the follower is placed outright.
+pub const SNAP: f32 = 3.0;
 
 /// The local player's latest throw.
 #[derive(Debug, Default)]
@@ -72,6 +78,24 @@ impl Link {
             }
         }
     }
+}
+
+/// Where a reported object is now, `age_ms` after the report: a thrown object flies fast enough that
+/// the network delay alone puts the follower metres behind.
+pub fn lead(pos: [f32; 3], vel: [f32; 3], age_ms: u32) -> [f32; 3] {
+    let t = age_ms.min(MAX_LEAD_MS) as f32 / 1000.0;
+    [pos[0] + vel[0] * t, pos[1] + vel[1] * t, pos[2] + vel[2] * t]
+}
+
+/// How to bring the follower's body at `cur` to `target`, where the owner's is now: a velocity
+/// that closes the gap, so the game's own collisions still apply (placing it ahead of a report can
+/// put it inside a wall, which throws it out of the level); `None` when it is too far and is placed.
+pub fn chase(cur: [f32; 3], target: [f32; 3], vel: [f32; 3]) -> Option<[f32; 3]> {
+    let err = [target[0] - cur[0], target[1] - cur[1], target[2] - cur[2]];
+    if err.iter().map(|e| e * e).sum::<f32>() > SNAP * SNAP {
+        return None;
+    }
+    Some([vel[0] + err[0] / CATCH_UP_S, vel[1] + err[1] / CATCH_UP_S, vel[2] + err[2] / CATCH_UP_S])
 }
 
 /// `seq` 0 means no object.
@@ -179,8 +203,8 @@ mod live {
         }
     }
 
-    /// Writes the owner's report into the object partner `id` threw here.
-    pub unsafe fn follow(id: u8, report: Proj) {
+    /// Writes the owner's report, `age_ms` old, into the object partner `id` threw here.
+    pub unsafe fn follow(id: u8, report: Proj, age_ms: u32) {
         let now = now_ms();
         let Ok(mut guard) = STATE.lock() else { return };
         let Some(st) = guard.as_mut() else { return };
@@ -188,19 +212,27 @@ mod live {
         let Some(local) = link.resolve(report.seq, now) else { return };
         let actor = registry_get(local);
         let Some(body) = (actor != 0).then(|| body(actor)).flatten() else { return };
-        for off in ORIGIN {
-            for (i, v) in report.pos.iter().enumerate() {
-                std::ptr::write_unaligned((body + off + 4 * i as u64) as *mut f32, *v);
+        let target = lead(report.pos, report.vel, age_ms);
+        let Some(cur) = read_vec(body + ORIGIN[0]) else { return };
+        let vel = match chase(cur, target, report.vel) {
+            Some(v) => v,
+            None => {
+                for off in ORIGIN {
+                    for (i, v) in target.iter().enumerate() {
+                        std::ptr::write_unaligned((body + off + 4 * i as u64) as *mut f32, *v);
+                    }
+                }
+                report.vel
             }
-        }
+        };
         for off in VELOCITY {
-            for (i, v) in report.vel.iter().enumerate() {
+            for (i, v) in vel.iter().enumerate() {
                 std::ptr::write_unaligned((body + off + 4 * i as u64) as *mut f32, *v);
             }
         }
         if st.last_log.is_none_or(|t| t.elapsed().as_secs() >= 2) {
             st.last_log = Some(Instant::now());
-            log!("projectile: player {id} seq {} -> {local:#x} following", report.seq);
+            log!("projectile: player {id} seq {} -> {local:#x} following, {age_ms} ms ahead", report.seq);
         }
     }
 }
@@ -221,6 +253,21 @@ mod tests {
         assert_eq!(o.current(9001), None);
         o.seq = 255;
         assert_eq!(o.throw(1, 0), 1, "wraps past 255 to 1, never 0");
+    }
+
+    #[test]
+    fn a_report_is_carried_forward_by_its_age() {
+        assert_eq!(lead([1.0, 2.0, 3.0], [10.0, -20.0, 0.0], 0), [1.0, 2.0, 3.0]);
+        assert_eq!(lead([1.0, 2.0, 3.0], [10.0, -20.0, 0.0], 100), [2.0, 0.0, 3.0]);
+        assert_eq!(lead([0.0; 3], [10.0, 0.0, 0.0], 5000), [2.0, 0.0, 0.0], "capped at MAX_LEAD_MS");
+    }
+
+    #[test]
+    fn the_follower_closes_the_gap_by_velocity_or_is_placed_when_far() {
+        let v = chase([0.0; 3], [1.0, 0.0, 0.0], [20.0, 0.0, -1.0]).unwrap();
+        assert!((v[0] - (20.0 + 1.0 / CATCH_UP_S)).abs() < 1e-4 && v[1] == 0.0 && v[2] == -1.0);
+        assert_eq!(chase([0.0; 3], [0.0; 3], [5.0, 0.0, 0.0]), Some([5.0, 0.0, 0.0]));
+        assert_eq!(chase([0.0; 3], [SNAP + 0.1, 0.0, 0.0], [0.0; 3]), None);
     }
 
     #[test]

@@ -135,8 +135,8 @@ pub unsafe fn update() {
         // slot 0 still holds the old level's avatar: a partner spawned now dies with that level
         return;
     }
-    let (owner, standing) = respawn_status(partners, level);
-    crate::respawn::update(mgr, owner, standing);
+    let (owners, standing) = respawn_status(partners, level);
+    crate::respawn::update(mgr, &owners, standing);
     crate::ai::note_frame(level);
     crate::perf::section("health", || crate::health::update(level, &players));
     crate::perf::section("progress", || crate::progress::update(level));
@@ -172,17 +172,16 @@ pub unsafe fn update() {
     }
 }
 
-/// The game's two-player respawn pairs slots 0 and 1: what slot 1 shows for every partner in this
-/// level, and the avatar of one whose owner is not down.
-fn respawn_status(partners: &HashMap<u8, Partner>, level: u32) -> (Option<(bool, bool)>, u64) {
+/// The game's two-player respawn pairs slots 0 and 1: (player id, down, waiting) of every partner
+/// in this level, which slot 1 shows together, and the avatar of one whose owner is not down.
+fn respawn_status(partners: &HashMap<u8, Partner>, level: u32) -> (Vec<(u8, bool, bool)>, u64) {
     let owners: Vec<(u8, bool, bool)> = net::remote_states()
         .into_iter()
         .filter(|(_, s)| s.level == level && s.flags & flags::LOADING == 0)
         .map(|(id, s)| (id, s.flags & flags::DOWN != 0, s.flags & flags::WAITING != 0))
         .collect();
-    let shown = crate::respawn::together(&owners.iter().map(|o| (o.1, o.2)).collect::<Vec<_>>());
     let standing = owners.iter().filter(|o| !o.1).find_map(|o| partners.get(&o.0).map(|p| p.avatar).filter(|a| *a != 0)).unwrap_or(0);
-    (shown, standing)
+    (owners, standing)
 }
 
 unsafe fn respawn_flags(mgr: u64) -> u32 {

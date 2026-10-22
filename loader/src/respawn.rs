@@ -45,19 +45,28 @@ pub struct Wait {
     since: Option<u64>,
 }
 
-/// What a stand-in's Respawn shows of its owner: (down, waiting).
+/// What slot 1's stand-in shows of the remote partners: each one's wait is held `WAIT_LATCH_MS`
+/// before they are put `together`, so a slow copy still sees every partner wait at once.
 #[derive(Debug, Default)]
 pub struct Shown {
-    waited_at: Option<u64>,
+    waited_at: std::collections::HashMap<u8, u64>,
 }
 
 impl Shown {
-    pub fn update(&mut self, down: bool, waiting: bool, now_ms: u64) -> (bool, bool) {
-        if waiting {
-            self.waited_at = Some(now_ms);
-        }
-        let waiting = self.waited_at.is_some_and(|t| now_ms.saturating_sub(t) < WAIT_LATCH_MS);
-        (down || waiting, waiting)
+    /// `owners`: (player id, down, waiting) of each remote partner in the level.
+    pub fn update(&mut self, owners: &[(u8, bool, bool)], now_ms: u64) -> Option<(bool, bool)> {
+        self.waited_at.retain(|id, _| owners.iter().any(|o| o.0 == *id));
+        let shown: Vec<(bool, bool)> = owners
+            .iter()
+            .map(|&(id, down, waiting)| {
+                if waiting {
+                    self.waited_at.insert(id, now_ms);
+                }
+                let waiting = self.waited_at.get(&id).is_some_and(|t| now_ms.saturating_sub(*t) < WAIT_LATCH_MS);
+                (down || waiting, waiting)
+            })
+            .collect();
+        together(&shown)
     }
 }
 
@@ -130,20 +139,21 @@ mod live {
     }
 
     /// Per frame on the game thread, with slot 0 (the local player) and slot 1 (its partner);
-    /// `owner`: the (down, waiting) status slot 1 shows (`together`), None for a local partner;
-    /// `standing`: a partner's avatar whose owner is not down, to respawn at, else 0 for slot 1's.
-    pub unsafe fn update(mgr: u64, owner: Option<(bool, bool)>, standing: u64) {
+    /// `owners`: (player id, down, waiting) of each remote partner in the level, none for a local
+    /// partner; `standing`: a partner's avatar whose owner is not down, to respawn at, else 0 for slot 1's.
+    pub unsafe fn update(mgr: u64, owners: &[(u8, bool, bool)], standing: u64) {
         let points = global(RESPAWN_POINTS);
         let (me, partner) = (respawn(slot_avatar(mgr, 0)), respawn(slot_avatar(mgr, 1)));
         if points == 0 || me == 0 {
             return;
         }
         let now = START.get_or_init(Instant::now).elapsed().as_millis() as u64;
-        if let (Some((down, waiting)), true) = (owner, partner != 0) {
+        if partner != 0 {
             let Ok(mut shown) = SHOWN.lock() else { return };
-            let (down, waiting) = shown.get_or_insert_with(Shown::default).update(down, waiting, now);
-            wr_u8(partner + DOWN, down as u8);
-            wr_u8(partner + WAITING, waiting as u8);
+            if let Some((down, waiting)) = shown.get_or_insert_with(Shown::default).update(owners, now) {
+                wr_u8(partner + DOWN, down as u8);
+                wr_u8(partner + WAITING, waiting as u8);
+            }
         }
         log_changes(me, partner);
         let d = Down { state: rd_u32(me + STATE), has_point: rd_u8(points + P0_VALID) != 0, own_checkpoint: rd_u8(points + P1_VALID) != 0 };
@@ -222,11 +232,24 @@ mod tests {
     #[test]
     fn a_partners_wait_is_shown_a_while_after_it_ends() {
         let mut s = Shown::default();
-        assert_eq!(s.update(false, false, 0), (false, false));
-        assert_eq!(s.update(true, false, 10), (true, false));
-        assert_eq!(s.update(true, true, 20), (true, true));
-        assert_eq!(s.update(false, false, 20 + WAIT_LATCH_MS - 1), (true, true), "the owner already restarted");
-        assert_eq!(s.update(false, false, 20 + WAIT_LATCH_MS), (false, false));
+        assert_eq!(s.update(&[], 0), None);
+        assert_eq!(s.update(&[(1, false, false)], 0), Some((false, false)));
+        assert_eq!(s.update(&[(1, true, false)], 10), Some((true, false)));
+        assert_eq!(s.update(&[(1, true, true)], 20), Some((true, true)));
+        assert_eq!(s.update(&[(1, false, false)], 20 + WAIT_LATCH_MS - 1), Some((true, true)), "the owner already restarted");
+        assert_eq!(s.update(&[(1, false, false)], 20 + WAIT_LATCH_MS), Some((false, false)));
+    }
+
+    #[test]
+    fn partners_that_waited_at_different_moments_all_count_as_waiting() {
+        let mut s = Shown::default();
+        // player 1 waits, then restarts as soon as it sees the others wait; player 3 waits last
+        assert_eq!(s.update(&[(1, true, true), (2, true, false), (3, true, false)], 0), Some((true, false)));
+        assert_eq!(s.update(&[(1, true, true), (2, true, true), (3, true, false)], 300), Some((true, false)));
+        assert_eq!(s.update(&[(1, false, false), (2, false, false), (3, true, true)], 800), Some((true, true)));
+        // a partner that left the level is forgotten
+        assert_eq!(s.update(&[(3, false, false)], 900), Some((true, true)));
+        assert_eq!(s.update(&[(3, false, false)], 800 + WAIT_LATCH_MS), Some((false, false)));
     }
 
     #[test]

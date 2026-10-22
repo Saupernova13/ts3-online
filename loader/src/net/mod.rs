@@ -22,12 +22,14 @@ use session::Session;
 use sim::SimQueue;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 static COPY: AtomicU32 = AtomicU32::new(1);
+/// The game plays a host's save from the session folder.
+static PLAYS_SESSION: AtomicBool = AtomicBool::new(false);
 /// Host: level requests queued for the game thread.
 static LEVEL_REQUESTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// Host: client spends for the game thread, as (client, [(wallet index, delta)], seq to ack).
@@ -295,6 +297,21 @@ pub fn host_save_path(app_data: &str, local_app_data: &str, copy: u32) -> PathBu
     copy::savedata_dir(&copy::normal_root(app_data, local_app_data, copy)).join("Saved Game")
 }
 
+/// The save a host hands joiners: the one its game plays, so a client that takes over hosting
+/// passes on the session's save, not its own.
+pub fn served_save_path(app_data: &str, local_app_data: &str, copy: u32, plays_session: bool) -> PathBuf {
+    if plays_session {
+        copy::savedata_dir(&copy::session_root(local_app_data)).join("Saved Game")
+    } else {
+        host_save_path(app_data, local_app_data, copy)
+    }
+}
+
+/// The game took the session folder for its saves.
+pub fn set_plays_session() {
+    PLAYS_SESSION.store(true, Ordering::Relaxed);
+}
+
 fn client_session(build: u64, name: &str, host: SocketAddr, key: &NetKey) -> Session {
     let mut s = Session::client(build, name, host);
     s.set_key(key.as_str().as_bytes());
@@ -304,8 +321,8 @@ fn client_session(build: u64, name: &str, host: SocketAddr, key: &NetKey) -> Ses
 fn host_session(build: u64, name: &str, copy: u32, key: &NetKey) -> Session {
     let mut s = Session::host(build, name);
     s.set_key(key.as_str().as_bytes());
-    let path = host_save_path(&std::env::var("APPDATA").unwrap_or_default(), &std::env::var("LOCALAPPDATA").unwrap_or_default(), copy);
-    s.set_save_source(move || std::fs::read(&path).ok());
+    let (app_data, local) = (std::env::var("APPDATA").unwrap_or_default(), std::env::var("LOCALAPPDATA").unwrap_or_default());
+    s.set_save_source(move || std::fs::read(served_save_path(&app_data, &local, copy, PLAYS_SESSION.load(Ordering::Relaxed))).ok());
     s
 }
 
@@ -341,6 +358,13 @@ mod tests {
         let bare = root.join("bare");
         assert!(install_session_save(b"x", &root.join("s2"), &bare).is_ok());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_host_serves_the_save_its_game_plays() {
+        assert_eq!(served_save_path(r"C:\A", r"C:\L", 2, false), host_save_path(r"C:\A", r"C:\L", 2));
+        let s = served_save_path(r"C:\A", r"C:\L", 2, true);
+        assert!(s.starts_with(PathBuf::from(r"C:\L").join("ts3online").join("session")) && s.ends_with("Saved Game"));
     }
 
     #[test]

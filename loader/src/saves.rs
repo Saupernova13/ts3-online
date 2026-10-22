@@ -86,6 +86,7 @@ fn redirect_root(local: &str) -> Option<PathBuf> {
     let decision = *DECISION.get_or_init(|| {
         let d = net::wait_decision(WAIT);
         if d == net::Decision::Session {
+            net::set_plays_session();
             log!("saves: client session folder {}", copy::session_root(local).display());
         } else {
             log!("saves: normal save folder ({})", net::describe());

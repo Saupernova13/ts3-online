@@ -89,4 +89,4 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' loader/Cargo.toml | head -1)
           setup=$(sed -n 's/^version = "\(.*\)"/\1/p' setup/Cargo.toml | head -1)
           [ "v$version" = "$GITHUB_REF_NAME" ] && [ "$setup" = "$version" ] || { echo "tag $GITHUB_REF_NAME, loader $version, setup $setup disagree"; exit 1; }
-          gh release create "$GITHUB_REF_NAME" dist/ts3-online.zip --title "$GITHUB_REF_NAME" --notes-file docs/PLAYING.md
+          gh release create "$GITHUB_REF_NAME" dist/ts3-online.zip --title "$GITHUB_REF_NAME" --notes-file docs/RELEASE_NOTES.md

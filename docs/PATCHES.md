@@ -12,7 +12,7 @@ Relocation: `0x258` bytes at RVA `0x9582b0` -> a `0x400` buffer; fields from `+0
 | group | patches | what it does | source | status |
 |---|---|---|---|---|
 | relocate | 78 | Moves the player manager (static at `0x1409582b0`, 0x258 bytes, pointer at `0x140b2ef50`) into a 0x400-byte buffer next to the module, so 4 player slots fit. `rip_reloc` entries repoint instructions at the buffer; `slots_*` raise the slot vector count from 2 to 4; `tail_*` move the fields after the slot array by +0xb0. | FINDINGS 3a, 3b; `tools/scan_player_mgr.py`, `gen_patches.py` | verified in game 2026-10-16 |
-| bounds | 123 | Raises `idx < 2` player-index guards to `< 4` (or loops over 2 players to 4). | FINDINGS 3a, 5e; `SlotBounds.java` + `tools/classify_bounds.py`, `IndexChecks.java`, hand review | verified in game 2026-10-16 (the 4 from IndexChecks: 2026-10-17) |
+| bounds | 123 | Raises `idx < 2` player-index guards to `< 4` (or loops over 2 players to 4). | FINDINGS 3a, 5e; `SlotBounds.java` + `tools/classify_bounds.py`, `IndexChecks.java`, hand review | verified in game 2026-10-16 (the 4 from IndexChecks: 2026-10-17; P3/P4 buttons and the level switch: 2026-10-22) |
 | join | 1 | Lets the join event through while fewer than 4 players are in. | FINDINGS 5a | verified in game 2026-10-16 |
 | memory | 1 | Doubles the "System" heap (512 MB to 1 GB) as headroom for 4 players. | FINDINGS 5b | verified in game 2026-10-16 |
 | views | 11 | Level setup creates 4 per-player views instead of 2, and the inline view-array guards accept 4. | FINDINGS 5c | verified in game 2026-10-16 |

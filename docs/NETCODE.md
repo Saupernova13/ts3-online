@@ -320,10 +320,13 @@ menu, until no partner is paused, and pause again if their own menu closes meanw
 never reach a stand-in, so menus open only on their owner's screen.
 
 **Down together.** An owner sends `flags::DOWN` and `flags::WAITING` (its `Respawn` down flag, state
-6). Each copy writes them to the slot-1 stand-in's `Respawn` (`+0x20`, `+0x1e`), the wait held for
-1.5 s after it ends, so the game's own rule applies on every copy: a downed player is held while its
-partner is down and both restart at the checkpoint once both wait; one player down alone respawns
-at its partner as before.
+6); after a restart at the checkpoint it keeps sending both for 1.5 s, so a partner that has not
+seen it wait yet still does, and it drops them at once when it respawns at a partner instead. The
+game's rule pairs slots 0 and 1 only, so each copy writes to the slot-1 stand-in's `Respawn`
+(`+0x20`, `+0x1e`) what every remote partner in the level shows together: down while all are down,
+waiting while all wait. A downed player is then held while every partner is down, all restart at
+the checkpoint once all wait, and a player down while someone stands respawns at a partner who
+stands. The point the loader gives a player with no checkpoint is taken back once it is up.
 
 `net_sim=delay,jitter,loss` adds artificial latency and loss for testing on one PC.
 

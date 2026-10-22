@@ -22,7 +22,7 @@ GROUPS = {
     "bounds": (
         "Raises `idx < 2` player-index guards to `< 4` (or loops over 2 players to 4).",
         "FINDINGS 3a, 5e; `SlotBounds.java` + `tools/classify_bounds.py`, `IndexChecks.java`, hand review",
-        "verified in game 2026-10-16 (the 4 from IndexChecks: 2026-10-17)",
+        "verified in game 2026-10-16 (the 4 from IndexChecks: 2026-10-17; P3/P4 buttons and the level switch: 2026-10-22)",
     ),
     "join": (
         "Lets the join event through while fewer than 4 players are in.",

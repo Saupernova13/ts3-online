@@ -56,6 +56,29 @@ If Setup cannot find the game (a non-Steam library layout), run
 `install.ps1` also takes `-Name`, `-Password`, `-Port`, `-Firewall`, `-Update` and `-Uninstall` on
 their own.
 
+## Install on Linux or Steam Deck (Proton)
+
+Untested in a real game so far; tell us how it goes. On a Steam Deck, switch to Desktop Mode.
+
+1. Download `ts3-online.zip` from the
+   [latest release](https://github.com/Saupernova13/ts3-online/releases/latest) and extract it.
+2. Close Steam completely (Steam icon in the system tray, **Exit**), so the installer can set the
+   game's launch option.
+3. Open a terminal in the extracted `ts3-online` folder (in the file manager: right-click,
+   **Open Terminal Here**) and run `bash install.sh`. It:
+   - finds the game in your Steam libraries (native, Flatpak or Snap Steam);
+   - backs up your saves (from the game's Proton prefix) to `Documents/ts3-online save backup/<date>`;
+   - copies `dinput8.dll` into the game folder, next to a starter `ts3online.ini`;
+   - sets the launch option `WINEDLLOVERRIDES="dinput8=n,b" %command%`, which Proton needs to load the
+     mod (with Steam running it prints the line to paste into **Properties > Launch Options** instead);
+   - writes your online Tailscale devices into `net_peers`, because the game cannot ask Tailscale
+     itself under Proton, and says whether Tailscale is connected.
+
+Other commands: `bash install.sh --update` (latest release), `bash install.sh --peers` (refresh the
+Tailscale devices after someone new joins your tailnet), `bash install.sh --uninstall` (removes the
+DLL and the launch option). Players on the same LAN find each other without Tailscale; any host can
+also be typed in the connect window's Address box.
+
 ## Play
 
 1. Join the tailnet on both PCs, or use the same LAN.

@@ -3,7 +3,7 @@
 **Online co-op for *Disney/Pixar Toy Story 3* on PC: each player on their own PC and screen, as
 co-op partners in one game. Also 4-player local split screen.**
 
-Players: see **[docs/PLAYING.md](docs/PLAYING.md)** to install and play online over a tailnet.
+Players: see **[docs/PLAYING.md](docs/PLAYING.md)** to install and play online over a tailnet (Windows, or Linux and Steam Deck through Proton).
 
 The PC release (*Toy Story 3 Complete Edition*, Steam app 4049180) has 2-player local split
 screen and no network play. This project raises the player limit to 4 with a runtime patch loader,

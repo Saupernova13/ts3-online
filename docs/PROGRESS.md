@@ -364,3 +364,11 @@ town.
   story level reported the level's reset of the coin counters as a purchase, which the host
   deducted from the shared wallet (counters are now ignored while a level loads). The other eight
   levels loaded, held and bound on both copies.
+- 2026-10-22, Linux installer: `tools/install.sh` does on Linux and SteamOS what `Setup.cmd`,
+  `Update.cmd` and `Uninstall.cmd` do on Windows, plus two Proton steps: it sets the
+  `WINEDLLOVERRIDES="dinput8=n,b"` launch option in each Steam user's `localconfig.vdf` (only with
+  Steam closed, keeping a `.ts3-online.bak` and any existing options; uninstall restores the file
+  byte for byte), and writes the online Tailscale peers into `net_peers`, since the game's own
+  `tailscale status` call cannot run inside Proton. Tested on Ubuntu (WSL) against a fake Steam tree
+  with a real `localconfig.vdf`: setup, a repeat, uninstall, Steam running, `--update` from the
+  v1.6.0 release, `--peers`. Not yet run in a real game under Proton.

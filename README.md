@@ -37,8 +37,11 @@ players yet; their scripts assume at most two avatars, so expect rough edges the
 ## How it works
 
 1. **Loader.** `dinput8.dll` is a proxy DLL: the game loads it from its own folder, it patches the
-   game in memory before the game starts, then forwards to the real system DLL. It checks the exe's
-   build and every original byte first, and patches nothing if anything differs.
+   game in memory before the game starts, then forwards to the real system DLL. The same DLL is also
+   installed as `steam_api64.dll` (forwarding Steam's calls to the copy kept in `ts3-online`), because
+   Proton loads that name without a launch option. Whichever copy loads first runs the mod; the other
+   only forwards. It checks the exe's build and every original byte first, and patches nothing if
+   anything differs.
 2. **Player limit.** The game's player manager is compiled for 2 players. The loader moves it to a
    larger buffer with room for 4, raises about 120 `idx < 2` checks to `< 4`, and replaces join, bind,
    controls and level-teardown code that hardcodes player 1 with Rust functions that take the
@@ -85,8 +88,9 @@ players 1 and 2. The character select before a level also only knows players 1 a
 
 ## Configuration
 
-Optional `ts3online.ini` next to the game exe (if absent, `%LOCALAPPDATA%\ts3online\ts3online.ini`),
-`key=value` lines:
+The setup writes `ts3-online/settings.ini` in the game folder. A `ts3online.ini` next to the game
+exe is read first (the two-copy test script writes one while it runs); settings from releases before
+1.7 (`%LOCALAPPDATA%\ts3online\ts3online.ini`) are read last. `key=value` lines:
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -99,13 +103,13 @@ Optional `ts3online.ini` next to the game exe (if absent, `%LOCALAPPDATA%\ts3onl
 | `[copy1]` .. `[copy4]` | | section header: the lines below it apply only to that copy and override the shared lines above the first section |
 
 With `enable=instances`, each copy picks its number (first free, 1-4) at start. Copy 1 logs to
-`ts3online.log`, copy n to `ts3online.copyN.log`; copies 2-4 keep their saves in
-`%LOCALAPPDATA%\ts3online\copyN`. `tools/launch_copy.ps1` starts another copy.
+`ts3online.log`, copy n to `ts3online.copyN.log`, all in `ts3-online` in the game folder; copies 2-4
+keep their saves in `ts3-online/copyN`. `tools/launch_copy.ps1` starts another copy.
 
 The game window size comes from the game's own `-dxresolution WxH` launch option.
 
-The loader writes `ts3online.log` next to the exe on every start. A `ts3online.patches.json` next
-to the exe replaces the built-in patch set.
+The loader writes `ts3online.log` in the game folder's `ts3-online` folder on every start. A
+`ts3online.patches.json` next to the exe replaces the built-in patch set.
 
 ## Known limitations
 

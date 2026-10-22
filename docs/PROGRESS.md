@@ -377,3 +377,18 @@ town.
   uninstall restoring Steam's file byte for byte), every page rendered on both, and in game with two
   copies: a host with no window, an automatic join with the save in 0.5 s, and a dead address that
   keeps the window open and saves the game picked instead.
+- 2026-10-22, everything in the game folder: the mod and the setup now keep all their files in
+  `<game>/ts3-online`, so a game folder can move between PCs (or a Steam Deck) with its settings and
+  backups. The loader is installed twice, as `dinput8.dll` and as `steam_api64.dll` (Steam's own
+  kept as `ts3-online/steam_api64_o.dll`): Proton loads the second from the game folder with no
+  launch option, and a process marker makes the first to load run the mod while the other only
+  forwards its own calls. Settings, logs, per-copy saves, the client's session save, command files
+  and save backups moved in with it; a `ts3online.ini` beside the exe is still read first, and
+  pre-1.7 settings under `%LOCALAPPDATA%` last, removed once the setup writes the new file. The
+  setup links the C runtime statically (no VC++ runtime needed), copies itself into `ts3-online` so
+  it can be run from the game folder, and asks in the terminal when no window can open (`--text`
+  forces it). Tested on Linux against fake Steam trees: text mode from piped answers, every new file
+  inside the game folder, moving the folder and running the setup from it, and uninstall restoring
+  Steam's DLL; 13 setup tests and 247 loader tests pass. The game-running check on Linux reads
+  `/proc` and counts a path to the exe, so a shell or `pgrep` that merely mentions the name cannot
+  block an install.

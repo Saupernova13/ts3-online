@@ -11,7 +11,7 @@ including picking each other up and throwing each other.
 2. **Everyone:** download `ts3-online.zip` from the
    [latest release](https://github.com/Saupernova13/ts3-online/releases/latest), unzip it, and run
    the setup: **`ts3-online-setup.exe`** on Windows, **`ts3-online-setup`** on Linux or Steam Deck
-   (Desktop Mode; close Steam first).
+   (Desktop Mode).
 3. The setup asks one question, **Host a game** or **Join a friend**, then the details: your name,
    an optional password, and for a friend, their game (found by itself on your tailnet or network,
    or typed). Click **Install**.
@@ -57,10 +57,11 @@ wizard:
    **Games found** list, or types its address, and can **Test** it: the setup asks the host's game
    whether it would take you, with the same checks the game makes.
 
-**Install** then backs up your saves to `Documents/ts3-online save backup/<date>`, puts
-`dinput8.dll` in the game folder (the only file it adds there) and saves your settings. On Linux and
-Steam Deck it also sets the game's Steam launch option, which Proton needs to load the mod (close
-Steam first, or paste the line it shows into **Properties > Launch Options**).
+**Install** then backs up your saves into `ts3-online/save backups/<date>` in the game folder, puts
+the mod there (`dinput8.dll`, and `steam_api64.dll` in place of Steam's so Proton loads it without a
+launch option; Steam's own is kept as `ts3-online/steam_api64_o.dll`), copies this setup into
+`ts3-online` so you can run it from there later, and saves your settings. Everything it writes stays
+in the game folder, so that folder can be moved to another PC or drive.
 
 Run it again at any time for the **settings** page: switch between host and join, pick or type a
 new host address, change your name, password or port, forget games you joined before, check for
@@ -101,11 +102,11 @@ new release also comes with a new setup program: download the zip again to get i
 | "[other ts3-online version]" or "has an older ts3-online" | Everyone updates to the latest release. |
 | "running the game but not hosting" | That player chose Join or Choose each time: they switch to Host in the setup. |
 | "This game is full" | A host takes 4 players. |
-| Linux: the game starts without the mod | The launch option is missing: run the setup again with Steam closed, or set it as the setup shows. |
-| Joined, but no partner in the game | Both players must be in the same level (Toy Box). Check `ts3online.log` next to the game exe for `net: connected`. |
+| Linux: the game starts without the mod | Run the setup again with the game closed: Steam's file check may have put its own `steam_api64.dll` back, and the setup reinstalls the mod. |
+| Joined, but no partner in the game | Both players must be in the same level (Toy Box). Check `ts3-online/ts3online.log` in the game folder for `net: connected`. |
 
-The loader writes `ts3online.log` next to the game exe (the setup's **Open the game folder** button
-goes there); attach it to bug reports.
+The loader writes `ts3online.log` in the game folder's `ts3-online` folder (the setup's **Open the
+game folder** button goes there); attach it to bug reports.
 
 ## Two copies on one PC (testing)
 
@@ -118,10 +119,11 @@ open and it removes it again once both games are closed.
 
 ## Settings file
 
-The setup keeps your settings in `%LOCALAPPDATA%\ts3online\ts3online.ini` on Windows and
-`~/.config/ts3-online/ts3online.ini` on Linux (the launch option names it to the game with
-`TS3ONLINE_CONFIG`). A `ts3online.ini` in the game folder is read first; the setup moves an older
-one out. You should not need to edit the file; these are its keys:
+The setup keeps your settings in `ts3-online/settings.ini` in the game folder, so they move with
+it. A `ts3online.ini` next to the game exe is read first (the two-copy test script writes one while
+it runs); settings from releases before 1.7 (`%LOCALAPPDATA%\ts3online\ts3online.ini` on Windows)
+are read last, and the setup removes them once it has written the new file. You should not need to
+edit the file; these are its keys:
 
 | Key | Default | Meaning |
 |---|---|---|

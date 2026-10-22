@@ -224,6 +224,28 @@ pub fn ini_changes(old_name: &str, old_key: &str, old_last: &str, name: &str, ke
     v
 }
 
+/// Past games kept in `recent_hosts`.
+pub const MAX_RECENT: usize = 8;
+
+/// `recent` with `addr` moved to the front, at most `MAX_RECENT`.
+pub fn remember(recent: &[String], addr: &str) -> Vec<String> {
+    std::iter::once(addr.to_string()).chain(recent.iter().filter(|r| !r.eq_ignore_ascii_case(addr)).cloned()).take(MAX_RECENT).collect()
+}
+
+/// After joining `joined`: the updated `recent_hosts`, and `join` when the player set one up and
+/// picked another game, so the next start goes to the new one.
+pub fn host_changes(recent: &[String], join: Option<&str>, joined: &str) -> Vec<(&'static str, String)> {
+    let mut v = Vec::new();
+    let new = remember(recent, joined);
+    if new != recent {
+        v.push(("recent_hosts", new.join(",")));
+    }
+    if join.is_some_and(|j| !j.eq_ignore_ascii_case(joined)) {
+        v.push(("join", joined.to_string()));
+    }
+    v
+}
+
 fn is_key_line(line: &str, key: &str) -> bool {
     let t = line.trim_start();
     !t.starts_with('#') && t.split_once('=').is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case(key))
@@ -412,6 +434,18 @@ mod tests {
         assert_eq!(ini_changes("a", "old", "", "a", "", None), [("net_key", String::new())]);
         assert_eq!(ini_changes("a", "", "x:1", "a", "", Some("y:2")), [("menu_last", "y:2".to_string())]);
         assert!(ini_changes("a", "", "x:1", "a", "", Some("x:1")).is_empty());
+    }
+
+    #[test]
+    fn recent_hosts_move_to_the_front_without_duplicates() {
+        let r = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(remember(&[], "a:1"), r(&["a:1"]));
+        assert_eq!(remember(&r(&["b:1", "a:1", "c:1"]), "A:1"), r(&["A:1", "b:1", "c:1"]));
+        assert_eq!(remember(&r(&["1", "2", "3", "4", "5", "6", "7", "8"]), "9").len(), MAX_RECENT);
+        assert!(host_changes(&r(&["a:1", "b:1"]), None, "a:1").is_empty());
+        assert_eq!(host_changes(&r(&["a:1"]), None, "b:1"), [("recent_hosts", "b:1,a:1".to_string())]);
+        assert_eq!(host_changes(&r(&["a:1"]), Some("a:1"), "b:1"), [("recent_hosts", "b:1,a:1".to_string()), ("join", "b:1".to_string())]);
+        assert!(host_changes(&r(&["a:1"]), Some("a:1"), "a:1").is_empty());
     }
 
     #[test]

@@ -120,7 +120,8 @@ mod entry {
         }
 
         let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-        let (cfg, ini_path) = config::load(&dir, local.as_deref(), n);
+        let named = std::env::var_os(config::CONFIG_ENV).map(std::path::PathBuf::from);
+        let (cfg, ini_path) = config::load(named.as_deref(), &dir, local.as_deref(), n);
         log!("config: {cfg:?}");
         if !cfg.enabled {
             log!("disabled by ts3online.ini");
@@ -176,7 +177,7 @@ mod entry {
         if let Some(mode) = &cfg.net {
             let opts = net::Options { name: cfg.name.clone(), sim: cfg.net_sim, copy: n, port: cfg.net_port, peers: cfg.net_peers.clone(), key: cfg.net_key.clone() };
             if *mode == config::Net::Menu {
-                menu::start(menu::Init { ini: ini_path, opts, last: cfg.menu_last.clone() });
+                menu::start(menu::Init { ini: ini_path, opts, last: cfg.menu_last.clone(), join: cfg.join.clone(), recent: cfg.recent_hosts.clone() });
             } else {
                 net::start(mode, opts);
             }

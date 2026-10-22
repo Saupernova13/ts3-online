@@ -88,11 +88,15 @@ pub struct Config {
     pub net_key: NetKey,
     /// address the connect menu last joined; prefills its address box
     pub menu_last: String,
+    /// with `net=menu`: the game to join at start; the window stays only if it does not answer
+    pub join: Option<String>,
+    /// games joined before, newest first; the connect menu lists them while they answer
+    pub recent_hosts: Vec<String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default(), menu_last: String::new() }
+        Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default(), menu_last: String::new(), join: None, recent_hosts: Vec::new() }
     }
 }
 
@@ -104,12 +108,15 @@ fn parse_bool(v: &str) -> Option<bool> {
     }
 }
 
-/// The ini beside the exe, else under `%LOCALAPPDATA%\ts3online`; defaults when neither reads.
-/// Also returns the path read, for the connect menu to write back to.
-pub fn load(exe_dir: &Path, local_app_data: Option<&Path>, copy: u32) -> (Config, Option<PathBuf>) {
+/// `TS3ONLINE_CONFIG` names the config file: the setup wizard keeps it in the Linux home under Proton.
+pub const CONFIG_ENV: &str = "TS3ONLINE_CONFIG";
+
+/// The file `explicit` names, else the ini beside the exe, else under `%LOCALAPPDATA%	s3online`;
+/// defaults when none reads. Also returns the path read, for the connect menu to write back to.
+pub fn load(explicit: Option<&Path>, exe_dir: &Path, local_app_data: Option<&Path>, copy: u32) -> (Config, Option<PathBuf>) {
     let beside = exe_dir.join("ts3online.ini");
     let fallback = local_app_data.map(|l| l.join("ts3online").join("ts3online.ini"));
-    let found = [Some(beside), fallback].into_iter().flatten().find_map(|p| std::fs::read_to_string(&p).ok().map(|t| (p, t)));
+    let found = [explicit.map(Path::to_path_buf), Some(beside), fallback].into_iter().flatten().find_map(|p| std::fs::read_to_string(&p).ok().map(|t| (p, t)));
     match found {
         Some((p, t)) => {
             log!("config file: {}", p.display());
@@ -219,6 +226,8 @@ pub fn parse(text: &str, copy: u32) -> Config {
             }
             "net_key" => c.net_key = NetKey::new(v),
             "menu_last" => c.menu_last = v.to_string(),
+            "join" => c.join = Some(v.to_string()).filter(|v| !v.is_empty()),
+            "recent_hosts" => c.recent_hosts = v.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
             "name" => {
                 let n = clamp_name(v).trim();
                 if !n.is_empty() {
@@ -232,6 +241,9 @@ pub fn parse(text: &str, copy: u32) -> Config {
         Some(Net::Host(p)) if *p == 0 => *p = c.net_port,
         Some(Net::Client(a)) if !a.contains(':') => *a = format!("{a}:{}", c.net_port),
         _ => {}
+    }
+    if let Some(a) = c.join.as_mut().filter(|a| !a.contains(':')) {
+        *a = format!("{a}:{}", c.net_port);
     }
     if c.net.is_some() {
         // `online` replaces `quadrants`: both patch the same site
@@ -249,13 +261,13 @@ mod tests {
 
     #[test]
     fn defaults() {
-        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default(), menu_last: String::new() });
+        assert_eq!(parse("", 1), Config { enabled: true, watch: true, watch_interval_ms: 500, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default(), menu_last: String::new(), join: None, recent_hosts: Vec::new() });
     }
 
     #[test]
     fn overrides_and_comments() {
         let c = parse("# hi\n enabled = 0 \nwatch=false\nWATCH_INTERVAL_MS=250\nbogus=1\nnoequals\n", 1);
-        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default(), menu_last: String::new() });
+        assert_eq!(c, Config { enabled: false, watch: false, watch_interval_ms: 250, enable: Vec::new(), window: None, pad: None, net: None, net_sim: None, log_events: false, dev_cmds: false, net_port: DEFAULT_PORT, net_peers: Vec::new(), net_stick_sign: 1, net_steer: true, net_steer_x: 1, net_steer_y: 1, name: "player".into(), net_key: NetKey::default(), menu_last: String::new(), join: None, recent_hosts: Vec::new() });
     }
 
     #[test]
@@ -373,6 +385,32 @@ menu_last = 100.64.0.7:27777", 1);
         assert!(!c.log_events);
         assert!(parse("log_events=1\n[copy2]\nlog_events=0\n", 2).log_events == false);
         assert!(!parse("log_events=maybe", 1).log_events);
+    }
+
+    #[test]
+    fn join_and_recent_hosts() {
+        assert_eq!(parse("", 1).join, None);
+        assert_eq!(parse("join=", 1).join, None);
+        assert_eq!(parse("join=pc.tail.ts.net", 1).join.as_deref(), Some("pc.tail.ts.net:27777"));
+        assert_eq!(parse("join=10.0.0.2:5
+net_port=99", 1).join.as_deref(), Some("10.0.0.2:5"));
+        assert_eq!(parse("net_port=99
+join=10.0.0.2", 1).join.as_deref(), Some("10.0.0.2:99"));
+        assert_eq!(parse("recent_hosts= a:1 ,, b:2", 1).recent_hosts, ["a:1", "b:2"]);
+    }
+
+    #[test]
+    fn load_prefers_the_named_file() {
+        let dir = std::env::temp_dir().join(format!("ts3online-load-{}", std::process::id()));
+        let exe = dir.join("game");
+        let named = dir.join("named.ini");
+        std::fs::create_dir_all(&exe).unwrap();
+        std::fs::write(exe.join("ts3online.ini"), "name=beside").unwrap();
+        std::fs::write(&named, "name=named").unwrap();
+        assert_eq!(load(Some(&named), &exe, None, 1).0.name, "named");
+        assert_eq!(load(Some(&dir.join("missing.ini")), &exe, None, 1).0.name, "beside");
+        assert_eq!(load(None, &exe, None, 1).0.name, "beside");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

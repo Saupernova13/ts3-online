@@ -179,6 +179,7 @@ mod live {
         let read = |idx: &[i32]| -> Vec<i32> { idx.iter().map(|&i| if i < 0 { 0 } else { rd_i32(stat_entry(stats, i) + STAT_VALUE) }).collect() };
         if !net::is_client() {
             // apply before publishing, so an ack never goes out with a value missing its spends
+            let mut confirmed = Vec::new();
             for (client, deltas, upto) in net::take_spends() {
                 for (idx, delta) in deltas {
                     let i = live.idx.get(idx as usize).copied().unwrap_or(-1);
@@ -187,9 +188,9 @@ mod live {
                         log!("wallet: player {client} spent {delta} {}", WALLETS[idx as usize]);
                     }
                 }
-                net::confirm_spends(client, upto);
+                confirmed.push((client, upto));
             }
-            net::set_local_wallet(&read(&live.idx));
+            net::set_local_wallet(&read(&live.idx), &confirmed);
             return;
         }
         if !net::save_is_shared() {

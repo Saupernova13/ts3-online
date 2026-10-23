@@ -9,6 +9,7 @@ use std::time::Instant;
 
 const PROBE_EVERY_MS: u64 = 1000;
 const TAILNET_EVERY_MS: u64 = 15_000;
+const RECV_PER_POLL: usize = 64;
 /// Route target for finding the LAN address; nothing is sent there.
 const ROUTE_PROBE: ([u8; 4], u16) = ([8, 8, 8, 8], 53);
 
@@ -75,15 +76,9 @@ impl App {
     }
 
     fn drain(&mut self, now: u64) {
-        let mut buf = [0u8; 1500];
-        // Windows reports ICMP port unreachable from a dead target as a receive error: skip it
-        for _ in 0..64 {
-            match self.sock.recv_from(&mut buf) {
-                Ok((n, from)) => model::hear(&mut self.table, self.pending.as_mut().map(|(_, p)| p), self.build, from, &buf[..n], now),
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(_) => continue,
-            }
-        }
+        discover::drain(&self.sock, RECV_PER_POLL, |from, bytes| {
+            model::hear(&mut self.table, self.pending.as_mut().map(|(_, p)| p), self.build, from, bytes, now);
+        });
     }
 
     pub(super) fn check(&mut self, choice: Choice, text: String, addr: SocketAddr, key: &str) {

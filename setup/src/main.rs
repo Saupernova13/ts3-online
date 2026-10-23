@@ -218,6 +218,16 @@ enum Job {
     Tailscale,
 }
 
+/// The page a finished job leaves: an install ends on Done, an uninstall that removed the mod goes
+/// back to Welcome, any other job stays where it was started.
+fn page_after(job: &Job, page: Page, installed: Option<&str>) -> Page {
+    match job {
+        Job::Install => Page::Done,
+        Job::Uninstall if installed.is_none() => Page::Welcome,
+        _ => page,
+    }
+}
+
 struct App {
     page: Page,
     game: Option<PathBuf>,
@@ -226,12 +236,14 @@ struct App {
     /// The version of the release this program came in, when it runs from one.
     bundled: Option<String>,
     settings: Settings,
+    /// The port box's text; it may not parse while it is being retyped.
+    port_text: String,
     saved: Option<Settings>,
     show_password: bool,
     probe: Probe,
     build: u64,
     steps: Vec<Step>,
-    busy: Option<(String, Receiver<(Vec<Step>, Option<String>)>)>,
+    busy: Option<(String, Job, Receiver<(Vec<Step>, Option<String>)>)>,
     latest: Option<Receiver<Result<(String, String), String>>>,
     latest_seen: Option<Result<(String, String), String>>,
     confirm_uninstall: bool,
@@ -277,6 +289,7 @@ impl App {
             game,
             installed,
             bundled,
+            port_text: settings.port.to_string(),
             settings,
             saved,
             show_password: false,
@@ -293,51 +306,48 @@ impl App {
     }
 
     fn start(&mut self, job: Job) {
-        let Some(game) = self.game.clone() else { return };
         let s = self.settings.clone();
-        let (label, f): (&str, Box<dyn FnOnce() -> (Vec<Step>, Option<String>) + Send>) = match job {
-            Job::Install => ("Installing...", Box::new(move || (actions::install_all(&game, &s), actions::installed(&game)))),
-            Job::Save => ("Saving...", Box::new(move || (actions::apply(&game, &s, actions::bundled_release(&game).as_ref()), actions::installed(&game)))),
-            Job::Tailscale => ("Getting Tailscale...", Box::new(move || (vec![actions::install_tailscale()], actions::installed(&game)))),
-            Job::Update(url) => (
-                "Updating...",
-                Box::new(move || {
-                    let steps = match actions::download_release(&url) {
-                        Ok(r) => actions::update_from_github(&game, &r, &user_name()),
-                        Err(e) => vec![Step { ok: false, text: e }],
-                    };
-                    (steps, actions::installed(&game))
-                }),
-            ),
-            Job::Uninstall => {
-                let delete = self.delete_settings;
-                ("Removing...", Box::new(move || (actions::uninstall(&game, delete), actions::installed(&game))))
+        let kept = self.installed.clone();
+        let delete = self.delete_settings;
+        let (label, f): (&str, Box<dyn FnOnce() -> (Vec<Step>, Option<String>) + Send>) = match (&job, self.game.clone()) {
+            // needs no game folder
+            (Job::Tailscale, _) => ("Getting Tailscale...", Box::new(move || (vec![actions::install_tailscale()], kept))),
+            (_, None) => return,
+            (Job::Install, Some(game)) => ("Installing...", Box::new(move || (actions::install_all(&game, &s), actions::installed(&game)))),
+            (Job::Save, Some(game)) => ("Saving...", Box::new(move || (actions::apply(&game, &s, actions::bundled_release(&game).as_ref()), actions::installed(&game)))),
+            (Job::Update(url), Some(game)) => {
+                let url = url.clone();
+                (
+                    "Updating...",
+                    Box::new(move || {
+                        let steps = match actions::download_release(&url) {
+                            Ok(r) => actions::update_from_github(&game, &r, &user_name()),
+                            Err(e) => vec![Step { ok: false, text: e }],
+                        };
+                        (steps, actions::installed(&game))
+                    }),
+                )
             }
+            (Job::Uninstall, Some(game)) => ("Removing...", Box::new(move || (actions::uninstall(&game, delete), actions::installed(&game)))),
         };
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let _ = tx.send(f());
         });
-        self.busy = Some((label.to_string(), rx));
+        self.busy = Some((label.to_string(), job, rx));
         self.steps.clear();
     }
 
     fn poll(&mut self) {
-        if let Some((_, rx)) = &self.busy {
+        if let Some((_, job, rx)) = &self.busy {
             if let Ok((steps, installed)) = rx.try_recv() {
-                let was_installing = self.page != Page::Settings;
                 let saved_ok = steps.iter().any(|s| s.ok && s.text.starts_with("Saved your settings"));
                 self.steps = steps;
                 self.installed = installed;
                 if saved_ok {
                     self.saved = Some(self.settings.clone());
                 }
-                if was_installing {
-                    self.page = Page::Done;
-                }
-                if self.installed.is_none() && self.page == Page::Settings {
-                    self.page = Page::Welcome;
-                }
+                self.page = page_after(job, self.page, self.installed.as_deref());
                 self.busy = None;
             }
         }
@@ -424,14 +434,15 @@ fn steps_list(ui: &mut egui::Ui, steps: &[Step]) {
 
 impl App {
     fn nav(&mut self, ui: &mut egui::Ui) {
-        if let Some((label, _)) = &self.busy {
+        if let Some((label, _, _)) = &self.busy {
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(label.as_str());
             });
             return;
         }
-        let problem = self.settings.problem();
+        // while the port box does not parse, Save would write another port than the one it shows
+        let problem = self.settings.problem().or_else(|| parse_port(&self.port_text).is_none().then(|| "The port must be 1 to 65535.".to_string()));
         // (back, message, primary label and whether it is enabled)
         let (back, note, primary): (Option<Page>, Option<(String, Color32)>, Option<(&str, bool)>) = match self.page {
             Page::Welcome => (None, None, Some(("Next  ›", self.game.is_some()))),
@@ -506,6 +517,7 @@ impl App {
                     let text = actions::read_config(Some(g));
                     if !text.trim().is_empty() {
                         let s = Settings::from_ini(&text, &user_name());
+                        self.port_text = s.port.to_string();
                         self.settings = s.clone();
                         self.saved = Some(s);
                     }
@@ -521,6 +533,10 @@ impl App {
         heading(ui, "Playing over the internet");
         self.tailscale_line(ui);
         ui.label(RichText::new("Players on the same home network find each other without it.").weak());
+        if !self.steps.is_empty() {
+            ui.add_space(8.0);
+            steps_list(ui, &self.steps);
+        }
     }
 
     fn tailscale_line(&mut self, ui: &mut egui::Ui) {
@@ -627,12 +643,12 @@ impl App {
         egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Port (UDP)");
-                let mut text = self.settings.port.to_string();
-                if ui.add(egui::TextEdit::singleline(&mut text).desired_width(70.0)).changed() {
-                    if let Ok(p) = text.trim().parse::<u16>() {
-                        if p > 0 {
-                            self.settings.port = p;
-                        }
+                let edited = ui.add(egui::TextEdit::singleline(&mut self.port_text).desired_width(70.0)).changed();
+                match parse_port(&self.port_text) {
+                    Some(p) if edited => self.settings.port = p,
+                    Some(_) => {}
+                    None => {
+                        ui.label(RichText::new("1 to 65535").color(BAD));
                     }
                 }
                 ui.label(RichText::new("every player uses the same; 27777 unless you have a reason").weak());
@@ -837,6 +853,46 @@ impl App {
     }
 }
 
+fn parse_port(text: &str) -> Option<u16> {
+    text.trim().parse().ok().filter(|p| *p > 0)
+}
+
 fn strip_port(addr: &str, port: u16) -> String {
     addr.strip_suffix(&format!(":{port}")).unwrap_or(addr).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_install_goes_to_done_and_an_uninstall_that_removed_the_mod_to_welcome() {
+        assert_eq!(page_after(&Job::Install, Page::Details, Some("1.8.0")), Page::Done);
+        assert_eq!(page_after(&Job::Uninstall, Page::Settings, None), Page::Welcome);
+        assert_eq!(page_after(&Job::Uninstall, Page::Settings, Some("1.8.0")), Page::Settings, "a failed uninstall stays to show why");
+    }
+
+    #[test]
+    fn a_tailscale_install_stays_on_the_page_it_started_from() {
+        for page in [Page::Welcome, Page::Settings] {
+            assert_eq!(page_after(&Job::Tailscale, page, None), page);
+            assert_eq!(page_after(&Job::Tailscale, page, Some("1.8.0")), page);
+        }
+    }
+
+    #[test]
+    fn a_port_is_a_number_from_1_to_65535() {
+        assert_eq!(parse_port("27777"), Some(27777));
+        assert_eq!(parse_port(" 65535 "), Some(65535));
+        assert_eq!(parse_port("1"), Some(1));
+        for bad in ["", "0", "65536", "-1", "27777x", "port"] {
+            assert_eq!(parse_port(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_save_or_an_update_stays_on_settings() {
+        assert_eq!(page_after(&Job::Save, Page::Settings, Some("1.8.0")), Page::Settings);
+        assert_eq!(page_after(&Job::Update("url".into()), Page::Settings, Some("1.8.0")), Page::Settings);
+    }
 }

@@ -1,7 +1,7 @@
 # Start another copy of Toy Story 3 next to a running one.
 #   powershell -File tools\launch_copy.ps1 [-Copy 2] [-CopySave]
 # -Copy is informational: the loader takes the first free copy number. Copy n saves to
-# %LOCALAPPDATA%\ts3online\copy<n>; -CopySave first copies the real saves there, overwriting.
+# <game>\ts3-online\copy<n>; -CopySave first copies the real saves there, overwriting.
 # Started through explorer.exe so it runs in the desktop session.
 param(
     [ValidateRange(2, 4)][int]$Copy = 2,
@@ -38,7 +38,7 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "missing $exe" }
 if ($CopySave) {
     $rel = "Disney\$game\savedata"
     $src = Join-Path $env:APPDATA $rel
-    $dst = Join-Path $env:LOCALAPPDATA "ts3online\copy$Copy\$rel"
+    $dst = Join-Path $dir "ts3-online\copy$Copy\$rel"
     if (-not (Test-Path -LiteralPath $src -PathType Container)) { throw "no savegames at $src" }
     New-Item -ItemType Directory -Force -Path $dst | Out-Null
     Copy-Item -Path (Join-Path $src '*') -Destination $dst -Recurse -Force

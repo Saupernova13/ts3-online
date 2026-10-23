@@ -93,7 +93,7 @@ $lines = @(
 [IO.File]::WriteAllLines($ini, $lines)
 
 try {
-    $log1 = Join-Path $GameDir 'ts3online.log'
+    $log1 = Join-Path $GameDir 'ts3-online\ts3online.log'
     $started = Get-Date
     $steamExe = (Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamExe
     if (-not $steamExe) { throw 'Cannot find Steam to start the first copy.' }

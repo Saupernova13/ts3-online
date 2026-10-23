@@ -150,7 +150,9 @@ pub unsafe fn update() {
             park(*id, p, "left");
         }
     }
-    set_aside_mismatched(partners, &remote);
+    for slot in set_aside_mismatched(partners, &remote) {
+        pad::set_remote_pad(slot, None);
+    }
     for (id, _) in &remote {
         if !partners.contains_key(id) {
             adopt_parked(partners, *id, &remote);

@@ -447,3 +447,7 @@ town.
   motions played per 10 s, none missing from the client's sets, and a Muffin killed on the host
   died in `REACT_BLASTAWAY` on both. The delay, sampling plus one-way time, was not measured. 305
   loader tests pass on Windows.
+- 2026-10-23, release 1.8.0 (protocol 20): enemy motions on clients (#49) and a player back as
+  another character (#51), both tested in game (T34, T35), plus the `local-coop.ps1` log path. 1.8.0
+  does not play with 1.7.x; the release notes say so and how each older release updates (1.7.2's
+  Update button brings the whole release, older ones need the zip's setup and Save).

@@ -7,7 +7,7 @@
   powershell -ExecutionPolicy Bypass -File local-coop.ps1      (what LocalCoop.cmd runs)
 
 .NOTES
-  Needs the loader installed (Setup.cmd). Copy n uses controller n. Copy 1 hosts with your save;
+  Needs ts3-online installed (ts3-online-setup). Copy n uses controller n. Copy 1 hosts with your save;
   copy 2 downloads it and never writes it. Your ts3online.ini is kept as
   ts3online.ini.before-local-coop and restored once both games close (or on the next run).
 #>
@@ -75,7 +75,7 @@ function Wait-For([scriptblock]$Done, [int]$Seconds, [string]$What) {
 
 if (-not $GameDir) { $GameDir = Find-GameDir }
 $ini = Join-Path $GameDir 'ts3online.ini'
-if (-not (Test-Path -LiteralPath (Join-Path $GameDir 'dinput8.dll'))) { throw "The loader is not installed in $GameDir. Run Setup.cmd first." }
+if (-not (Test-Path -LiteralPath (Join-Path $GameDir 'dinput8.dll'))) { throw "The loader is not installed in $GameDir. Run ts3-online-setup first." }
 if ((Get-Games).Count -gt 0) {
     Write-Host 'Toy Story 3 is already running. Close it, then run this again.'
     return

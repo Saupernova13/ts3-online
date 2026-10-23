@@ -326,6 +326,17 @@ pub fn set_plays_session() {
     PLAYS_SESSION.store(true, Ordering::Relaxed);
 }
 
+/// Whether a copy plays the save the session shares: a host always does, a client only when the
+/// save-folder redirect gave it the host's save.
+pub fn plays_hosts_save(client: bool, plays_session: bool) -> bool {
+    !client || plays_session
+}
+
+/// Game thread: `plays_hosts_save` for this copy's role and save folder.
+pub fn save_is_shared() -> bool {
+    plays_hosts_save(is_client(), PLAYS_SESSION.load(Ordering::Relaxed))
+}
+
 fn client_session(build: u64, name: &str, host: SocketAddr, key: &NetKey) -> Session {
     let mut s = Session::client(build, name, host);
     s.set_key(key.as_str().as_bytes());
@@ -380,6 +391,13 @@ mod tests {
         assert_eq!(served_save_path(r"C:\A", base, 2, false), host_save_path(r"C:\A", base, 2));
         let s = served_save_path(r"C:\A", base, 2, true);
         assert!(s.starts_with(base.join("session")) && s.ends_with("Saved Game"));
+    }
+
+    #[test]
+    fn a_client_shares_the_hosts_save_only_when_it_plays_it() {
+        assert!(plays_hosts_save(false, false) && plays_hosts_save(false, true), "a host serves what it plays");
+        assert!(plays_hosts_save(true, true));
+        assert!(!plays_hosts_save(true, false), "a client on its own save keeps it");
     }
 
     #[test]

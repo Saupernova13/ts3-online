@@ -451,3 +451,13 @@ town.
   another character (#51), both tested in game (T34, T35), plus the `local-coop.ps1` log path. 1.8.0
   does not play with 1.7.x; the release notes say so and how each older release updates (1.7.2's
   Update button brings the whole release, older ones need the zip's setup and Save).
+- 2026-10-23, dev tools after the repo review: `tools/launch_copy.ps1 -CopySave` copied the saves
+  into `%LOCALAPPDATA%\ts3online\copy<n>`, where they lived before 1.7, so the copy started without
+  them and the recreated folder made every later setup Save try to move it; it copies into
+  `<game>\ts3-online\copy<n>` now. `tools/deploy_loader.sh` replaced only `dinput8.dll`, but the
+  game imports `steam_api64.dll` first (its import table: bink2w64, fmod, fmodstudio, steam_api64,
+  ADVAPI32, DINPUT8, ...) and the first copy of the loader to start runs the mod, so the installed
+  build most likely kept running (not checked in game); it installs both names now, keeps Steam's
+  own as `ts3-online/steam_api64_o.dll` and puts it back on `--remove`. Both checked against a fake
+  game folder (deploy, deploy again, Steam's update kept, remove, another mod's `dinput8.dll`
+  refused, no Steam DLL refused).

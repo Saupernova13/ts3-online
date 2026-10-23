@@ -91,9 +91,10 @@ A host takes up to 4 players.
 ## Update
 
 Every player needs the same ts3-online release. Run the setup, open **Updates, help and
-uninstall**, click **Check for updates**, then **Update** (with the game closed). The in-game
-window's title shows the release you have, and it tells you when the host runs a different one. A
-new release also comes with a new setup program: download the zip again to get it.
+uninstall**, click **Check for updates**, then **Update** (with the game closed). It puts the new
+mod and the new setup program in the game folder; close the setup and open it again to use the new
+one. Running the setup from a newer release zip does the same when you click **Save**. The in-game
+window's title shows the release you have, and it tells you when the host runs a different one.
 
 ## Troubleshooting
 

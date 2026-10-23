@@ -414,3 +414,15 @@ town.
   in `ts3-online`, so the 1.7.1 release notes tell 1.7.0 players to run the zip's setup instead. The
   protocol version (19) is unchanged, so 1.7.0 and 1.7.1 play together. 248 loader and 18 setup
   tests pass on Linux; both crates check clean for `x86_64-pc-windows-gnu`.
+- 2026-10-23, release 1.7.2 (#55): updating installs the whole release. **Update to** and `--update`
+  read the release zip, refuse it unless it holds ts3-online's DLL and both setup programs, back up
+  the saves and install all three; Save, `--apply` and `--text` from an unzipped newer release
+  install it before saving (an older one never replaces a newer install; the same release only
+  brings the setup programs up to date). A setup program is replaced while it runs by writing the
+  new one beside it and renaming the old one aside, which Windows allows for a running program;
+  the leftover goes on the next start. A review then found: a repair used the running setup's
+  DLL, which may be older (now the game's own); a failed update step skipped saving the settings;
+  a loader-made empty `copyN` blocked the pre-1.7 move, and Update never moved it (now it saves
+  again while that folder exists, never while the game runs); a release unzipped into the game
+  folder was never offered; a pasted game folder was not loaded; the DLLs were written in place.
+  28 setup tests pass on Linux; both crates check clean for `x86_64-pc-windows-gnu`.

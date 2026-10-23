@@ -1,7 +1,7 @@
-# ts3-online 1.7.0
+# ts3-online 1.7.1
 
 Online co-op for *Toy Story 3 Complete Edition* (Steam), with one setup program for Windows and
-Linux/Steam Deck.
+Linux/Steam Deck. This release fixes the 1.7.0 setup, which could delete saves.
 
 ## Install
 
@@ -12,29 +12,33 @@ Linux/Steam Deck.
    host details, then click **Install**.
 4. Start the game from Steam. No launch options or scripts.
 
-The setup finds the game through Steam, backs up your saves into the game folder's
-`ts3-online/save backups`, installs the mod and saves your settings. Run it again later to change
-anything or to uninstall.
+Already on 1.7.0? Run the setup from this zip on every PC, not **Update to 1.7.1** in the old
+setup: that button replaces only the mod and leaves 1.7.0's setup, the one that deletes saves, in
+the game folder. Your settings are kept. The online code is unchanged, so 1.7.0 and 1.7.1 still
+play together.
 
-## What's new
+## What's fixed
 
-- **One setup program** for Windows and Linux/Steam Deck replaces `Setup.cmd`, `Update.cmd`,
-  `Uninstall.cmd` and `install.ps1`.
-- **No launch options on Linux.** The mod is installed as `steam_api64.dll` as well as
-  `dinput8.dll`, which Proton loads from the game folder by itself. Steam's own DLL is kept as
-  `ts3-online/steam_api64_o.dll`.
-- **Everything ts3-online writes lives in `<game>/ts3-online`**: settings, logs, backups, the
-  per-copy saves and the setup program. Copy or move the game folder and the mod keeps working.
-  Your own (copy 1) save stays in the game's normal save folder, and the setup backs it up into
-  the game folder.
-- **No runtime to install.** The Windows programs link the C runtime statically, so there is no
-  Visual C++ redistributable to install. On Linux the setup needs only glibc 2.35+ (SteamOS 3,
-  Ubuntu 22.04 or newer); if it cannot open a window (no desktop or GPU), it asks the same
-  questions in the terminal (`--text` forces this).
-- **Join at start.** The game joins the saved host by itself and remembers past hosts; the window
-  opens only when that game does not answer.
-- **Linux process check.** Setup and uninstall now refuse while the game is running, using the
-  same check as Windows.
+- **Uninstall keeps your progress.** 1.7.0's uninstall deleted the saves of copies 2 to 4
+  (`ts3-online/copy2` to `copy4`) while the window said your saves stay. Those folders and
+  `save backups` now always stay; your settings and the games you joined stay unless you tick
+  **Also delete my settings and the games I joined**.
+- **Upgrading from 1.6.0 or older keeps your progress.** 1.7.0 deleted `%LOCALAPPDATA%\ts3online`
+  with the copies' saves and the joined game's save still inside. The setup now copies them into
+  `<game>/ts3-online` first and removes the old folder only once that worked. If a folder of the
+  same name is already there, it copies nothing and leaves the old folder alone.
+- **Uninstall removes the old firewall rule.** 1.6.0 could add a Windows Firewall rule
+  "ts3-online (UDP)" that 1.7.0 left behind. Uninstall now removes it, asking for administrator
+  rights.
+- **The guide no longer promises a firewall option** in the setup: Windows asks the first time you
+  host.
+- **No more pointers to removed scripts.** The game's message for a version mismatch, its log and
+  `local-coop.ps1` told players to run `Update.cmd` or `Setup.cmd`, which 1.7.0 removed; they now
+  point at the setup.
+
+If you already ran 1.7.0's uninstall, or ran 1.7.0's setup on a PC that had an older version, the
+saves of copies 2 to 4 and of the games you joined may be gone, and 1.7.1 cannot bring them back.
+Your own (copy 1) save was never touched, and its backups are in `ts3-online/save backups`.
 
 ## Requirements
 

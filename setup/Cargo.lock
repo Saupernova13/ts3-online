@@ -2568,7 +2568,7 @@ checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 
 [[package]]
 name = "ts3online"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "hmac",
  "serde",
@@ -2579,7 +2579,7 @@ dependencies = [
 
 [[package]]
 name = "ts3online-setup"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "eframe",
  "png 0.17.13",

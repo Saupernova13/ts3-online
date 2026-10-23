@@ -392,3 +392,25 @@ town.
   Steam's DLL; 13 setup tests and 247 loader tests pass. The game-running check on Linux reads
   `/proc` and counts a path to the exe, so a shell or `pgrep` that merely mentions the name cannot
   block an install.
+- 2026-10-23, setup keeps the saves: three fixes to the 1.7.0 setup. Uninstall emptied `ts3-online`
+  except `settings.ini` and `save backups`, so it deleted every copy's progress (`copyN`); it now
+  always keeps `copyN` and `save backups`, and `settings.ini` and `session` unless the player ticks
+  "Also delete my settings and the games I joined" (the window's label says so). Setting up on a PC
+  with a pre-1.7 install deleted `%LOCALAPPDATA%\ts3online` with the saves still in it; it now
+  copies the old `copyN` and `session` folders into `ts3-online` first (a copy, as the game is often
+  on another drive) and removes the old folder only when that worked and the new settings file was
+  written; a folder that already exists in `ts3-online` stops the move, copies nothing and keeps the
+  old folder. 1.6.0 could add a Windows Firewall rule "ts3-online (UDP)"; 1.7.0 dropped the feature
+  (Windows asks the first time a copy hosts) but also stopped removing the old rule, so uninstall on
+  Windows removes it again (asking for administrator rights; it says so when it could not).
+  `docs/PLAYING.md` no longer promises a firewall button. Tested on Linux with temp folders: uninstall
+  keeping and removing each folder kind, the move with a conflict, loose files and a failure midway;
+  the Windows-only firewall code was only compiled, not run.
+- 2026-10-23, release 1.7.1: the save fixes above, plus leftovers from 1.7.0. The game's message for
+  a version mismatch, its log line and `local-coop.ps1` still told players to run `Update.cmd` or
+  `Setup.cmd`, which 1.7.0 removed; they now point at the setup from the newest zip. The selection
+  stroke in the setup window had an untyped float literal (`float_literal_f32_fallback`, a future
+  hard error). The setup's **Update to** button replaces only `dinput8.dll` and leaves the old setup
+  in `ts3-online`, so the 1.7.1 release notes tell 1.7.0 players to run the zip's setup instead. The
+  protocol version (19) is unchanged, so 1.7.0 and 1.7.1 play together. 248 loader and 18 setup
+  tests pass on Linux; both crates check clean for `x86_64-pc-windows-gnu`.

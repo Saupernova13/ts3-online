@@ -248,7 +248,7 @@ impl App {
         style.spacing.item_spacing = egui::vec2(10.0, 9.0);
         style.spacing.button_padding = egui::vec2(14.0, 7.0);
         style.visuals.selection.bg_fill = Color32::from_rgb(120, 88, 20);
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
+        style.visuals.selection.stroke = egui::Stroke::new(1.0_f32, ACCENT);
         ctx.set_style(style);
         ctx.set_zoom_factor(1.1);
         let game = platform::find_game();
@@ -793,7 +793,7 @@ impl App {
                 self.confirm_uninstall = true;
             }
         } else {
-            ui.label("This removes ts3-online from the game folder; your saves stay.");
+            ui.label("This removes ts3-online from the game folder; your saves and save backups stay.");
             ui.checkbox(&mut self.delete_settings, "Also delete my settings and the games I joined");
             ui.horizontal(|ui| {
                 if ui.button(RichText::new("Uninstall").color(BAD)).clicked() {

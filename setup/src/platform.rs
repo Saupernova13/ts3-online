@@ -168,6 +168,54 @@ fn reg_query(key: &str, value: &str) -> Option<String> {
     out.lines().find_map(|l| l.split_once("REG_SZ").map(|(_, v)| v.trim().to_string()))
 }
 
+/// The inbound Windows Firewall rule releases before 1.7 could add.
+pub const FIREWALL_RULE: &str = "ts3-online (UDP)";
+
+/// Whether that rule still exists (Windows only).
+pub fn firewall_rule_present() -> bool {
+    cfg!(windows) && output("netsh", &["advfirewall", "firewall", "show", "rule", &format!("name={FIREWALL_RULE}")]).is_some()
+}
+
+/// Deletes that rule through an elevated `netsh`; Windows asks the player for administrator rights.
+/// True once `netsh` succeeded.
+#[cfg(windows)]
+pub fn remove_firewall_rule() -> bool {
+    elevated("netsh", &format!(r#"advfirewall firewall delete rule name="{FIREWALL_RULE}""#)) == Some(0)
+}
+
+#[cfg(not(windows))]
+pub fn remove_firewall_rule() -> bool {
+    true
+}
+
+/// Runs `program args` as administrator (UAC prompt) and waits; its exit code, None if refused.
+#[cfg(windows)]
+fn elevated(program: &str, args: &str) -> Option<u32> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
+    use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
+    let w = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let (verb, file, params) = (w("runas"), w(program), w(args));
+    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    info.fMask = SEE_MASK_NOCLOSEPROCESS;
+    info.lpVerb = verb.as_ptr();
+    info.lpFile = file.as_ptr();
+    info.lpParameters = params.as_ptr();
+    info.nShow = SW_HIDE;
+    if unsafe { ShellExecuteExW(&mut info) } == 0 || info.hProcess.is_null() {
+        return None;
+    }
+    let mut code = 0u32;
+    unsafe {
+        WaitForSingleObject(info.hProcess, INFINITE);
+        GetExitCodeProcess(info.hProcess, &mut code);
+        CloseHandle(info.hProcess);
+    }
+    Some(code)
+}
+
 /// Opens a folder or a web page with the system's default program.
 pub fn open(target: &str) {
     let r = if cfg!(windows) { Command::new("explorer").arg(target).spawn() } else { Command::new("xdg-open").arg(target).spawn() };

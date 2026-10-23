@@ -53,10 +53,10 @@ wizard:
    - **Choose each time:** the "Toy Story 3 Online" window opens at every start: Host, or pick a
      game and Join.
 3. **Details.** Your name and an optional password (every player uses the same one). A host sees
-   the addresses friends can use, with Copy buttons, and on Windows can let players through the
-   firewall (Windows asks for administrator rights). A friend picks the host's game from the
-   **Games found** list, or types its address, and can **Test** it: the setup asks the host's game
-   whether it would take you, with the same checks the game makes.
+   the addresses friends can use, with Copy buttons. The first time you host, Windows asks whether
+   to let the game through its firewall: click Allow (in full screen, Alt+Tab to see it). A friend
+   picks the host's game from the **Games found** list, or types its address, and can **Test** it:
+   the setup asks the host's game whether it would take you, with the same checks the game makes.
 
 **Install** then backs up your saves into `ts3-online/save backups/<date>` in the game folder, puts
 the mod there (`dinput8.dll`, and `steam_api64.dll` in place of Steam's so Proton loads it without a
@@ -100,7 +100,7 @@ new release also comes with a new setup program: download the zip again to get i
 | What you see | What to do |
 |---|---|
 | The setup's Games found list stays empty | The host's game must be running and hosting. Check that Tailscale shows the other PC online on both PCs, or type the host's address (shown in the host's setup) and click Test. |
-| "No answer from ..." | The host's game is not open, or a firewall blocks it: on a Windows host, run the setup and let players through the firewall (or click Allow when Windows asks). Both PCs must be online in Tailscale. Joining again joins anyway and keeps trying in the background. |
+| "No answer from ..." | The host's game is not open, or a firewall blocks it: on a Windows host, allow the game in Windows Defender Firewall (Windows asks the first time you host: click Allow). Both PCs must be online in Tailscale. Joining again joins anyway and keeps trying in the background. |
 | "Wrong password" or "needs a password" | Everyone uses the host's password exactly: change it in the setup. |
 | "[other ts3-online version]" or "has an older ts3-online" | Everyone updates to the latest release. |
 | "running the game but not hosting" | That player chose Join or Choose each time: they switch to Host in the setup. |

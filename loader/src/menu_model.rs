@@ -84,7 +84,7 @@ pub fn host_info(msg: &Msg, build: u64) -> Option<(String, u8, bool)> {
 
 pub fn version_text(theirs: u16) -> String {
     let who = if theirs < VERSION { "The host has an older ts3-online than you" } else { "You have an older ts3-online than the host" };
-    format!("{who}. Both players need the same release: run Update.cmd, or download the latest from the GitHub releases page.")
+    format!("{who}. Both players need the same release: run the setup from the newest ts3-online.zip on GitHub.")
 }
 
 pub fn own_line(tailnet: Option<Ipv4Addr>, lan: Option<Ipv4Addr>, port: u16) -> String {
@@ -284,6 +284,14 @@ mod tests {
 
     fn addr(s: &str) -> SocketAddr {
         s.parse().unwrap()
+    }
+
+    #[test]
+    fn a_version_mismatch_points_at_the_setup() {
+        for theirs in [VERSION - 1, VERSION + 1] {
+            let t = version_text(theirs);
+            assert!(t.contains("ts3-online.zip") && t.contains("setup") && !t.contains(".cmd"), "{t}");
+        }
     }
 
     #[test]

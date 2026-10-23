@@ -1,7 +1,6 @@
 //! Timer-driven discovery and the Join check; no window calls in here.
-use crate::config::NetKey;
 use crate::menu_model::{self as model, Choice, Table, Verdict};
-use crate::net::proto::{self, DecodeError, Msg};
+use crate::net::proto::{self, Msg};
 use crate::net::{self, discover};
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,20 +33,10 @@ pub(super) struct App {
     /// the "This PC" line, from the background thread
     own: Arc<Mutex<Option<String>>>,
     own_shown: Option<String>,
-    pub(super) pending: Option<Pending>,
+    /// a Join waiting for the host's answers, with the choice it goes ahead with
+    pub(super) pending: Option<(Choice, model::Pending)>,
     /// a game that did not answer; joining it again skips the check
     pub(super) retry: Option<String>,
-}
-
-/// A Join waiting for the host's answers.
-pub(super) struct Pending {
-    choice: Choice,
-    text: String,
-    addr: SocketAddr,
-    key: String,
-    nonce: u64,
-    next_send: u64,
-    check: model::Check,
 }
 
 /// What a timer tick wants the window to change.
@@ -90,60 +79,29 @@ impl App {
         // Windows reports ICMP port unreachable from a dead target as a receive error: skip it
         for _ in 0..64 {
             match self.sock.recv_from(&mut buf) {
-                Ok((n, from)) => self.heard(from, &buf[..n], now),
+                Ok((n, from)) => model::hear(&mut self.table, self.pending.as_mut().map(|(_, p)| p), self.build, from, &buf[..n], now),
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                 Err(_) => continue,
             }
         }
     }
 
-    fn heard(&mut self, from: SocketAddr, bytes: &[u8], now: u64) {
-        let key = self.pending.as_ref().map_or(String::new(), |p| p.key.clone());
-        let checking = self.pending.as_mut().filter(|p| p.addr == from);
-        match proto::decode(bytes, key.as_bytes()) {
-            Ok(msg) => {
-                if let Some((name, players, locked)) = model::host_info(&msg, self.build) {
-                    self.table.heard(from, &name, players, locked, now);
-                }
-                let Some(p) = checking else { return };
-                match msg {
-                    Msg::ProbeReply { build, host, players, .. } => p.check.reply = Some((build, host, players)),
-                    Msg::CheckReply { nonce } if nonce == p.nonce => p.check.key_ok = true,
-                    Msg::Refuse { reason } if reason == proto::REFUSE_KEY => p.check.key_refused = true,
-                    _ => {}
-                }
-            }
-            Err(DecodeError::Version(_)) => {
-                if let Some(v) = proto::refused_version(bytes) {
-                    self.table.heard_version(from, v, now);
-                    if let Some(p) = checking {
-                        p.check.version = Some(v);
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-    }
-
     pub(super) fn check(&mut self, choice: Choice, text: String, addr: SocketAddr, key: &str) {
-        let now = self.began.elapsed().as_millis() as u64;
-        let nonce = (self.began.elapsed().as_nanos() as u64) ^ (u64::from(std::process::id()) << 32);
-        let key = NetKey::new(key).as_str().to_string();
-        self.pending = Some(Pending { choice, text, addr, key, nonce, next_send: now, check: model::Check { started_ms: now, ..model::Check::default() } });
+        self.pending = Some((choice, model::Pending::new(text, addr, key, self.began)));
     }
 
     fn poll_check(&mut self, now: u64) -> Option<Choice> {
-        let p = self.pending.as_mut()?;
-        if now >= p.next_send {
-            p.next_send = now + model::CHECK_RESEND_MS;
-            let _ = self.sock.send_to(&proto::encode(&Msg::Probe { build: self.build }, &[]), p.addr);
-            let _ = self.sock.send_to(&proto::encode(&Msg::Check { nonce: p.nonce }, p.key.as_bytes()), p.addr);
+        let (_, p) = self.pending.as_mut()?;
+        if let Some(out) = p.due(now, self.build) {
+            for bytes in &out {
+                let _ = self.sock.send_to(bytes, p.addr);
+            }
         }
         match p.check.verdict(now, self.build, &p.text) {
             Verdict::Wait => None,
-            Verdict::Join => self.pending.take().map(|p| p.choice),
+            Verdict::Join => self.pending.take().map(|(choice, _)| choice),
             Verdict::Fail(text) => {
-                let p = self.pending.take()?;
+                let (_, p) = self.pending.take()?;
                 let silent = p.check.reply.is_none() && p.check.version.is_none() && !p.check.key_refused;
                 self.retry = silent.then_some(p.text);
                 self.notice = Some(text);

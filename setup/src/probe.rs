@@ -1,9 +1,7 @@
 //! A background thread that finds games (LAN broadcast, tailnet peers, past and typed addresses)
 //! and checks one the player wants to join, with the connect menu's own rules.
-use dinput8::config::NetKey;
 use dinput8::menu_model::{self as model, Table, Verdict};
 use dinput8::net::discover;
-use dinput8::net::proto::{self, DecodeError, Msg};
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -87,15 +85,6 @@ impl Probe {
     }
 }
 
-struct Pending {
-    text: String,
-    addr: SocketAddr,
-    key: String,
-    nonce: u64,
-    next_send: u64,
-    check: model::Check,
-}
-
 fn run(build: u64, view: &Mutex<View>, wants: &Mutex<Wants>) {
     let Ok(sock) = UdpSocket::bind("0.0.0.0:0") else { return };
     let _ = sock.set_broadcast(true);
@@ -106,7 +95,7 @@ fn run(build: u64, view: &Mutex<View>, wants: &Mutex<Wants>) {
     let mut tailnet: Vec<Ipv4Addr> = Vec::new();
     let mut last_tailnet: Option<Instant> = None;
     let mut last_probe: Option<Instant> = None;
-    let mut pending: Option<Pending> = None;
+    let mut pending: Option<model::Pending> = None;
     let mut buf = [0u8; 1500];
     loop {
         let w = wants.lock().map(|w| w.clone()).unwrap_or_default();
@@ -130,11 +119,7 @@ fn run(build: u64, view: &Mutex<View>, wants: &Mutex<Wants>) {
             }
             let addr = text.rsplit_once(':').and_then(|(h, p)| discover::resolve_v4(h, p.parse().ok()?));
             match addr {
-                Some(addr) => {
-                    let nonce = (began.elapsed().as_nanos() as u64) ^ (u64::from(std::process::id()) << 32);
-                    let key = NetKey::new(&key).as_str().to_string();
-                    pending = Some(Pending { text, addr, key, nonce, next_send: now_ms(), check: model::Check { started_ms: now_ms(), ..model::Check::default() } });
-                }
+                Some(addr) => pending = Some(model::Pending::new(text, addr, &key, began)),
                 None => set_check(view, CheckState::Done { addr: text.clone(), ok: false, text: format!("Cannot find {text}. Check the address.") }),
             }
         }
@@ -151,14 +136,14 @@ fn run(build: u64, view: &Mutex<View>, wants: &Mutex<Wants>) {
             }
         }
         if let Some(p) = pending.as_mut() {
-            if now_ms() >= p.next_send {
-                p.next_send = now_ms() + model::CHECK_RESEND_MS;
-                let _ = sock.send_to(&proto::encode(&Msg::Probe { build }, &[]), p.addr);
-                let _ = sock.send_to(&proto::encode(&Msg::Check { nonce: p.nonce }, p.key.as_bytes()), p.addr);
+            if let Some(out) = p.due(now_ms(), build) {
+                for bytes in &out {
+                    let _ = sock.send_to(bytes, p.addr);
+                }
             }
         }
         if let Ok((n, from)) = sock.recv_from(&mut buf) {
-            heard(&mut table, pending.as_mut(), build, from, &buf[..n], now_ms());
+            model::hear(&mut table, pending.as_mut(), build, from, &buf[..n], now_ms());
         }
         if let Some(p) = &pending {
             match p.check.verdict(now_ms(), build, &p.text) {
@@ -180,33 +165,5 @@ fn run(build: u64, view: &Mutex<View>, wants: &Mutex<Wants>) {
 fn set_check(view: &Mutex<View>, c: CheckState) {
     if let Ok(mut v) = view.lock() {
         v.check = Some(c);
-    }
-}
-
-fn heard(table: &mut Table, pending: Option<&mut Pending>, build: u64, from: SocketAddr, bytes: &[u8], now: u64) {
-    let key = pending.as_ref().map_or(String::new(), |p| p.key.clone());
-    let checking = pending.filter(|p| p.addr == from);
-    match proto::decode(bytes, key.as_bytes()) {
-        Ok(msg) => {
-            if let Some((name, players, locked)) = model::host_info(&msg, build) {
-                table.heard(from, &name, players, locked, now);
-            }
-            let Some(p) = checking else { return };
-            match msg {
-                Msg::ProbeReply { build, host, players, .. } => p.check.reply = Some((build, host, players)),
-                Msg::CheckReply { nonce } if nonce == p.nonce => p.check.key_ok = true,
-                Msg::Refuse { reason } if reason == proto::REFUSE_KEY => p.check.key_refused = true,
-                _ => {}
-            }
-        }
-        Err(DecodeError::Version(_)) => {
-            if let Some(v) = proto::refused_version(bytes) {
-                table.heard_version(from, v, now);
-                if let Some(p) = checking {
-                    p.check.version = Some(v);
-                }
-            }
-        }
-        Err(_) => {}
     }
 }

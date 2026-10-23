@@ -12,6 +12,8 @@ const STEAM: &str = "steam_api64.dll";
 /// A settings file in the game folder itself, from releases before 1.7.
 const OLD_INI: &str = "ts3online.ini";
 const SETUP_FILES: [&str; 2] = ["ts3-online-setup.exe", "ts3-online-setup"];
+/// The folder inside the release zip.
+const ZIP_DIR: &str = "ts3-online";
 /// The setup window's title, which also tells a setup program from any other file.
 pub const SETUP_TITLE: &str = "ts3-online setup";
 
@@ -19,6 +21,18 @@ pub const SETUP_TITLE: &str = "ts3-online setup";
 pub struct Step {
     pub ok: bool,
     pub text: String,
+}
+
+/// One release's files: the mod and the setup programs for Windows and Linux.
+pub struct Release {
+    pub dll: Vec<u8>,
+    pub setups: Vec<(&'static str, Vec<u8>)>,
+}
+
+impl Release {
+    pub fn version(&self) -> String {
+        version_of(&self.dll).unwrap_or_default()
+    }
 }
 
 fn ok(text: impl Into<String>) -> Step {
@@ -48,6 +62,35 @@ pub fn version_of(bytes: &[u8]) -> Option<String> {
 
 fn ours_at(path: &Path) -> Option<Vec<u8>> {
     std::fs::read(path).ok().filter(|b| is_ours(b))
+}
+
+/// A setup program for `name`'s system: a Windows or Linux program that opens this setup's window.
+fn is_setup(name: &str, bytes: &[u8]) -> bool {
+    let format: &[u8] = if name.ends_with(".exe") { b"MZ" } else { b"\x7fELF" };
+    bytes.starts_with(format) && find(bytes, SETUP_TITLE.as_bytes()).is_some()
+}
+
+/// The folder this program runs from, unless it is the game folder's own copy.
+fn release_dir(game: &Path) -> Option<PathBuf> {
+    let here = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    (here.canonicalize().ok() != mod_dir(game).canonicalize().ok()).then_some(here)
+}
+
+/// This program and its other-system twin, read from beside it.
+fn setups_beside_me(game: &Path) -> Option<Vec<(&'static str, Vec<u8>)>> {
+    let here = release_dir(game)?;
+    Some(SETUP_FILES.iter().filter_map(|n| std::fs::read(here.join(n)).ok().filter(|b| is_setup(n, b)).map(|b| (*n, b))).collect())
+}
+
+/// The release this program came in (the unzipped release folder), not the game folder's copy.
+pub fn bundled_release(game: &Path) -> Option<Release> {
+    let dll = ours_at(&release_dir(game)?.join(DLL))?;
+    Some(Release { dll, setups: setups_beside_me(game)? })
+}
+
+/// The version of the release this program came in.
+pub fn bundled_version(game: &Path) -> Option<String> {
+    ours_at(&release_dir(game)?.join(DLL)).map(|b| version_of(&b).unwrap_or_default())
 }
 
 /// The version installed in the game folder: Some("") for an older release without the tag.
@@ -157,7 +200,7 @@ pub fn install_all(game: &Path, s: &Settings) -> Vec<Step> {
     }
     let dll = match bundled_dll(Some(game)) {
         Some(d) => Ok(d),
-        None => latest_release().and_then(|(_, url)| download_dll(&url)),
+        None => latest_release().and_then(|(_, url)| download_release(&url)).map(|r| r.dll),
     };
     steps.push(match dll {
         Ok(d) => install_mod(game, &d),
@@ -174,20 +217,98 @@ pub fn install_all(game: &Path, s: &Settings) -> Vec<Step> {
 /// Copies this program (and its other-system twin beside it) into `ts3-online`, so the game folder
 /// carries its own setup.
 pub fn copy_setup(game: &Path) -> Option<Step> {
-    let me = std::env::current_exe().ok()?;
-    let here = me.parent()?;
+    put_setups(game, &setups_beside_me(game)?)
+}
+
+/// Puts setup programs in `ts3-online`, replacing older ones, the running one included.
+fn put_setups(game: &Path, setups: &[(&str, Vec<u8>)]) -> Option<Step> {
     let dir = mod_dir(game);
-    if here.canonicalize().ok() == dir.canonicalize().ok() {
-        return None;
+    if setups.is_empty() {
+        return Some(fail("Could not find the setup program to put into the game folder."));
     }
-    let mut copied = 0;
-    for name in SETUP_FILES {
-        let src = here.join(name);
-        if src.is_file() && std::fs::copy(&src, dir.join(name)).is_ok() {
-            copied += 1;
+    let me = std::env::current_exe().ok().and_then(|m| m.canonicalize().ok());
+    let mut running = false;
+    for (name, bytes) in setups {
+        let to = dir.join(name);
+        running |= me.is_some() && to.canonicalize().ok() == me;
+        if let Err(e) = replace_file(&to, bytes) {
+            return Some(fail(format!("Could not put the setup program {} in {}: {e}. Run the setup from the release zip to finish.", name, dir.display())));
         }
     }
-    Some(if copied > 0 { ok(format!("Put the setup program in {} to change your settings later.", dir.display())) } else { fail("Could not copy the setup program into the game folder.") })
+    Some(ok(if running {
+        format!("Updated the setup program in {}: close this window and open it again to use the new one.", dir.display())
+    } else {
+        format!("Put the setup program in {} to change your settings later.", dir.display())
+    }))
+}
+
+/// Writes `path` without ever leaving it missing: the new file goes beside it, the old one is moved
+/// aside (Windows can rename a running program but not overwrite it) and removed when it can be.
+fn replace_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let beside = |ext: &str| {
+        let mut s = path.as_os_str().to_owned();
+        s.push(ext);
+        PathBuf::from(s)
+    };
+    let (new, old) = (beside(".new"), beside(".old"));
+    std::fs::write(&new, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o755))?;
+    }
+    let _ = std::fs::remove_file(&old);
+    if path.exists() {
+        if let Err(e) = std::fs::rename(path, &old) {
+            let _ = std::fs::remove_file(&new);
+            return Err(e);
+        }
+    }
+    if let Err(e) = std::fs::rename(&new, path) {
+        let _ = std::fs::rename(&old, path);
+        let _ = std::fs::remove_file(&new);
+        return Err(e);
+    }
+    // fails while it still runs on Windows: remove_leftovers takes it on the next start
+    let _ = std::fs::remove_file(&old);
+    Ok(())
+}
+
+/// Removes the setup programs an update moved aside while they ran.
+pub fn remove_leftovers() {
+    if let Ok(me) = std::env::current_exe() {
+        for name in SETUP_FILES {
+            let _ = std::fs::remove_file(me.with_file_name(format!("{name}.old")));
+        }
+    }
+}
+
+/// Puts a release in the game folder: backs up the saves, installs the mod, then replaces the setup
+/// programs in `ts3-online`. Stops at the first step that fails.
+pub fn update(game: &Path, r: &Release) -> Vec<Step> {
+    let mut steps = vec![backup_saves(game)];
+    if steps[0].ok {
+        steps.push(install_mod(game, &r.dll));
+    }
+    if steps.iter().all(|s| s.ok) {
+        steps.extend(put_setups(game, &r.setups));
+    }
+    steps
+}
+
+/// Setting up an installed game again: first puts `bundled` (the release this program came in) in
+/// the game folder unless the game already has a newer one, then saves the settings.
+pub fn apply(game: &Path, s: &Settings, bundled: Option<&Release>) -> Vec<Step> {
+    let have = installed(game).unwrap_or_default();
+    let mut steps = Vec::new();
+    if let Some(r) = bundled.filter(|r| !newer(&have, &r.version())) {
+        steps = update(game, r);
+        if !steps.iter().all(|s| s.ok) {
+            return steps;
+        }
+    }
+    steps.extend(save(game, s));
+    steps
 }
 
 /// The saved settings text: the settings file, else where older releases kept it.
@@ -364,16 +485,33 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-/// The DLL from a release zip.
-pub fn download_dll(url: &str) -> Result<Vec<u8>, String> {
-    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(download(url)?)).map_err(|e| format!("Not a zip: {e}"))?;
-    let mut f = zip.by_name("ts3-online/dinput8.dll").map_err(|_| "The download has no dinput8.dll.".to_string())?;
-    let mut dll = Vec::new();
-    std::io::Read::read_to_end(&mut f, &mut dll).map_err(|e| e.to_string())?;
+/// A release zip from GitHub.
+pub fn download_release(url: &str) -> Result<Release, String> {
+    release_from_zip(download(url)?)
+}
+
+/// The mod and both setup programs from a release zip; anything missing or not ours refuses it.
+fn release_from_zip(bytes: Vec<u8>) -> Result<Release, String> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| format!("Not a zip: {e}"))?;
+    let mut read = |name: &str| -> Result<Vec<u8>, String> {
+        let mut f = zip.by_name(&format!("{ZIP_DIR}/{name}")).map_err(|_| format!("The download has no {name}."))?;
+        let mut b = Vec::new();
+        std::io::Read::read_to_end(&mut f, &mut b).map_err(|e| format!("Could not read {name} from the download: {e}"))?;
+        Ok(b)
+    };
+    let dll = read(DLL)?;
     if !is_ours(&dll) {
         return Err("The download's dinput8.dll is not ts3-online's.".into());
     }
-    Ok(dll)
+    let mut setups = Vec::new();
+    for name in SETUP_FILES {
+        let b = read(name)?;
+        if !is_setup(name, &b) {
+            return Err(format!("The download's {name} is not ts3-online's setup."));
+        }
+        setups.push((name, b));
+    }
+    Ok(Release { dll, setups })
 }
 
 /// Tailscale's own installer for Windows, which asks for administrator rights itself.
@@ -558,6 +696,109 @@ mod tests {
         assert!(migrate_legacy(&old, &new).is_err());
         assert!(!new.join("copy2").exists() && !new.join("copy3").exists(), "a retry starts clean");
         assert!(old.join("copy2/a").is_file() && old.join("copy3/b").is_file());
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    const NEW_DLL: &[u8] = b"MZ...DirectInput8Create...ts3online...ts3online-version=1.7.2;...";
+    const WIN_SETUP: &[u8] = b"MZ...ts3-online setup...windows";
+    const LINUX_SETUP: &[u8] = b"\x7fELF...ts3-online setup...linux";
+
+    fn release(dll: &[u8]) -> Release {
+        Release { dll: dll.to_vec(), setups: vec![(SETUP_FILES[0], WIN_SETUP.to_vec()), (SETUP_FILES[1], LINUX_SETUP.to_vec())] }
+    }
+
+    fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for (name, bytes) in files {
+            w.start_file(format!("{ZIP_DIR}/{name}"), o).unwrap();
+            std::io::Write::write_all(&mut w, bytes).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn a_release_zip_gives_the_mod_and_both_setups() {
+        let r = release_from_zip(zip_of(&[(DLL, NEW_DLL), (SETUP_FILES[0], WIN_SETUP), (SETUP_FILES[1], LINUX_SETUP), ("README.md", b"guide")])).unwrap();
+        assert_eq!(r.version(), "1.7.2");
+        assert_eq!(r.setups.iter().map(|(n, _)| *n).collect::<Vec<_>>(), SETUP_FILES);
+        assert_eq!(r.setups[1].1, LINUX_SETUP);
+    }
+
+    #[test]
+    fn a_release_zip_missing_a_setup_or_holding_another_program_is_refused() {
+        let e = release_from_zip(zip_of(&[(DLL, NEW_DLL), (SETUP_FILES[0], WIN_SETUP)])).err().unwrap();
+        assert!(e.contains("has no ts3-online-setup"), "{e}");
+        let e = release_from_zip(zip_of(&[(DLL, NEW_DLL), (SETUP_FILES[0], b"MZ another program"), (SETUP_FILES[1], LINUX_SETUP)])).err().unwrap();
+        assert!(e.contains("not ts3-online's setup"), "{e}");
+        let e = release_from_zip(zip_of(&[(DLL, b"MZ another dll"), (SETUP_FILES[0], WIN_SETUP), (SETUP_FILES[1], LINUX_SETUP)])).err().unwrap();
+        assert!(e.contains("not ts3-online's"), "{e}");
+        assert!(!is_setup(SETUP_FILES[1], WIN_SETUP), "a Windows program is not the Linux setup");
+        assert!(release_from_zip(b"not a zip".to_vec()).is_err());
+    }
+
+    #[test]
+    fn an_update_replaces_the_mod_and_both_setups_and_keeps_settings_and_saves() {
+        let g = game();
+        assert!(install_mod(&g, DLL_BYTES).ok);
+        let dir = mod_dir(&g);
+        for f in [SETUP_FILES[0], SETUP_FILES[1], "settings.ini", "copy2/x"] {
+            put(&dir, f, "old");
+        }
+        put(&dir, "ts3-online-setup.exe.old", "left by the last update");
+        let steps = update(&g, &release(NEW_DLL));
+        assert!(steps.iter().all(|s| s.ok), "{steps:?}");
+        assert_eq!(installed(&g).as_deref(), Some("1.7.2"));
+        assert_eq!(std::fs::read(g.join(STEAM)).unwrap(), NEW_DLL);
+        assert_eq!(std::fs::read(dir.join(STEAM_ORIGINAL)).unwrap(), b"steam's own");
+        assert_eq!(std::fs::read(dir.join(SETUP_FILES[0])).unwrap(), WIN_SETUP);
+        assert_eq!(std::fs::read(dir.join(SETUP_FILES[1])).unwrap(), LINUX_SETUP);
+        for f in ["settings.ini", "copy2/x"] {
+            assert_eq!(std::fs::read_to_string(dir.join(f)).unwrap(), "old", "{f} stays");
+        }
+        let names: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().into_string().unwrap()).collect();
+        assert!(!names.iter().any(|n| n.ends_with(".new") || n.ends_with(".old")), "{names:?}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(dir.join(SETUP_FILES[1])).unwrap().permissions().mode() & 0o111, 0o111, "the Linux setup can run");
+        }
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[test]
+    fn a_replacement_that_cannot_be_written_leaves_the_old_file() {
+        let g = game();
+        let p = g.join("program");
+        std::fs::write(&p, b"old").unwrap();
+        std::fs::create_dir(g.join("program.new")).unwrap();
+        assert!(replace_file(&p, b"new").is_err());
+        assert_eq!(std::fs::read(&p).unwrap(), b"old");
+        std::fs::remove_dir(g.join("program.new")).unwrap();
+        replace_file(&p, b"new").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"new");
+        assert!(!g.join("program.new").exists() && !g.join("program.old").exists());
+        replace_file(&g.join("fresh"), b"first").unwrap();
+        assert_eq!(std::fs::read(g.join("fresh")).unwrap(), b"first");
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[test]
+    fn setting_up_again_installs_a_newer_bundled_release_and_never_an_older_one() {
+        let g = game();
+        assert!(install_mod(&g, DLL_BYTES).ok);
+        let s = Settings::new("Bob");
+        let steps = apply(&g, &s, Some(&release(NEW_DLL)));
+        assert!(steps.iter().all(|s| s.ok), "{steps:?}");
+        assert_eq!(installed(&g).as_deref(), Some("1.7.2"));
+        assert_eq!(std::fs::read(mod_dir(&g).join(SETUP_FILES[1])).unwrap(), LINUX_SETUP);
+        assert!(platform::config_file(&g).is_file());
+        let older = Release { dll: DLL_BYTES.to_vec(), setups: vec![(SETUP_FILES[1], b"\x7fELF...ts3-online setup...older".to_vec())] };
+        let steps = apply(&g, &s, Some(&older));
+        assert!(steps.iter().all(|s| s.ok), "{steps:?}");
+        assert_eq!(installed(&g).as_deref(), Some("1.7.2"), "an older release is never put over a newer one");
+        assert_eq!(std::fs::read(mod_dir(&g).join(SETUP_FILES[1])).unwrap(), LINUX_SETUP);
+        assert!(apply(&g, &s, None).iter().all(|s| s.ok));
         std::fs::remove_dir_all(&g).unwrap();
     }
 

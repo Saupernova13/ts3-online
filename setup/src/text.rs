@@ -70,7 +70,7 @@ pub fn run(user: &str) -> i32 {
         println!("{p}");
         return 2;
     }
-    let steps = if installed.is_none() { actions::install_all(&game, &s) } else { actions::save(&game, &s) };
+    let steps = if installed.is_none() { actions::install_all(&game, &s) } else { actions::apply(&game, &s, actions::bundled_release(&game).as_ref()) };
     for st in &steps {
         println!("{} {}", if st.ok { "ok  " } else { "FAIL" }, st.text);
     }

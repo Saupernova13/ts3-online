@@ -82,8 +82,12 @@ fn cli() -> Option<i32> {
     let steps = if has("--uninstall") {
         actions::uninstall(&game, has("--delete-settings"))
     } else if has("--update") {
-        match actions::latest_release().and_then(|(_, url)| actions::download_dll(&url)) {
-            Ok(d) => vec![actions::install_mod(&game, &d)],
+        match actions::latest_release() {
+            Ok((v, _)) if !actions::newer(&v, &actions::installed(&game).unwrap_or_default()) => vec![Step { ok: true, text: format!("Up to date ({v}).") }],
+            Ok((_, url)) => match actions::download_release(&url) {
+                Ok(r) => actions::update(&game, &r),
+                Err(e) => vec![Step { ok: false, text: e }],
+            },
             Err(e) => vec![Step { ok: false, text: e }],
         }
     } else {
@@ -121,7 +125,7 @@ fn cli() -> Option<i32> {
         if actions::installed(&game).is_none() {
             actions::install_all(&game, &s)
         } else {
-            actions::save(&game, &s)
+            actions::apply(&game, &s, actions::bundled_release(&game).as_ref())
         }
     };
     for s in &steps {
@@ -139,6 +143,7 @@ fn attach_console() {
 }
 
 fn main() -> eframe::Result<()> {
+    actions::remove_leftovers();
     if let Some(code) = cli() {
         std::process::exit(code);
     }
@@ -218,6 +223,8 @@ struct App {
     game: Option<PathBuf>,
     game_text: String,
     installed: Option<String>,
+    /// The version of the release this program came in, when it runs from one.
+    bundled: Option<String>,
     settings: Settings,
     saved: Option<Settings>,
     show_password: bool,
@@ -253,6 +260,7 @@ impl App {
         ctx.set_zoom_factor(1.1);
         let game = platform::find_game();
         let installed = game.as_deref().and_then(actions::installed);
+        let bundled = game.as_deref().and_then(actions::bundled_version);
         let text = actions::read_config(game.as_deref());
         let saved = (!text.trim().is_empty()).then(|| Settings::from_ini(&text, &user_name()));
         let settings = saved.clone().unwrap_or_else(|| Settings::new(&user_name()));
@@ -268,6 +276,7 @@ impl App {
             game_text: game.as_ref().map(|g| g.display().to_string()).unwrap_or_default(),
             game,
             installed,
+            bundled,
             settings,
             saved,
             show_password: false,
@@ -288,16 +297,16 @@ impl App {
         let s = self.settings.clone();
         let (label, f): (&str, Box<dyn FnOnce() -> (Vec<Step>, Option<String>) + Send>) = match job {
             Job::Install => ("Installing...", Box::new(move || (actions::install_all(&game, &s), actions::installed(&game)))),
-            Job::Save => ("Saving...", Box::new(move || (actions::save(&game, &s), actions::installed(&game)))),
+            Job::Save => ("Saving...", Box::new(move || (actions::apply(&game, &s, actions::bundled_release(&game).as_ref()), actions::installed(&game)))),
             Job::Tailscale => ("Getting Tailscale...", Box::new(move || (vec![actions::install_tailscale()], actions::installed(&game)))),
             Job::Update(url) => (
                 "Updating...",
                 Box::new(move || {
-                    let step = match actions::download_dll(&url) {
-                        Ok(d) => actions::install_mod(&game, &d),
-                        Err(e) => Step { ok: false, text: e },
+                    let steps = match actions::download_release(&url) {
+                        Ok(r) => actions::update(&game, &r),
+                        Err(e) => vec![Step { ok: false, text: e }],
                     };
-                    (vec![step], actions::installed(&game))
+                    (steps, actions::installed(&game))
                 }),
             ),
             Job::Uninstall => {
@@ -728,6 +737,14 @@ impl App {
                 let v = self.installed.as_deref().filter(|v| !v.is_empty()).unwrap_or("(older release)");
                 ui.label(format!("ts3-online {v} is installed in {}", g.display()));
             });
+        }
+        if let (Some(b), Some(have)) = (&self.bundled, &self.installed) {
+            let have_text = if have.is_empty() { "an older release" } else { have.as_str() };
+            if actions::newer(b, have) {
+                ui.label(RichText::new(format!("This setup is ts3-online {b} and the game has {have_text}: Save installs {b}, the setup program in the game folder included.")).color(ACCENT));
+            } else if actions::newer(have, b) {
+                ui.label(RichText::new(format!("The game already has ts3-online {have}, newer than this setup ({b}): Save only changes your settings.")).weak());
+            }
         }
         if self.game.as_deref().is_some_and(actions::needs_repair) {
             ui.label(RichText::new("Steam put its own steam_api64.dll back (a file check or an update): Save puts the mod back in its place.").color(ACCENT));

@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 const LOOP_SLEEP: Duration = Duration::from_millis(5);
 const RTT_LOG_MS: u64 = 5000;
+/// Most datagrams taken per pass, so a flood cannot starve the send side.
+const RECV_PER_PASS: usize = 256;
 /// A lost or refused client looks for a host again after this.
 const REDISCOVER_US: u64 = 5_000_000;
 /// An auto client with no welcome by then gives up.
@@ -111,13 +113,12 @@ pub(super) fn run_loop(sock: &UdpSocket, sim: Option<SimQueue>, auto: Option<&Au
 }
 
 fn receive(sock: &UdpSocket, t: &mut Traffic) -> Vec<(SocketAddr, Vec<u8>)> {
-    let mut buf = [0u8; 1500];
     let mut v = Vec::new();
-    while let Ok((n, from)) = sock.recv_from(&mut buf) {
+    discover::drain(sock, RECV_PER_PASS, |from, bytes| {
         t.pkts_in += 1;
-        t.bytes_in += n as u64;
-        v.push((from, buf[..n].to_vec()));
-    }
+        t.bytes_in += bytes.len() as u64;
+        v.push((from, bytes.to_vec()));
+    });
     v
 }
 
@@ -236,6 +237,26 @@ mod tests {
         assert_eq!((c1.local_id(), c2.local_id()), (Some(1), Some(2)));
         let names: Vec<_> = host.roster().into_iter().map(|(_, n)| n).collect();
         assert_eq!(names, ["host", "one", "two"]);
+    }
+
+    #[test]
+    fn receive_counts_what_comes_after_an_icmp_reset() {
+        let bind = || {
+            let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+            s.set_nonblocking(true).unwrap();
+            s
+        };
+        let (a, b) = (bind(), bind());
+        // a port nobody listens on: on Windows its ICMP reply becomes a receive error on `a`
+        let dead = bind().local_addr().unwrap();
+        a.send_to(b"ping", dead).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        b.send_to(b"hello", a.local_addr().unwrap()).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        let mut t = Traffic::default();
+        let got = receive(&a, &mut t);
+        assert_eq!(got, [(b.local_addr().unwrap(), b"hello".to_vec())]);
+        assert_eq!((t.pkts_in, t.bytes_in), (1, 5));
     }
 
     #[test]

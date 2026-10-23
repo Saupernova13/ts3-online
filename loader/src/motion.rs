@@ -110,7 +110,7 @@ mod live {
     struct Live {
         tracker: Tracker,
         follower: Follower,
-        /// actor pointer -> whether it is an enemy, decided once per actor and level
+        /// actor id -> whether it is an enemy, decided once per actor and level
         enemies: HashMap<u64, bool>,
         /// (animation set, motion index) -> name hash
         names: HashMap<(u64, i32), u32>,
@@ -175,8 +175,9 @@ mod live {
         h
     }
 
-    unsafe fn enemy(live: &mut Live, actor: u64) -> bool {
-        *live.enemies.entry(actor).or_insert_with(|| crate::health::is_enemy(actor) && ai::follows_by_name(&actor::name(actor).unwrap_or_default()))
+    /// Keyed by id: a later spawn can reuse a dead enemy's address.
+    unsafe fn enemy(live: &mut Live, id: u64, actor: u64) -> bool {
+        *live.enemies.entry(id).or_insert_with(|| crate::health::is_enemy(actor) && ai::follows_by_name(&actor::name(actor).unwrap_or_default()))
     }
 
     /// Game thread, per frame; `level` is the play level hash (0 outside one).
@@ -188,7 +189,7 @@ mod live {
         let live = guard.get_or_insert_with(Live::default);
         let changed = live.tracker.set_level(level);
         if live.follower.set_level(level) || changed {
-            // actor pointers and animation sets belong to the old level
+            // actor ids and animation sets belong to the old level
             live.enemies.clear();
             live.names.clear();
         }
@@ -213,7 +214,7 @@ mod live {
         let mut seen = Vec::new();
         for (n, id, actor) in &named {
             let hash = level_hash(n);
-            if index.get(hash) != Some(*id) || !enemy(live, *actor) {
+            if index.get(hash) != Some(*id) || !enemy(live, *id, *actor) {
                 continue;
             }
             let layers: Layers = std::array::from_fn(|l| match layer(*actor, l) {

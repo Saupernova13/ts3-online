@@ -1,13 +1,14 @@
 //! `net=auto` discovery: find the peers (Tailscale or an explicit list), probe them for a host.
 use super::proto::{self, Msg};
 use serde_json::Value;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const TAILSCALE_TIMEOUT: Duration = Duration::from_secs(4);
 const PROBE_EVERY: Duration = Duration::from_millis(500);
+const RECV_PER_PASS: usize = 64;
 
 /// From `tailscale status --json`: own address and online peers.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -102,6 +103,19 @@ pub fn send_probes(sock: &UdpSocket, peers: &[SocketAddr], build: u64) {
     }
 }
 
+/// Hands `f` the queued datagrams, at most `max` reads. Windows reports an ICMP port-unreachable
+/// from an earlier send as a receive error: skipped, so the datagrams behind it still arrive.
+pub fn drain(sock: &UdpSocket, max: usize, mut f: impl FnMut(SocketAddr, &[u8])) {
+    let mut buf = [0u8; 1500];
+    for _ in 0..max {
+        match sock.recv_from(&mut buf) {
+            Ok((n, from)) => f(from, &buf[..n]),
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => break,
+            Err(_) => {}
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
     pub addr: SocketAddr,
@@ -112,21 +126,22 @@ pub struct Found {
 pub fn find_host(sock: &UdpSocket, peers: &[SocketAddr], build: u64, name: &str, own: SocketAddr, duration: Duration) -> Option<Found> {
     let start = Instant::now();
     let mut next = Duration::ZERO;
-    let mut buf = [0u8; 1500];
+    let mut found = None;
     while start.elapsed() < duration {
         if start.elapsed() >= next {
             send_probes(sock, peers, build);
             next += PROBE_EVERY;
         }
-        while let Ok((n, from)) = sock.recv_from(&mut buf) {
-            match proto::decode(&buf[..n], &[]) {
-                Ok(Msg::ProbeReply { build: b, host: true, name, .. }) if b == build && from != own => return Some(Found { addr: from, name }),
-                Ok(Msg::Probe { .. }) => {
-                    let reply = Msg::ProbeReply { build, host: false, players: 0, locked: false, name: name.to_string() };
-                    let _ = sock.send_to(&proto::encode(&reply, &[]), from);
-                }
-                _ => {}
+        drain(sock, RECV_PER_PASS, |from, bytes| match proto::decode(bytes, &[]) {
+            Ok(Msg::ProbeReply { build: b, host: true, name, .. }) if b == build && from != own && found.is_none() => found = Some(Found { addr: from, name }),
+            Ok(Msg::Probe { .. }) => {
+                let reply = Msg::ProbeReply { build, host: false, players: 0, locked: false, name: name.to_string() };
+                let _ = sock.send_to(&proto::encode(&reply, &[]), from);
             }
+            _ => {}
+        });
+        if found.is_some() {
+            return found;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -196,6 +211,42 @@ mod tests {
         assert!(!should_yield((a.0, 1), (a.0, 2)));
         // 9.x vs 100.x compares as numbers, not strings
         assert!(should_yield((Ipv4Addr::new(100, 0, 0, 1), 1), (Ipv4Addr::new(9, 0, 0, 1), 1)));
+    }
+
+    fn bound() -> UdpSocket {
+        let s = UdpSocket::bind("127.0.0.1:0").unwrap();
+        s.set_nonblocking(true).unwrap();
+        s
+    }
+
+    fn drained(sock: &UdpSocket, max: usize) -> Vec<Vec<u8>> {
+        let mut got = Vec::new();
+        drain(sock, max, |_, bytes| got.push(bytes.to_vec()));
+        got
+    }
+
+    #[test]
+    fn drain_reads_past_an_icmp_reset() {
+        let a = bound();
+        // a port nobody listens on: on Windows its ICMP reply becomes a receive error on `a`
+        let dead = bound().local_addr().unwrap();
+        a.send_to(b"ping", dead).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        bound().send_to(b"hello", a.local_addr().unwrap()).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(drained(&a, 8), [b"hello".to_vec()]);
+    }
+
+    #[test]
+    fn drain_takes_at_most_max_and_stops_when_empty() {
+        let (a, b) = (bound(), bound());
+        for i in 0..3u8 {
+            b.send_to(&[i], a.local_addr().unwrap()).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(drained(&a, 2), [vec![0], vec![1]]);
+        assert_eq!(drained(&a, 2), [vec![2]]);
+        assert!(drained(&a, 2).is_empty());
     }
 
     #[test]

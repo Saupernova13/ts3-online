@@ -1,7 +1,8 @@
 //! The connect menu's logic without the window: pure, so it is tested on every platform.
-use crate::config::Net;
-use crate::net::proto::{clamp_name, Msg, VERSION};
+use crate::config::{Net, NetKey};
+use crate::net::proto::{self, clamp_name, DecodeError, Msg, VERSION};
 use std::net::{Ipv4Addr, SocketAddr};
+use std::time::Instant;
 
 /// A game not heard from for this long leaves the list.
 pub const EXPIRE_MS: u64 = 4000;
@@ -158,6 +159,65 @@ impl Check {
         Verdict::Fail(format!(
             "No answer from {addr}. Is the host's game open, with both PCs online in Tailscale (or on one LAN)? Join again to keep trying."
         ))
+    }
+}
+
+/// A Join check in flight: asks `addr` until `check` has a verdict.
+pub struct Pending {
+    /// the address as typed, for the messages
+    pub text: String,
+    pub addr: SocketAddr,
+    key: NetKey,
+    nonce: u64,
+    next_send: u64,
+    pub check: Check,
+}
+
+impl Pending {
+    /// `began` is the clock the `now_ms` of `due` and `hear` count from.
+    pub fn new(text: String, addr: SocketAddr, key: &str, began: Instant) -> Pending {
+        let now_ms = began.elapsed().as_millis() as u64;
+        let nonce = (began.elapsed().as_nanos() as u64) ^ (u64::from(std::process::id()) << 32);
+        Pending { text, addr, key: NetKey::new(key), nonce, next_send: now_ms, check: Check { started_ms: now_ms, ..Check::default() } }
+    }
+
+    /// The Probe and the key-tagged Check to send to `addr`, once per `CHECK_RESEND_MS`.
+    pub fn due(&mut self, now_ms: u64, build: u64) -> Option<[Vec<u8>; 2]> {
+        if now_ms < self.next_send {
+            return None;
+        }
+        self.next_send = now_ms + CHECK_RESEND_MS;
+        Some([proto::encode(&Msg::Probe { build }, &[]), proto::encode(&Msg::Check { nonce: self.nonce }, self.key.as_str().as_bytes())])
+    }
+}
+
+/// One datagram from `from`: lists a host, notes another version's refusal, and feeds the
+/// pending check when it comes from the address being checked.
+pub fn hear(table: &mut Table, pending: Option<&mut Pending>, build: u64, from: SocketAddr, bytes: &[u8], now_ms: u64) {
+    let key = pending.as_ref().map(|p| p.key.clone()).unwrap_or_default();
+    let checking = pending.filter(|p| p.addr == from);
+    match proto::decode(bytes, key.as_str().as_bytes()) {
+        Ok(msg) => {
+            if let Some((name, players, locked)) = host_info(&msg, build) {
+                table.heard(from, &name, players, locked, now_ms);
+            }
+            let Some(p) = checking else { return };
+            match msg {
+                Msg::ProbeReply { build, host, players, .. } => p.check.reply = Some((build, host, players)),
+                Msg::CheckReply { nonce } if nonce == p.nonce => p.check.key_ok = true,
+                Msg::Refuse { reason } if reason == proto::REFUSE_KEY => p.check.key_refused = true,
+                _ => {}
+            }
+        }
+        Err(DecodeError::Version(_)) => {
+            if let Some(v) = proto::refused_version(bytes) {
+                table.heard_version(from, v, now_ms);
+                if let Some(p) = checking {
+                    p.check.version = Some(v);
+                }
+            }
+        }
+        Err(_) => {}
     }
 }
 
@@ -377,6 +437,88 @@ mod tests {
         fail(Check { reply: Some((B, true, 4)), ..ok.clone() }, "full");
         fail(Check { version: Some(VERSION - 1), ..Check::default() }, "The host has an older");
         fail(Check { version: Some(VERSION + 1), ..Check::default() }, "You have an older");
+    }
+
+    const B: u64 = 9;
+    const HOST: &str = "10.0.0.2:5";
+
+    fn pending() -> Pending {
+        Pending::new("h:5".into(), addr(HOST), "pw", Instant::now())
+    }
+
+    fn wire(m: &Msg) -> Vec<u8> {
+        proto::encode(m, b"pw")
+    }
+
+    #[test]
+    fn hear_lists_hosts_and_feeds_the_check_from_its_address() {
+        let reply = wire(&Msg::ProbeReply { build: B, host: true, players: 2, locked: false, name: "h".into() });
+        let mut t = Table::default();
+        hear(&mut t, None, B, addr(HOST), &reply, 10);
+        assert_eq!(t.get(addr(HOST)).map(|g| g.players), Some(2));
+        let mut p = pending();
+        hear(&mut t, Some(&mut p), B, addr("10.0.0.3:5"), &reply, 20);
+        assert_eq!(p.check.reply, None, "another address is not the checked game");
+        assert!(t.get(addr("10.0.0.3:5")).is_some());
+        hear(&mut t, Some(&mut p), B, addr(HOST), &reply, 30);
+        assert_eq!(p.check.reply, Some((B, true, 2)));
+        assert_eq!(t.get(addr(HOST)).map(|g| g.last_ms), Some(30));
+    }
+
+    #[test]
+    fn hear_takes_a_check_reply_only_with_our_nonce() {
+        let mut t = Table::default();
+        let mut p = pending();
+        let nonce = p.nonce;
+        hear(&mut t, Some(&mut p), B, addr(HOST), &wire(&Msg::CheckReply { nonce: nonce ^ 1 }), 0);
+        assert!(!p.check.key_ok);
+        hear(&mut t, Some(&mut p), B, addr("10.0.0.3:5"), &wire(&Msg::CheckReply { nonce }), 0);
+        assert!(!p.check.key_ok, "from another address");
+        hear(&mut t, Some(&mut p), B, addr(HOST), &wire(&Msg::CheckReply { nonce }), 0);
+        assert!(p.check.key_ok);
+    }
+
+    #[test]
+    fn hear_notes_a_key_refusal_from_the_checked_address() {
+        let mut t = Table::default();
+        let mut p = pending();
+        hear(&mut t, Some(&mut p), B, addr(HOST), &wire(&Msg::Refuse { reason: proto::REFUSE_FULL }), 0);
+        hear(&mut t, Some(&mut p), B, addr("10.0.0.3:5"), &wire(&Msg::Refuse { reason: proto::REFUSE_KEY }), 0);
+        assert!(!p.check.key_refused);
+        hear(&mut t, Some(&mut p), B, addr(HOST), &wire(&Msg::Refuse { reason: proto::REFUSE_KEY }), 0);
+        assert!(p.check.key_refused);
+    }
+
+    #[test]
+    fn hear_notes_another_versions_refusal() {
+        let mut other = wire(&Msg::Refuse { reason: proto::REFUSE_PROTOCOL });
+        other[4..6].copy_from_slice(&(VERSION + 1).to_le_bytes());
+        let mut t = Table::default();
+        let mut p = pending();
+        hear(&mut t, Some(&mut p), B, addr("10.0.0.3:5"), &other, 40);
+        assert_eq!(p.check.version, None);
+        assert_eq!(t.get(addr("10.0.0.3:5")).and_then(|g| g.version), Some(VERSION + 1));
+        hear(&mut t, Some(&mut p), B, addr(HOST), &other, 50);
+        assert_eq!(p.check.version, Some(VERSION + 1));
+        assert_eq!(t.get(addr(HOST)).map(|g| (g.version, g.last_ms)), Some((Some(VERSION + 1), 50)));
+        // a refusal that is not about the version tells us nothing
+        let mut key_other = wire(&Msg::Refuse { reason: proto::REFUSE_KEY });
+        key_other[4..6].copy_from_slice(&(VERSION + 1).to_le_bytes());
+        let mut q = pending();
+        hear(&mut t, Some(&mut q), B, addr(HOST), &key_other, 60);
+        assert_eq!(q.check.version, None);
+    }
+
+    #[test]
+    fn a_pending_check_asks_again_every_resend_interval() {
+        let mut p = pending();
+        let t0 = p.next_send;
+        let [probe, check] = p.due(t0, B).unwrap();
+        assert_eq!(proto::decode(&probe, &[]), Ok(Msg::Probe { build: B }));
+        assert_eq!(proto::decode(&check, b"pw"), Ok(Msg::Check { nonce: p.nonce }));
+        assert_eq!(proto::decode(&check, b"other"), Err(DecodeError::BadKey), "tagged with the key");
+        assert!(p.due(t0 + CHECK_RESEND_MS - 1, B).is_none());
+        assert!(p.due(t0 + CHECK_RESEND_MS, B).is_some());
     }
 
     #[test]

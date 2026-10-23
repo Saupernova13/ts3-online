@@ -505,3 +505,9 @@ town.
   past a reset (for `drain` and the session's receive, both fail on the old loop on Windows),
   `drain`'s bound, `hear` and the check's resend, and a dropped probe's thread ending (fails on the
   old code). 314 loader tests and 28 setup tests pass on Windows, 263 and 29 on Linux.
+- 2026-10-23, release 1.8.1 (protocol 20, plays with 1.8.0): the fixes from the repo review, in the
+  setup (a running game seen on Windows, the page after a job, uninstall results, whole backups
+  only, the port box), the loader (no host wallet or progress in a client's own save, a spend's ack
+  only with its wallet, enemy verdicts by actor id, enemy motions retried) and the network loops
+  (reading past Windows ICMP resets, one Join check, probe threads that stop). The release notes
+  say how 1.7.2 and 1.8.0 update (the setup's Update button) and how older releases do.

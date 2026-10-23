@@ -236,6 +236,8 @@ struct App {
     /// The version of the release this program came in, when it runs from one.
     bundled: Option<String>,
     settings: Settings,
+    /// The port box's text; it may not parse while it is being retyped.
+    port_text: String,
     saved: Option<Settings>,
     show_password: bool,
     probe: Probe,
@@ -287,6 +289,7 @@ impl App {
             game,
             installed,
             bundled,
+            port_text: settings.port.to_string(),
             settings,
             saved,
             show_password: false,
@@ -438,7 +441,8 @@ impl App {
             });
             return;
         }
-        let problem = self.settings.problem();
+        // while the port box does not parse, Save would write another port than the one it shows
+        let problem = self.settings.problem().or_else(|| parse_port(&self.port_text).is_none().then(|| "The port must be 1 to 65535.".to_string()));
         // (back, message, primary label and whether it is enabled)
         let (back, note, primary): (Option<Page>, Option<(String, Color32)>, Option<(&str, bool)>) = match self.page {
             Page::Welcome => (None, None, Some(("Next  ›", self.game.is_some()))),
@@ -513,6 +517,7 @@ impl App {
                     let text = actions::read_config(Some(g));
                     if !text.trim().is_empty() {
                         let s = Settings::from_ini(&text, &user_name());
+                        self.port_text = s.port.to_string();
                         self.settings = s.clone();
                         self.saved = Some(s);
                     }
@@ -638,12 +643,12 @@ impl App {
         egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Port (UDP)");
-                let mut text = self.settings.port.to_string();
-                if ui.add(egui::TextEdit::singleline(&mut text).desired_width(70.0)).changed() {
-                    if let Ok(p) = text.trim().parse::<u16>() {
-                        if p > 0 {
-                            self.settings.port = p;
-                        }
+                let edited = ui.add(egui::TextEdit::singleline(&mut self.port_text).desired_width(70.0)).changed();
+                match parse_port(&self.port_text) {
+                    Some(p) if edited => self.settings.port = p,
+                    Some(_) => {}
+                    None => {
+                        ui.label(RichText::new("1 to 65535").color(BAD));
                     }
                 }
                 ui.label(RichText::new("every player uses the same; 27777 unless you have a reason").weak());
@@ -848,6 +853,10 @@ impl App {
     }
 }
 
+fn parse_port(text: &str) -> Option<u16> {
+    text.trim().parse().ok().filter(|p| *p > 0)
+}
+
 fn strip_port(addr: &str, port: u16) -> String {
     addr.strip_suffix(&format!(":{port}")).unwrap_or(addr).to_string()
 }
@@ -868,6 +877,16 @@ mod tests {
         for page in [Page::Welcome, Page::Settings] {
             assert_eq!(page_after(&Job::Tailscale, page, None), page);
             assert_eq!(page_after(&Job::Tailscale, page, Some("1.8.0")), page);
+        }
+    }
+
+    #[test]
+    fn a_port_is_a_number_from_1_to_65535() {
+        assert_eq!(parse_port("27777"), Some(27777));
+        assert_eq!(parse_port(" 65535 "), Some(65535));
+        assert_eq!(parse_port("1"), Some(1));
+        for bad in ["", "0", "65536", "-1", "27777x", "port"] {
+            assert_eq!(parse_port(bad), None, "{bad:?}");
         }
     }
 

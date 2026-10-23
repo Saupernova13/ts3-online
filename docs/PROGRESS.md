@@ -451,3 +451,18 @@ town.
   another character (#51), both tested in game (T34, T35), plus the `local-coop.ps1` log path. 1.8.0
   does not play with 1.7.x; the release notes say so and how each older release updates (1.7.2's
   Update button brings the whole release, older ones need the zip's setup and Save).
+- 2026-10-23, setup review fixes: five faults in the setup program. `game_running()` was always
+  false on Windows: `tasklist` cuts the image name to 25 characters, so the 32-character exe never
+  matched and install, update and uninstall never saw a running game; it asks for CSV now and
+  compares the first field. The next page came from the page a job started on, so the first page's
+  **Install Tailscale** ended on "All set" with nothing installed, and did nothing when the game
+  folder was not found; the job decides now (an install goes to Done, an uninstall that leaves
+  nothing goes to Welcome, the rest stay) and Tailscale needs no game folder. The first page never
+  drew the steps, so an uninstall's report and its failures (a firewall rule left, an emptied
+  folder to delete) were never shown; it draws them now. A failed save backup left a partial
+  `save backups/<date>` folder, which a retry the same day took for a finished backup and went on
+  to install; the copy goes to `<date>.partial` now and is renamed once whole. The port box edited
+  a string rebuilt from the port every frame, so it could not be emptied and every keystroke that
+  parsed became the port; the text lives in the app now, sets the port only when it is 1 to 65535,
+  shows a red note otherwise and holds Save back until it parses. 34 setup tests pass on Windows
+  (27 before), 36 on Linux.

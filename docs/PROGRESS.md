@@ -451,3 +451,17 @@ town.
   another character (#51), both tested in game (T34, T35), plus the `local-coop.ps1` log path. 1.8.0
   does not play with 1.7.x; the release notes say so and how each older release updates (1.7.2's
   Update button brings the whole release, older ones need the zip's setup and Save).
+- 2026-10-23, receive loops and probe threads (review fixes): on Windows an unconnected UDP socket
+  reports an ICMP port-unreachable from an earlier send as an error on its next read. The session's
+  receive pass and the auto-discovery loop stopped at the first one with datagrams still queued, so
+  a client that had quit, with the host still sending it about 60 states a second until its 5 s
+  timeout, cost the other players one 5 ms pass per reset (the connect menu already skipped them).
+  All three loops now read through one `discover::drain`, which skips such errors and takes at most
+  a fixed number of reads per pass. The Join check (pending state, resend, nonce, one heard
+  datagram) existed twice, in the menu and in the setup's probe thread; it now lives once in
+  `menu_model`. The probe thread also never ended: each edit of the game-folder box that still
+  named a valid folder started another one that broadcast every second and ran `tailscale status`
+  every 15 s until the setup closed; dropping a `Probe` now stops its thread. New tests: reading
+  past a reset (for `drain` and the session's receive, both fail on the old loop on Windows),
+  `drain`'s bound, `hear` and the check's resend, and a dropped probe's thread ending (fails on the
+  old code). 314 loader tests and 28 setup tests pass on Windows, 263 and 29 on Linux.

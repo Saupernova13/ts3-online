@@ -793,7 +793,7 @@ impl App {
                 self.confirm_uninstall = true;
             }
         } else {
-            ui.label("This removes ts3-online from the game folder; your saves stay.");
+            ui.label("This removes ts3-online from the game folder; your saves and save backups stay.");
             ui.checkbox(&mut self.delete_settings, "Also delete my settings and the games I joined");
             ui.horizontal(|ui| {
                 if ui.button(RichText::new("Uninstall").color(BAD)).clicked() {

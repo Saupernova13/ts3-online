@@ -228,10 +228,17 @@ pub fn save(game: &Path, s: &Settings) -> Vec<Step> {
             Err(e) => fail(format!("Could not remove the old {}: {e}. Delete it by hand: it is read first.", old.display())),
         });
     }
+    // reached only once the settings are written (the early return above): the old folder may hold the only copy of the saves
     if let Some(l) = platform::legacy_dir().filter(|l| l.is_dir()) {
-        steps.push(match std::fs::remove_dir_all(&l) {
-            Ok(()) => ok(format!("Removed the old {} (the mod now keeps everything in the game folder).", l.display())),
-            Err(e) => fail(format!("Could not remove the old {}: {e}", l.display())),
+        let new = mod_dir(game);
+        steps.push(match migrate_legacy(&l, &new) {
+            Err(e) => fail(format!("Kept the old {}: {e}", l.display())),
+            Ok(n) => match (std::fs::remove_dir_all(&l), n) {
+                (Ok(()), 0) => ok(format!("Removed the old {} (the mod now keeps everything in the game folder).", l.display())),
+                (Ok(()), n) => ok(format!("Moved {n} save folder(s) from {} into {} and removed the old folder.", l.display(), new.display())),
+                (Err(e), 0) => fail(format!("Could not remove the old {}: {e}", l.display())),
+                (Err(e), n) => fail(format!("Copied {n} save folder(s) into {}, but could not remove the old {}: {e}. Delete it by hand.", new.display(), l.display())),
+            },
         });
     }
     if needs_repair(game) {
@@ -240,6 +247,36 @@ pub fn save(game: &Path, s: &Settings) -> Vec<Step> {
         }
     }
     steps
+}
+
+/// A per-copy save folder of the loader (`copy2`..`copy4`).
+fn is_copy_dir(name: &str) -> bool {
+    name.strip_prefix("copy").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Copies the `copyN` and `session` folders of a pre-1.7 install into the mod's folder and returns how
+/// many. Copies rather than renames (the old folder is on C:, the game often on another drive); a
+/// folder that already exists in the new place is never merged into: nothing is copied then.
+fn migrate_legacy(legacy: &Path, mod_dir: &Path) -> Result<usize, String> {
+    let rd = std::fs::read_dir(legacy).map_err(|e| format!("cannot read it: {e}"))?;
+    let mut names: Vec<String> = rd.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| n == "session" || is_copy_dir(n)).collect();
+    names.sort();
+    if let Some(n) = names.iter().find(|n| mod_dir.join(n).exists()) {
+        return Err(format!("{} already has a {n} folder, so none of the old saves were copied. Move one of them away.", mod_dir.display()));
+    }
+    let mut done: Vec<PathBuf> = Vec::new();
+    for n in &names {
+        let to = mod_dir.join(n);
+        if let Err(e) = copy_dir(&legacy.join(n), &to) {
+            // half a save would be played as if it were whole: take back what this run put there
+            for d in done.iter().chain([&to]) {
+                let _ = std::fs::remove_dir_all(d);
+            }
+            return Err(format!("could not copy {n} into {}: {e}", mod_dir.display()));
+        }
+        done.push(to);
+    }
+    Ok(done.len())
 }
 
 pub fn uninstall(game: &Path, delete_settings: bool) -> Vec<Step> {
@@ -266,13 +303,17 @@ pub fn uninstall(game: &Path, delete_settings: bool) -> Vec<Step> {
         });
     }
     let me = std::env::current_exe().ok();
-    let keep = |p: &Path| me.as_deref() == Some(p) || (!delete_settings && (p.ends_with(dinput8::config::SETTINGS) || p.ends_with("save backups")));
-    let mut left = 0;
+    // player progress always stays; settings and the joined game only unless the player chose to delete them
+    let is_saves = |n: &str| n == "save backups" || is_copy_dir(n);
+    let is_settings = |n: &str| !delete_settings && (n == dinput8::config::SETTINGS || n == "session");
+    let (mut saves, mut settings, mut left) = (false, false, 0);
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
             let p = e.path();
-            if keep(&p) {
-                left += 1;
+            let name = e.file_name().to_string_lossy().into_owned();
+            let (s, t) = (is_saves(&name), is_settings(&name));
+            if me.as_deref() == Some(p.as_path()) || s || t {
+                (saves, settings, left) = (saves || s, settings || t, left + 1);
                 continue;
             }
             let r = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
@@ -284,10 +325,15 @@ pub fn uninstall(game: &Path, delete_settings: bool) -> Vec<Step> {
     if left == 0 {
         let _ = std::fs::remove_dir(&dir);
         steps.push(ok("Removed the ts3-online folder."));
-    } else if delete_settings {
-        steps.push(ok(format!("Emptied {}; delete it once this program is closed.", dir.display())));
+    } else if saves || settings {
+        let what = match (settings, saves) {
+            (true, true) => "settings and saves",
+            (true, false) => "settings",
+            _ => "saves",
+        };
+        steps.push(ok(format!("Kept your {what} in {}.", dir.display())));
     } else {
-        steps.push(ok(format!("Kept your settings and save backups in {}.", dir.display())));
+        steps.push(ok(format!("Emptied {}; delete it once this program is closed.", dir.display())));
     }
     steps
 }
@@ -413,6 +459,95 @@ mod tests {
         assert!(!g.join(DLL).exists() && platform::config_file(&g).exists() && !mod_dir(&g).join(STEAM_ORIGINAL).exists());
         uninstall(&g, true);
         assert!(!mod_dir(&g).exists());
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    fn put(root: &Path, file: &str, text: &str) {
+        let p = root.join(file);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+
+    #[test]
+    fn uninstall_keeps_every_copys_saves_and_the_backups() {
+        let g = game();
+        assert!(install_mod(&g, DLL_BYTES).ok);
+        let dir = mod_dir(&g);
+        for f in ["copy2/x", "session/y", "save backups/z", "settings.ini", "ts3online.log", "copycat/w"] {
+            put(&dir, f, f);
+        }
+        let steps = uninstall(&g, false);
+        assert!(steps.iter().all(|s| s.ok), "{steps:?}");
+        assert!(steps.last().unwrap().text.starts_with("Kept your settings and saves in"), "{steps:?}");
+        for f in ["copy2/x", "session/y", "save backups/z", "settings.ini"] {
+            assert!(dir.join(f).is_file(), "{f} stays");
+        }
+        assert!(!dir.join("ts3online.log").exists() && !dir.join("copycat").exists(), "only copyN, not any copy*");
+        let steps = uninstall(&g, true);
+        assert!(steps.iter().all(|s| s.ok), "{steps:?}");
+        assert!(steps.last().unwrap().text.starts_with("Kept your saves in"), "{steps:?}");
+        assert!(!dir.join("settings.ini").exists() && !dir.join("session").exists(), "settings and the joined game go on request");
+        assert!(dir.join("copy2/x").is_file() && dir.join("save backups/z").is_file(), "saves never go");
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    const SAVED: &str = "copy2/Disney/Toy Story 3 Complete Edition/savedata/Saved Game/slot1.sav";
+
+    #[test]
+    fn legacy_saves_are_copied_into_the_mod_folder_and_loose_files_are_not() {
+        let g = game();
+        let (old, new) = (g.join("old"), mod_dir(&g));
+        for f in [SAVED, "session/Disney/joined.sav", "copy3/Disney/a", "copy/not-a-copy", "copycat/b", "other/c", "ts3online.ini", "ts3online.log", "cmd.copy2.txt"] {
+            put(&old, f, f);
+        }
+        assert_eq!(migrate_legacy(&old, &new), Ok(3));
+        for f in [SAVED, "session/Disney/joined.sav", "copy3/Disney/a"] {
+            assert_eq!(std::fs::read_to_string(new.join(f)).unwrap(), f);
+            assert!(old.join(f).is_file(), "the caller removes the old folder, not this");
+        }
+        let mut arrived: Vec<_> = std::fs::read_dir(&new).unwrap().flatten().map(|e| e.file_name().into_string().unwrap()).collect();
+        arrived.sort();
+        assert_eq!(arrived, ["copy2", "copy3", "session"]);
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[test]
+    fn legacy_migration_with_only_loose_files_copies_nothing() {
+        let g = game();
+        let (old, new) = (g.join("old"), mod_dir(&g));
+        put(&old, "ts3online.ini", "net=auto");
+        assert_eq!(migrate_legacy(&old, &new), Ok(0));
+        assert!(!new.exists());
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[test]
+    fn legacy_migration_never_merges_into_an_existing_folder() {
+        let g = game();
+        let (old, new) = (g.join("old"), mod_dir(&g));
+        put(&old, SAVED, "old save");
+        put(&old, "copy3/Disney/a", "old three");
+        put(&new, "copy3/mine", "new three");
+        let e = migrate_legacy(&old, &new).unwrap_err();
+        assert!(e.contains("copy3"), "{e}");
+        assert_eq!(std::fs::read_to_string(new.join("copy3/mine")).unwrap(), "new three");
+        assert!(!new.join("copy3/Disney").exists() && !new.join("copy2").exists(), "nothing was copied");
+        assert_eq!(std::fs::read_to_string(old.join(SAVED)).unwrap(), "old save");
+        assert_eq!(std::fs::read_to_string(old.join("copy3/Disney/a")).unwrap(), "old three");
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_migration_that_fails_midway_leaves_no_half_saves() {
+        let g = game();
+        let (old, new) = (g.join("old"), mod_dir(&g));
+        put(&old, "copy2/a", "fine");
+        put(&old, "copy3/b", "fine");
+        std::os::unix::fs::symlink(g.join("nowhere"), old.join("copy3/broken")).unwrap();
+        assert!(migrate_legacy(&old, &new).is_err());
+        assert!(!new.join("copy2").exists() && !new.join("copy3").exists(), "a retry starts clean");
+        assert!(old.join("copy2/a").is_file() && old.join("copy3/b").is_file());
         std::fs::remove_dir_all(&g).unwrap();
     }
 

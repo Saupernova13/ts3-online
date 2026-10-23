@@ -25,6 +25,20 @@ pub const AVATAR_FLAGS: u64 = 0x408;
 pub const CONTROLS_ON: u64 = 0x428;
 /// Avatar: owning player index, -1 for none.
 pub const PLAYER_INDEX: u64 = 0x484;
+/// Animation component; its motion system at `ANIM_MOTIONS`, whose layers `motion_layer` finds
+/// (`0x14056bda0`, queries/205).
+pub const ANIM: u64 = 0x360;
+pub const ANIM_MOTIONS: u64 = 0x18;
+/// Motion layer: its animation set and the index of the motion it plays (`0x14033fa40`).
+pub const LAYER_SET: u64 = 0xb0;
+pub const LAYER_CURRENT: u64 = 0xc0;
+/// Animation set: the name table `0x14033f170` looks motions up in (buckets, bucket count). An
+/// entry is {next, name hash, name, motion index}; the hash is `h * 33 + byte` over the name.
+pub const SET_BUCKETS: u64 = 0x70;
+pub const SET_BUCKET_COUNT: u64 = 0x80;
+pub const ENTRY_HASH: u64 = 0x8;
+pub const ENTRY_NAME: u64 = 0x10;
+pub const ENTRY_INDEX: u64 = 0x18;
 
 /// 0 for a null actor.
 pub unsafe fn id(actor: u64) -> u64 {

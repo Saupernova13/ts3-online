@@ -29,6 +29,7 @@ pub mod log;
 pub mod lots;
 pub mod math;
 pub mod net;
+pub mod motion;
 pub mod npc;
 #[cfg(windows)]
 pub mod pad;

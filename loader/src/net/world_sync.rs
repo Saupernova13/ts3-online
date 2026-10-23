@@ -102,6 +102,8 @@ pub struct WorldSync {
     apply: Vec<(u32, String, String)>,
     /// Client: actor hash to latest (pos, yaw).
     npcs_in: HashMap<u32, ([f32; 3], f32)>,
+    /// Client: enemy hash to latest motion per layer.
+    motions_in: HashMap<u32, [u32; 2]>,
     /// Client: enemy health figures from the host, oldest first.
     healths_in: Vec<(Key, f32)>,
     /// Host: (client, hits) from clients, oldest first.
@@ -135,6 +137,7 @@ impl WorldSync {
         self.seen.clear();
         self.apply.clear();
         self.npcs_in.clear();
+        self.motions_in.clear();
         self.healths_in.clear();
         self.hits_in.clear();
     }
@@ -269,6 +272,21 @@ impl WorldSync {
 
     pub fn take_npcs(&mut self) -> Vec<(u32, [f32; 3], f32)> {
         self.npcs_in.drain().map(|(h, (p, y))| (h, p, y)).collect()
+    }
+
+    pub fn on_motions(&mut self, level: u32, entries: Vec<(u32, [u32; 2])>) {
+        if level == 0 || level != self.level {
+            return;
+        }
+        for (hash, layers) in entries {
+            if self.motions_in.len() < MAX_NPCS_IN || self.motions_in.contains_key(&hash) {
+                self.motions_in.insert(hash, layers);
+            }
+        }
+    }
+
+    pub fn take_motions(&mut self) -> Vec<(u32, [u32; 2])> {
+        self.motions_in.drain().collect()
     }
 
     pub fn on_healths(&mut self, level: u32, entries: Vec<(Key, f32)>) {
@@ -484,5 +502,18 @@ mod tests {
         w.on_npcs(L, vec![(2, [0.0; 3], 0.0)]);
         w.set_level(L + 1);
         assert!(w.take_npcs().is_empty());
+    }
+
+    #[test]
+    fn motions_keep_the_latest_and_are_dropped_outside_the_level() {
+        let mut w = in_level();
+        w.on_motions(L + 1, vec![(1, [5, 0])]);
+        assert!(w.take_motions().is_empty());
+        w.on_motions(L, vec![(1, [5, 0]), (1, [6, 2])]);
+        assert_eq!(w.take_motions(), vec![(1, [6, 2])]);
+        assert!(w.take_motions().is_empty(), "taken once");
+        w.on_motions(L, vec![(2, [7, 0])]);
+        w.set_level(L + 1);
+        assert!(w.take_motions().is_empty());
     }
 }

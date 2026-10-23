@@ -7,7 +7,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub const MAGIC: &[u8; 4] = b"TS3O";
-pub const VERSION: u16 = 19;
+pub const VERSION: u16 = 20;
 pub const TAG_LEN: usize = 16;
 /// Zero bytes after a `Probe`'s build, so a probe is never shorter than its reply.
 pub const PROBE_PAD: usize = 40;
@@ -20,6 +20,8 @@ pub const MAX_SPENDS: usize = 64;
 pub const MAX_WORLD: usize = 8;
 /// 20 bytes each: a datagram stays under ~1000 bytes.
 pub const MAX_NPCS: usize = 48;
+/// 12 bytes each.
+pub const MAX_MOTIONS: usize = 80;
 /// 24 bytes each.
 pub const MAX_HEALTHS: usize = 40;
 /// 28 bytes each.
@@ -65,6 +67,7 @@ const T_PROGRESS: u8 = 26;
 const T_PROGRESS_REPORT: u8 = 27;
 const T_HURT: u8 = 28;
 const T_HURT_ACK: u8 = 29;
+const T_MOTIONS: u8 = 30;
 
 /// Controller state in the XINPUT_GAMEPAD layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -205,6 +208,9 @@ pub enum Msg {
     WorldReport { level: u32, event: String, refname: String },
     /// Host to clients, unreliable (latest wins): moving named actors as (reference-name hash, pos, yaw).
     Npcs { level: u32, entries: Vec<(u32, [f32; 3], f32)> },
+    /// Host to clients, unreliable (latest wins): enemies' current motions as (reference-name hash,
+    /// motion name hash per layer, 0 for none).
+    Motions { level: u32, entries: Vec<(u32, [u32; 2])> },
     /// Host to clients, unreliable (latest wins): health of damaged enemies (`health::Key`, health).
     Healths { level: u32, entries: Vec<(Key, f32)> },
     /// Client to host, unreliable, repeated: (client's actor id, key, health its player took off it this level).
@@ -451,6 +457,17 @@ pub fn encode(msg: &Msg, key: &[u8]) -> Vec<u8> {
                 }
             }
         }
+        Msg::Motions { level, entries } => {
+            o.push(T_MOTIONS);
+            o.extend_from_slice(&level.to_le_bytes());
+            let entries = &entries[..entries.len().min(MAX_MOTIONS)];
+            o.push(entries.len() as u8);
+            for (hash, layers) in entries {
+                for v in std::iter::once(hash).chain(layers) {
+                    o.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+        }
         Msg::Healths { level, entries } => {
             o.push(T_HEALTHS);
             o.extend_from_slice(&level.to_le_bytes());
@@ -595,7 +612,7 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
         return Err(DecodeError::Version(version));
     }
     let kind = *bytes.get(6).ok_or(Malformed)?;
-    if !(T_HELLO..=T_HURT_ACK).contains(&kind) || bytes.len() < 7 + TAG_LEN {
+    if !(T_HELLO..=T_MOTIONS).contains(&kind) || bytes.len() < 7 + TAG_LEN {
         return Err(Malformed);
     }
     let (signed, tag) = bytes.split_at(bytes.len() - TAG_LEN);
@@ -723,6 +740,18 @@ pub fn decode(bytes: &[u8], key: &[u8]) -> Result<Msg, DecodeError> {
                     entries.push((hash, pos, yaw));
                 }
                 Msg::Npcs { level, entries }
+            }
+            T_MOTIONS => {
+                let level = r.u32()?;
+                let n = r.u8()? as usize;
+                if n > MAX_MOTIONS {
+                    return None;
+                }
+                let mut entries = Vec::with_capacity(n);
+                for _ in 0..n {
+                    entries.push((r.u32()?, [r.u32()?, r.u32()?]));
+                }
+                Msg::Motions { level, entries }
             }
             T_HEALTHS => {
                 let level = r.u32()?;
@@ -907,6 +936,8 @@ mod tests {
             Msg::WorldReport { level: 77, event: "ExploderDestroy".into(), refname: "EXP_Crate_40".into() },
             Msg::Npcs { level: 77, entries: vec![(1, [1.0, -2.5, 3.0], 0.5), (u32::MAX, [0.0; 3], -3.1)] },
             Msg::Npcs { level: 0, entries: Vec::new() },
+            Msg::Motions { level: 77, entries: vec![(1, [0x1234_5678, 0]), (u32::MAX, [u32::MAX, 7])] },
+            Msg::Motions { level: 0, entries: Vec::new() },
             Msg::Healths { level: 3, entries: vec![(hk(1), 70.5), (Key { refh: 0, nameh: 9, pos: [1.0, -2.0, 3.5] }, 0.0)] },
             Msg::Hits { level: 3, entries: vec![(0x7c2, hk(1), 30.0)] },
             Msg::Progress { level: 9, kind: 1, page: 2, pages: 3, entries: vec![(0xdead_beef, 5), (1, 0)] },
@@ -1118,6 +1149,24 @@ b")] {
         for bad in [(1, [f32::NAN, 0.0, 0.0], 0.0), (1, [0.0, 2.0e6, 0.0], 0.0), (1, [0.0; 3], f32::INFINITY), (1, [0.0, 0.0, f32::NEG_INFINITY], 0.0)] {
             assert_eq!(dec(&enc(&Msg::Npcs { level: 1, entries: vec![bad] })), Err(DecodeError::Malformed), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn motion_messages_are_capped_and_cut_ones_refused() {
+        let entry = |i: u32| (i, [i.wrapping_mul(33), 0]);
+        match dec(&enc(&Msg::Motions { level: 5, entries: (0..200).map(entry).collect() })) {
+            Ok(Msg::Motions { entries, .. }) => assert_eq!(entries.len(), MAX_MOTIONS),
+            other => panic!("{other:?}"),
+        }
+        let full = enc(&Msg::Motions { level: 5, entries: (0..MAX_MOTIONS as u32).map(entry).collect() });
+        assert!(full.len() < 1100, "{}", full.len());
+        for cut in 0..full.len() {
+            assert!(dec(&full[..cut]).is_err(), "cut {cut}");
+        }
+        let mut forged = enc(&Msg::Motions { level: 1, entries: vec![entry(1)] });
+        forged[11] = MAX_MOTIONS as u8 + 1;
+        retag(&mut forged, &[]);
+        assert_eq!(dec(&forged), Err(DecodeError::Malformed));
     }
 
     #[test]

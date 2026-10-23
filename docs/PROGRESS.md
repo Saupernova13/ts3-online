@@ -436,3 +436,14 @@ town.
   Jessie, the host showed Jessie in slot 2 within 4 s and the idle Woody beside it. Found on the
   way: `tools/local-coop.ps1` waited for the host's log in the game folder, where it has not been
   since 1.7.0, so it gave up on copy 1. 299 loader tests pass on Windows.
+- 2026-10-23, enemy motions on clients (#49, T35, protocol 20): a client's enemies skip their
+  behaviour tree, which is what plays their attacks and hit reactions, so a client was hit by an
+  enemy that never swung. The host now samples every enemy's current motion on layers 0 and 1
+  every 33 ms and sends the changes, and all of them once a second, as an unreliable `Motions`
+  message, by motion name hash (FINDINGS 10); a client plays each change once, only on enemies
+  whose behaviour the host runs. The dev command `motions` lists every enemy's motion per layer. In
+  game with two copies and 40 ms each way (`net_sim=40,5`), Haunted Bakery: the client's Muffins
+  ran the host's sequence (`START_CHARGE`, `REACT_WOBBLE`, `RECOVER_3`, `WALK`, `RECOVER_1`), 14-17
+  motions played per 10 s, none missing from the client's sets, and a Muffin killed on the host
+  died in `REACT_BLASTAWAY` on both. The delay, sampling plus one-way time, was not measured. 305
+  loader tests pass on Windows.

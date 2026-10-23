@@ -451,3 +451,18 @@ town.
   another character (#51), both tested in game (T34, T35), plus the `local-coop.ps1` log path. 1.8.0
   does not play with 1.7.x; the release notes say so and how each older release updates (1.7.2's
   Update button brings the whole release, older ones need the zip's setup and Save).
+- 2026-10-23, loader review fixes: a client that played its own save (the host had none, the wait
+  for the host's save timed out, or a lone `net=auto` host merged into another as a client) had the
+  host's gold, imagination points, missions, unlocks and lots written into it, against "you play
+  the host's save". A copy now takes them only when it plays the host's save (`net::save_is_shared`,
+  from the save-folder decision); otherwise the wallet is left alone, progress is still reported
+  but never forced, and each logs one line per level. The host confirmed a client's spend and
+  published the new wallet under two session locks, so a tick between them could send the ack with
+  the old gold; the values and the confirmations now go out in one `set_local_wallet` call. The
+  enemy verdicts in `ai` and `motion` were keyed by actor address for the whole level, so an actor
+  spawned at a dead enemy's address inherited the verdict; they are keyed by actor id now, which
+  assumes a new spawn gets a new id (FINDINGS 10, inferred). A client recorded the host's enemy
+  motion as played before trying it, so an enemy without an animation layer yet never got it until
+  the motion changed; it is now recorded once played, found current, or found missing from the
+  layer's set. The broadcast post address is named once, in `game.rs`. Not tried in game. 309
+  loader tests pass on Windows (3 new), 258 on Linux; 27 setup tests on Windows, 28 on Linux.

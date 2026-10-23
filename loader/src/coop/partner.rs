@@ -162,31 +162,46 @@ fn orphans(partners: &HashMap<u8, Partner>, remote: &[(u8, State)]) -> Vec<(u8, 
     partners.iter().filter(|(i, p)| p.parked && p.avatar != 0 && !remote.iter().any(|(r, _)| r == *i)).map(|(i, p)| (*i, p.class)).collect()
 }
 
-/// After the players regroup under a new host their ids are handed out again, so an id can name a
-/// different player than the avatar it held. Such an avatar is parked under a spare key when an
-/// orphaned avatar of the player's own character exists, which `adopt_parked` then hands over.
-pub(super) fn set_aside_mismatched(partners: &mut HashMap<u8, Partner>, remote: &[(u8, State)]) {
+fn slot_free(partners: &HashMap<u8, Partner>) -> bool {
+    free_slot(&partners.values().map(|p| p.slot).collect::<Vec<_>>()).is_some()
+}
+
+/// An id can name a player other than the character its avatar shows: after the players regroup
+/// under a new host the ids are handed out again, and a player who leaves may come back as another
+/// character. Such an avatar is parked under a spare key when the player's own character can be
+/// had: an orphaned avatar of it, which `adopt_parked` hands over, or a free slot to bind a new one
+/// in. The parked avatar idles until the level ends, as removing one mid-level can crash (FINDINGS
+/// 10). Returns the slots parked, whose pads the caller lets go of.
+pub(super) fn set_aside_mismatched(partners: &mut HashMap<u8, Partner>, remote: &[(u8, State)]) -> Vec<usize> {
+    let mut parked = Vec::new();
     for (id, st) in remote {
         let class = st.class as usize;
         let Some(p) = partners.get(id) else { continue };
-        if p.avatar == 0 || class >= CLASSES.len() || p.class == class || !orphans(partners, remote).iter().any(|(_, c)| *c == class) {
+        if p.avatar == 0 || class >= CLASSES.len() || p.class == class {
+            continue;
+        }
+        // with neither, the player keeps driving the avatar it has
+        if !orphans(partners, remote).iter().any(|(_, c)| *c == class) && !slot_free(partners) {
             continue;
         }
         let Some(key) = (SET_ASIDE..=u8::MAX).find(|k| !partners.contains_key(k)) else { continue };
         if let Some(mut p) = partners.remove(id) {
             log!("coop: player {id} plays {} but slot {} holds {}; parking it", class_name(class), p.slot, class_name(p.class));
             p.parked = true;
+            parked.push(p.slot);
             partners.insert(key, p);
         }
     }
+    parked
 }
 
-/// A newcomer takes over a departed player's parked avatar instead of a fresh slot, one of its own
-/// character if there is one.
+/// A newcomer takes over a departed player's parked avatar of its own character; one of another
+/// character only when no slot is left to bind its own in.
 pub(super) fn adopt_parked(partners: &mut HashMap<u8, Partner>, id: u8, remote: &[(u8, State)]) {
     let class = remote.iter().find(|(r, _)| *r == id).map(|(_, s)| s.class as usize);
     let orphans = orphans(partners, remote);
-    let old = orphans.iter().find(|(_, c)| Some(*c) == class).or(orphans.first()).map(|(i, _)| *i);
+    let any = if slot_free(partners) { None } else { orphans.first() };
+    let old = orphans.iter().find(|(_, c)| Some(*c) == class).or(any).map(|(i, _)| *i);
     let Some(old) = old.and_then(|o| partners.remove(&o).map(|p| (o, p))) else { return };
     let (old_id, p) = old;
     let mut q = Partner::new(p.slot);
@@ -258,30 +273,61 @@ mod tests {
         assert!(w.check(0, 1, 2_200_000));
     }
 
+    fn playing(id: u8, class: u8) -> (u8, State) {
+        (id, State { id, seq: 0, level: 0, class, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Default::default(), rail: Default::default() })
+    }
+
     #[test]
     fn a_newcomer_takes_over_a_parked_avatar_whose_owner_left() {
-        let present = |id: u8| (id, State { id, seq: 0, level: 0, class: 0, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Default::default(), rail: Default::default() });
         let bound = |slot: usize, avatar: u64, parked: bool| {
             let mut p = Partner::new(slot);
             (p.avatar, p.actor_id, p.class, p.parked) = (avatar, avatar + 1, 2, parked);
             p
         };
-        // player 1 left its bound avatar parked: player 5 takes it over, still parked until driven
+        // player 1 left its bound jessie parked: player 5, also jessie, takes it over, still parked until driven
         let mut partners = HashMap::from([(1u8, bound(2, 0x100, true))]);
-        adopt_parked(&mut partners, 5, &[present(5)]);
+        adopt_parked(&mut partners, 5, &[playing(5, 2)]);
         assert!(!partners.contains_key(&1));
         let q = partners.get(&5).expect("adopted");
         assert_eq!((q.slot, q.avatar, q.actor_id, q.class, q.parked), (2, 0x100, 0x101, 2, true));
+        // a buzz gets a slot of its own while one is free, and the departed jessie only when none is
+        let mut partners = HashMap::from([(1u8, bound(2, 0x100, true))]);
+        adopt_parked(&mut partners, 5, &[playing(5, 0)]);
+        assert!(!partners.contains_key(&5), "a free slot binds its own character");
+        let mut partners = HashMap::from([(1u8, bound(2, 0x100, true)), (2u8, bound(1, 0x200, false)), (3u8, bound(3, 0x300, false))]);
+        adopt_parked(&mut partners, 5, &[playing(2, 2), playing(3, 2), playing(5, 0)]);
+        assert_eq!(partners.get(&5).map(|p| p.avatar), Some(0x100), "no slot left: the departed avatar");
         // unbound, owner still present, or not parked: left alone
         let mut partners = HashMap::from([(1u8, bound(1, 0, true)), (3u8, bound(2, 0x300, true)), (7u8, bound(3, 0x700, false))]);
-        adopt_parked(&mut partners, 5, &[present(3), present(5)]);
+        adopt_parked(&mut partners, 5, &[playing(3, 2), playing(5, 2)]);
         assert!(!partners.contains_key(&5));
         assert_eq!(partners.len(), 3);
     }
 
     #[test]
+    fn a_player_back_as_another_character_gets_that_character() {
+        let bound = |slot: usize, avatar: u64, class: usize, parked: bool| {
+            let mut p = Partner::new(slot);
+            (p.avatar, p.actor_id, p.class, p.parked) = (avatar, avatar + 1, class, parked);
+            p
+        };
+        // player 2 left as woody (slot 2, parked) and is back as jessie; the host's other partner is buzz
+        let mut partners = HashMap::from([(1u8, bound(1, 0x100, 0, false)), (2u8, bound(2, 0x200, 1, true))]);
+        let remote = [playing(1, 0), playing(2, 2)];
+        assert_eq!(set_aside_mismatched(&mut partners, &remote), [2], "woody's slot lets go of its pad");
+        assert!(!partners.contains_key(&2), "woody is set aside");
+        adopt_parked(&mut partners, 2, &remote);
+        assert!(!partners.contains_key(&2), "woody is not handed back: a new jessie binds in slot 3");
+        assert_eq!(free_slot(&partners.values().map(|p| p.slot).collect::<Vec<_>>()), Some(3));
+        let (key, woody) = partners.iter().find(|(_, p)| p.avatar == 0x200).expect("woody idles");
+        assert!(*key >= SET_ASIDE && woody.parked);
+        // a later woody takes it over
+        adopt_parked(&mut partners, 3, &[playing(1, 0), playing(2, 2), playing(3, 1)]);
+        assert_eq!(partners.get(&3).map(|p| p.avatar), Some(0x200));
+    }
+
+    #[test]
     fn regrouped_players_get_their_own_characters_back() {
-        let playing = |id: u8, class: u8| (id, State { id, seq: 0, level: 0, class, pos: [0.0; 3], yaw: 0.0, cam: 0.0, pad: Pad::default(), flags: 0, target: 0, proj: Default::default(), rail: Default::default() });
         let bound = |slot: usize, avatar: u64, class: usize| {
             let mut p = Partner::new(slot);
             (p.avatar, p.actor_id, p.class, p.parked) = (avatar, avatar + 1, class, true);
@@ -296,9 +342,9 @@ mod tests {
         assert_eq!(partners.get(&0).map(|p| (p.slot, p.avatar)), Some((3, 0x300)), "jessie's own avatar");
         assert_eq!(partners.get(&2).map(|p| p.avatar), Some(0x200));
         assert!(partners.iter().any(|(k, p)| *k >= SET_ASIDE && p.avatar == 0x100 && p.parked));
-        // nothing of its own to take: the player keeps driving what it has
-        let mut partners = HashMap::from([(0u8, bound(1, 0x100, 1))]);
-        set_aside_mismatched(&mut partners, &[playing(0, 2)]);
+        // nothing of its own to take and no slot to bind one in: the player keeps driving what it has
+        let mut partners = HashMap::from([(0u8, bound(1, 0x100, 1)), (1u8, bound(2, 0x200, 0)), (2u8, bound(3, 0x300, 0))]);
+        assert!(set_aside_mismatched(&mut partners, &[playing(0, 2), playing(1, 0), playing(2, 0)]).is_empty());
         assert_eq!(partners.get(&0).map(|p| p.avatar), Some(0x100));
     }
 }

@@ -426,3 +426,13 @@ town.
   again while that folder exists, never while the game runs); a release unzipped into the game
   folder was never offered; a pasted game folder was not loaded; the DLLs were written in place.
   28 setup tests pass on Linux; both crates check clean for `x86_64-pc-windows-gnu`.
+- 2026-10-23, a player back as another character (#51, T34): a player who left and rejoined as
+  another character kept the old avatar on the other copies, as `set_aside_mismatched` only acted
+  when an orphaned avatar of the new character existed, and `adopt_parked` handed a newcomer any
+  departed player's avatar before a fresh slot. Both now prefer the player's own character: the
+  old avatar is set aside when a slot is free, idles until the level ends (removing it can crash,
+  FINDINGS 10) and lets go of its pad, and a newcomer takes another character's avatar only once
+  no slot is left. In game with two copies: Woody and Woody in Toy Box, copy 2 closed and back as
+  Jessie, the host showed Jessie in slot 2 within 4 s and the idle Woody beside it. Found on the
+  way: `tools/local-coop.ps1` waited for the host's log in the game folder, where it has not been
+  since 1.7.0, so it gave up on copy 1. 299 loader tests pass on Windows.

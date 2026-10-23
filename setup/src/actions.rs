@@ -122,13 +122,30 @@ pub fn bundled_dll(game: Option<&Path>) -> Option<Vec<u8>> {
 
 pub fn backup_saves(game: &Path) -> Step {
     let Some(src) = platform::saves_dir(game).filter(|s| s.is_dir()) else { return ok("No saves yet, so there was nothing to back up.") };
-    let dst = mod_dir(game).join("save backups").join(today());
+    backup(&src, &mod_dir(game).join("save backups"), &today())
+}
+
+/// Copies `src` to `<backups>/<date>`, which exists only once the copy is whole: a failed one must
+/// not pass for today's backup on a retry.
+fn backup(src: &Path, backups: &Path, date: &str) -> Step {
+    let dst = backups.join(date);
     if dst.is_dir() {
         return ok(format!("Saves already backed up today: {}", dst.display()));
     }
-    match copy_dir(&src, &dst) {
+    let partial = backups.join(format!("{date}.partial"));
+    let copied = (|| -> std::io::Result<()> {
+        if partial.exists() {
+            std::fs::remove_dir_all(&partial)?;
+        }
+        copy_dir(src, &partial)?;
+        std::fs::rename(&partial, &dst)
+    })();
+    match copied {
         Ok(()) => ok(format!("Backed up your saves to {}", dst.display())),
-        Err(e) => fail(format!("Could not back up your saves ({e}); nothing else was changed.")),
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&partial);
+            fail(format!("Could not back up your saves ({e}); nothing else was changed."))
+        }
     }
 }
 
@@ -735,6 +752,54 @@ mod tests {
         assert!(migrate_legacy(&old, &new).is_err());
         assert!(!new.join("copy2").exists() && !new.join("copy3").exists(), "a retry starts clean");
         assert!(old.join("copy2/a").is_file() && old.join("copy3/b").is_file());
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    const DAY: &str = "2026-10-23";
+
+    #[test]
+    fn a_backup_copies_the_saves_and_a_second_one_the_same_day_keeps_the_first() {
+        let g = game();
+        let (src, backups) = (g.join("saves"), g.join("backups"));
+        put(&src, "slot1.sav", "first");
+        put(&src, "Saved Game/slot2.sav", "nested");
+        let st = backup(&src, &backups, DAY);
+        assert!(st.ok && st.text.starts_with("Backed up your saves"), "{st:?}");
+        assert_eq!(std::fs::read_to_string(backups.join(DAY).join("slot1.sav")).unwrap(), "first");
+        assert_eq!(std::fs::read_to_string(backups.join(DAY).join("Saved Game/slot2.sav")).unwrap(), "nested");
+        put(&src, "slot1.sav", "later");
+        let st = backup(&src, &backups, DAY);
+        assert!(st.ok && st.text.starts_with("Saves already backed up today"), "{st:?}");
+        assert_eq!(std::fs::read_to_string(backups.join(DAY).join("slot1.sav")).unwrap(), "first");
+        assert!(!backups.join(format!("{DAY}.partial")).exists());
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[test]
+    fn a_partial_copy_left_from_before_is_not_part_of_the_backup() {
+        let g = game();
+        let (src, backups) = (g.join("saves"), g.join("backups"));
+        put(&src, "slot1.sav", "first");
+        put(&backups, &format!("{DAY}.partial/stale.sav"), "from a copy that was cut off");
+        assert!(backup(&src, &backups, DAY).ok);
+        assert!(backups.join(DAY).join("slot1.sav").is_file() && !backups.join(DAY).join("stale.sav").exists());
+        assert!(!backups.join(format!("{DAY}.partial")).exists());
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_backup_that_fails_midway_is_not_todays_backup() {
+        let g = game();
+        let (src, backups) = (g.join("saves"), g.join("backups"));
+        put(&src, "slot1.sav", "fine");
+        std::os::unix::fs::symlink(g.join("nowhere"), src.join("broken")).unwrap();
+        assert!(!backup(&src, &backups, DAY).ok);
+        assert!(!backups.join(DAY).exists() && !backups.join(format!("{DAY}.partial")).exists(), "a retry starts clean");
+        std::fs::remove_file(src.join("broken")).unwrap();
+        let st = backup(&src, &backups, DAY);
+        assert!(st.ok && st.text.starts_with("Backed up your saves"), "the retry backs up again: {st:?}");
+        assert_eq!(std::fs::read_to_string(backups.join(DAY).join("slot1.sav")).unwrap(), "fine");
         std::fs::remove_dir_all(&g).unwrap();
     }
 

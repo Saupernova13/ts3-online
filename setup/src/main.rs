@@ -85,7 +85,7 @@ fn cli() -> Option<i32> {
         match actions::latest_release() {
             Ok((v, _)) if !actions::newer(&v, &actions::installed(&game).unwrap_or_default()) => vec![Step { ok: true, text: format!("Up to date ({v}).") }],
             Ok((_, url)) => match actions::download_release(&url) {
-                Ok(r) => actions::update(&game, &r),
+                Ok(r) => actions::update_from_github(&game, &r, &user_name()),
                 Err(e) => vec![Step { ok: false, text: e }],
             },
             Err(e) => vec![Step { ok: false, text: e }],
@@ -303,7 +303,7 @@ impl App {
                 "Updating...",
                 Box::new(move || {
                     let steps = match actions::download_release(&url) {
-                        Ok(r) => actions::update(&game, &r),
+                        Ok(r) => actions::update_from_github(&game, &r, &user_name()),
                         Err(e) => vec![Step { ok: false, text: e }],
                     };
                     (steps, actions::installed(&game))
@@ -500,6 +500,18 @@ impl App {
                 let p = PathBuf::from(self.game_text.trim());
                 self.game = actions::game_dir_ok(&p).then_some(p);
                 if let Some(g) = &self.game {
+                    // the folder Steam did not list may already have ts3-online and its settings
+                    self.installed = actions::installed(g);
+                    self.bundled = actions::bundled_version(g);
+                    let text = actions::read_config(Some(g));
+                    if !text.trim().is_empty() {
+                        let s = Settings::from_ini(&text, &user_name());
+                        self.settings = s.clone();
+                        self.saved = Some(s);
+                    }
+                    if self.installed.is_some() {
+                        self.page = Page::Settings;
+                    }
                     self.build = build_of(g);
                     self.probe = Probe::start(self.build, self.settings.port);
                 }

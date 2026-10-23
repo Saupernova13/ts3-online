@@ -82,15 +82,19 @@ fn setups_beside_me(game: &Path) -> Option<Vec<(&'static str, Vec<u8>)>> {
     Some(SETUP_FILES.iter().filter_map(|n| std::fs::read(here.join(n)).ok().filter(|b| is_setup(n, b)).map(|b| (*n, b))).collect())
 }
 
-/// The release this program came in (the unzipped release folder), not the game folder's copy.
+/// The release this program came in: the unzipped release folder it runs from, or a release
+/// unzipped into the game folder (the zip's `ts3-online` folder lands on the mod's, its DLL with it).
 pub fn bundled_release(game: &Path) -> Option<Release> {
-    let dll = ours_at(&release_dir(game)?.join(DLL))?;
-    Some(Release { dll, setups: setups_beside_me(game)? })
+    match release_dir(game) {
+        Some(here) => Some(Release { dll: ours_at(&here.join(DLL))?, setups: setups_beside_me(game)? }),
+        None => Some(Release { dll: ours_at(&mod_dir(game).join(DLL))?, setups: Vec::new() }),
+    }
 }
 
 /// The version of the release this program came in.
 pub fn bundled_version(game: &Path) -> Option<String> {
-    ours_at(&release_dir(game)?.join(DLL)).map(|b| version_of(&b).unwrap_or_default())
+    let dir = release_dir(game).unwrap_or_else(|| mod_dir(game));
+    ours_at(&dir.join(DLL)).map(|b| version_of(&b).unwrap_or_default())
 }
 
 /// The version installed in the game folder: Some("") for an older release without the tag.
@@ -177,13 +181,14 @@ pub fn install_mod(game: &Path, bytes: &[u8]) -> Step {
         std::fs::create_dir_all(&dir)?;
         match std::fs::read(&steam) {
             // Steam's own, perhaps newer than a copy kept before
-            Ok(b) if !is_ours(&b) => std::fs::write(&original, b)?,
+            Ok(b) if !is_ours(&b) => replace_file(&original, &b)?,
             Ok(_) => {}
             Err(_) if original.is_file() => {}
             Err(e) => return Err(std::io::Error::new(e.kind(), format!("the game folder has no {STEAM}: {e}"))),
         }
-        std::fs::write(&dll, bytes)?;
-        std::fs::write(&steam, bytes)
+        // never half-written: a cut-off copy of ours would pass for Steam's own on the next install
+        replace_file(&dll, bytes)?;
+        replace_file(&steam, bytes)
     })();
     match result {
         Ok(()) => ok(format!("Installed ts3-online {} in the game folder.", version_of(bytes).unwrap_or_default())),
@@ -217,25 +222,31 @@ pub fn install_all(game: &Path, s: &Settings) -> Vec<Step> {
 /// Copies this program (and its other-system twin beside it) into `ts3-online`, so the game folder
 /// carries its own setup.
 pub fn copy_setup(game: &Path) -> Option<Step> {
-    put_setups(game, &setups_beside_me(game)?)
-}
-
-/// Puts setup programs in `ts3-online`, replacing older ones, the running one included.
-fn put_setups(game: &Path, setups: &[(&str, Vec<u8>)]) -> Option<Step> {
-    let dir = mod_dir(game);
+    let setups = setups_beside_me(game)?;
     if setups.is_empty() {
         return Some(fail("Could not find the setup program to put into the game folder."));
     }
+    put_setups(game, &setups)
+}
+
+/// Puts setup programs in `ts3-online`, replacing older ones, the running one included. None when
+/// every one there is already the same.
+fn put_setups(game: &Path, setups: &[(&str, Vec<u8>)]) -> Option<Step> {
+    let dir = mod_dir(game);
     let me = std::env::current_exe().ok().and_then(|m| m.canonicalize().ok());
-    let mut running = false;
+    let (mut running, mut changed) = (false, 0);
     for (name, bytes) in setups {
         let to = dir.join(name);
+        if std::fs::read(&to).is_ok_and(|b| b == *bytes) {
+            continue;
+        }
         running |= me.is_some() && to.canonicalize().ok() == me;
         if let Err(e) = replace_file(&to, bytes) {
             return Some(fail(format!("Could not put the setup program {} in {}: {e}. Run the setup from the release zip to finish.", name, dir.display())));
         }
+        changed += 1;
     }
-    Some(ok(if running {
+    (changed > 0).then(|| ok(if running {
         format!("Updated the setup program in {}: close this window and open it again to use the new one.", dir.display())
     } else {
         format!("Put the setup program in {} to change your settings later.", dir.display())
@@ -291,22 +302,35 @@ pub fn update(game: &Path, r: &Release) -> Vec<Step> {
         steps.push(install_mod(game, &r.dll));
     }
     if steps.iter().all(|s| s.ok) {
+        // only a release unzipped into the game folder leaves a DLL there; the game never loads it
+        let _ = std::fs::remove_file(mod_dir(game).join(DLL));
         steps.extend(put_setups(game, &r.setups));
     }
     steps
 }
 
-/// Setting up an installed game again: first puts `bundled` (the release this program came in) in
-/// the game folder unless the game already has a newer one, then saves the settings.
+/// An update from GitHub: the release, then the saved settings once more when a pre-1.7 install
+/// still has its folder, as saving is what moves its settings and saves into the game folder.
+pub fn update_from_github(game: &Path, r: &Release, user: &str) -> Vec<Step> {
+    let mut steps = update(game, r);
+    let text = read_config(Some(game));
+    if steps.iter().all(|s| s.ok) && platform::legacy_dir().is_some_and(|l| l.is_dir()) && !text.trim().is_empty() {
+        steps.extend(save(game, &Settings::from_ini(&text, user)));
+    }
+    steps
+}
+
+/// Setting up an installed game again: puts `bundled` (the release this program came in) in the
+/// game folder when it is newer, or only its setup programs when it is the same release, then
+/// saves the settings, also when that failed.
 pub fn apply(game: &Path, s: &Settings, bundled: Option<&Release>) -> Vec<Step> {
     let have = installed(game).unwrap_or_default();
-    let mut steps = Vec::new();
-    if let Some(r) = bundled.filter(|r| !newer(&have, &r.version())) {
-        steps = update(game, r);
-        if !steps.iter().all(|s| s.ok) {
-            return steps;
-        }
-    }
+    let mut steps = match bundled {
+        Some(r) if newer(&r.version(), &have) => update(game, r),
+        // an older setup's Update button replaced only the mod and left its own setup programs
+        Some(r) if r.version() == have => put_setups(game, &r.setups).into_iter().collect(),
+        _ => Vec::new(),
+    };
     steps.extend(save(game, s));
     steps
 }
@@ -354,18 +378,24 @@ pub fn save(game: &Path, s: &Settings) -> Vec<Step> {
     // reached only once the settings are written (the early return above): the old folder may hold the only copy of the saves
     if let Some(l) = platform::legacy_dir().filter(|l| l.is_dir()) {
         let new = mod_dir(game);
-        steps.push(match migrate_legacy(&l, &new) {
-            Err(e) => fail(format!("Kept the old {}: {e}", l.display())),
-            Ok(n) => match (std::fs::remove_dir_all(&l), n) {
-                (Ok(()), 0) => ok(format!("Removed the old {} (the mod now keeps everything in the game folder).", l.display())),
-                (Ok(()), n) => ok(format!("Moved {n} save folder(s) from {} into {} and removed the old folder.", l.display(), new.display())),
-                (Err(e), 0) => fail(format!("Could not remove the old {}: {e}", l.display())),
-                (Err(e), n) => fail(format!("Copied {n} save folder(s) into {}, but could not remove the old {}: {e}. Delete it by hand.", new.display(), l.display())),
-            },
+        steps.push(if platform::game_running() {
+            // an older loader still writes its saves there while the game runs
+            fail(format!("Kept the old {} while Toy Story 3 runs: close it and save again to move its saves in.", l.display()))
+        } else {
+            match migrate_legacy(&l, &new) {
+                Err(e) => fail(format!("Kept the old {}: {e}", l.display())),
+                Ok(n) => match (std::fs::remove_dir_all(&l), n) {
+                    (Ok(()), 0) => ok(format!("Removed the old {} (the mod now keeps everything in the game folder).", l.display())),
+                    (Ok(()), n) => ok(format!("Moved {n} save folder(s) from {} into {} and removed the old folder.", l.display(), new.display())),
+                    (Err(e), 0) => fail(format!("Could not remove the old {}: {e}", l.display())),
+                    (Err(e), n) => fail(format!("Copied {n} save folder(s) into {}, but could not remove the old {}: {e}. Delete it by hand.", new.display(), l.display())),
+                },
+            }
         });
     }
     if needs_repair(game) {
-        if let Some(b) = bundled_dll(Some(game)) {
+        // the installed release, not this program's: that one may be older
+        if let Some(b) = ours_at(&game.join(DLL)).or_else(|| bundled_dll(Some(game))) {
             steps.push(install_mod(game, &b));
         }
     }
@@ -377,14 +407,23 @@ fn is_copy_dir(name: &str) -> bool {
     name.strip_prefix("copy").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Whether `dir` holds a file, in it or below. A path that is not a folder counts as one.
+fn has_files(dir: &Path) -> bool {
+    match std::fs::read_dir(dir) {
+        Ok(rd) => rd.flatten().any(|e| e.file_type().map_or(true, |t| !t.is_dir() || has_files(&e.path()))),
+        Err(_) => dir.exists(),
+    }
+}
+
 /// Copies the `copyN` and `session` folders of a pre-1.7 install into the mod's folder and returns how
 /// many. Copies rather than renames (the old folder is on C:, the game often on another drive); a
-/// folder that already exists in the new place is never merged into: nothing is copied then.
+/// folder in the new place that holds a file is never merged into: nothing is copied then. An empty
+/// one is what the loader makes when a copy starts, before it has saved.
 fn migrate_legacy(legacy: &Path, mod_dir: &Path) -> Result<usize, String> {
     let rd = std::fs::read_dir(legacy).map_err(|e| format!("cannot read it: {e}"))?;
     let mut names: Vec<String> = rd.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| n == "session" || is_copy_dir(n)).collect();
     names.sort();
-    if let Some(n) = names.iter().find(|n| mod_dir.join(n).exists()) {
+    if let Some(n) = names.iter().find(|n| has_files(&mod_dir.join(n))) {
         return Err(format!("{} already has a {n} folder, so none of the old saves were copied. Move one of them away.", mod_dir.display()));
     }
     let mut done: Vec<PathBuf> = Vec::new();
@@ -799,6 +838,65 @@ mod tests {
         assert_eq!(installed(&g).as_deref(), Some("1.7.2"), "an older release is never put over a newer one");
         assert_eq!(std::fs::read(mod_dir(&g).join(SETUP_FILES[1])).unwrap(), LINUX_SETUP);
         assert!(apply(&g, &s, None).iter().all(|s| s.ok));
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[test]
+    fn setting_up_again_saves_the_settings_even_when_the_update_fails() {
+        let g = game();
+        assert!(install_mod(&g, DLL_BYTES).ok);
+        std::fs::write(g.join(DLL), b"another mod's").unwrap();
+        let steps = apply(&g, &Settings::new("Bob"), Some(&release(NEW_DLL)));
+        assert!(steps.iter().any(|s| !s.ok && s.text.contains("another mod")), "{steps:?}");
+        assert!(steps.iter().any(|s| s.ok && s.text.starts_with("Saved your settings")), "{steps:?}");
+        assert!(platform::config_file(&g).is_file());
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[test]
+    fn the_same_release_only_brings_the_setup_programs_up_to_date() {
+        let g = game();
+        let mine: Vec<u8> = [NEW_DLL, b"as installed"].concat();
+        assert!(install_mod(&g, &mine).ok);
+        put(&mod_dir(&g), SETUP_FILES[0], "left by an older Update button");
+        let steps = apply(&g, &Settings::new("Bob"), Some(&release(NEW_DLL)));
+        assert!(steps.iter().all(|s| s.ok), "{steps:?}");
+        assert_eq!(std::fs::read(g.join(DLL)).unwrap(), mine, "the mod is not reinstalled");
+        assert_eq!(std::fs::read(mod_dir(&g).join(SETUP_FILES[0])).unwrap(), WIN_SETUP);
+        let steps = apply(&g, &Settings::new("Bob"), Some(&release(NEW_DLL)));
+        assert!(!steps.iter().any(|s| s.text.contains("setup program")), "nothing to replace: {steps:?}");
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[test]
+    fn an_update_removes_the_dll_a_release_unzipped_into_the_game_folder_left() {
+        let g = game();
+        put(&mod_dir(&g), DLL, "from the zip");
+        assert!(update(&g, &release(NEW_DLL)).iter().all(|s| s.ok));
+        assert!(!mod_dir(&g).join(DLL).exists() && g.join(DLL).is_file());
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[test]
+    fn a_repair_puts_back_the_installed_release() {
+        let g = game();
+        assert!(install_mod(&g, NEW_DLL).ok);
+        std::fs::write(g.join(STEAM), b"steam's file check").unwrap();
+        assert!(needs_repair(&g));
+        assert!(save(&g, &Settings::new("Bob")).iter().all(|s| s.ok));
+        assert_eq!(std::fs::read(g.join(STEAM)).unwrap(), NEW_DLL);
+        assert_eq!(std::fs::read(mod_dir(&g).join(STEAM_ORIGINAL)).unwrap(), b"steam's file check");
+        std::fs::remove_dir_all(&g).unwrap();
+    }
+
+    #[test]
+    fn legacy_saves_fill_an_empty_folder_the_loader_made() {
+        let g = game();
+        let (old, new) = (g.join("old"), mod_dir(&g));
+        put(&old, SAVED, "old save");
+        std::fs::create_dir_all(new.join("copy2/Disney/Toy Story 3 Complete Edition")).unwrap();
+        assert_eq!(migrate_legacy(&old, &new), Ok(1));
+        assert_eq!(std::fs::read_to_string(new.join(SAVED)).unwrap(), "old save");
         std::fs::remove_dir_all(&g).unwrap();
     }
 

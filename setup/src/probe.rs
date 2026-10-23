@@ -3,6 +3,7 @@
 use dinput8::menu_model::{self as model, Table, Verdict};
 use dinput8::net::discover;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -51,15 +52,18 @@ struct Wants {
 pub struct Probe {
     view: Arc<Mutex<View>>,
     wants: Arc<Mutex<Wants>>,
+    /// set on drop: a replaced probe's thread must not outlive it
+    stop: Arc<AtomicBool>,
 }
 
 impl Probe {
     pub fn start(build: u64, port: u16) -> Probe {
         let view = Arc::new(Mutex::new(View { games: Vec::new(), tailscale: Tailscale::Unknown, tailnet_peers: Vec::new(), lan: None, check: None }));
         let wants = Arc::new(Mutex::new(Wants { port, ..Wants::default() }));
-        let (v, w) = (view.clone(), wants.clone());
-        let _ = std::thread::Builder::new().name("probe".into()).spawn(move || run(build, &v, &w));
-        Probe { view, wants }
+        let stop = Arc::new(AtomicBool::new(false));
+        let (v, w, s) = (view.clone(), wants.clone(), stop.clone());
+        let _ = std::thread::Builder::new().name("probe".into()).spawn(move || run(build, &v, &w, &s));
+        Probe { view, wants, stop }
     }
 
     pub fn view(&self) -> View {
@@ -85,7 +89,13 @@ impl Probe {
     }
 }
 
-fn run(build: u64, view: &Mutex<View>, wants: &Mutex<Wants>) {
+impl Drop for Probe {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+fn run(build: u64, view: &Mutex<View>, wants: &Mutex<Wants>, stop: &AtomicBool) {
     let Ok(sock) = UdpSocket::bind("0.0.0.0:0") else { return };
     let _ = sock.set_broadcast(true);
     let _ = sock.set_read_timeout(Some(Duration::from_millis(100)));
@@ -97,7 +107,8 @@ fn run(build: u64, view: &Mutex<View>, wants: &Mutex<Wants>) {
     let mut last_probe: Option<Instant> = None;
     let mut pending: Option<model::Pending> = None;
     let mut buf = [0u8; 1500];
-    loop {
+    // the read timeout turns the loop at least every 100 ms
+    while !stop.load(Ordering::Relaxed) {
         let w = wants.lock().map(|w| w.clone()).unwrap_or_default();
         if last_tailnet.is_none_or(|t| t.elapsed() >= TAILNET_EVERY) {
             last_tailnet = Some(Instant::now());
@@ -165,5 +176,23 @@ fn run(build: u64, view: &Mutex<View>, wants: &Mutex<Wants>) {
 fn set_check(view: &Mutex<View>, c: CheckState) {
     if let Ok(mut v) = view.lock() {
         v.check = Some(c);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dropped_probe_ends_its_thread() {
+        let probe = Probe::start(7, 27777);
+        let view = probe.view.clone();
+        drop(probe);
+        // the thread drops its clone of the view when it ends
+        let start = Instant::now();
+        while Arc::strong_count(&view) > 1 && start.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(Arc::strong_count(&view), 1);
     }
 }

@@ -302,6 +302,14 @@ pub fn uninstall(game: &Path, delete_settings: bool) -> Vec<Step> {
             Err(e) => fail(format!("Could not put Steam's steam_api64.dll back ({e}). In Steam: right-click the game, Properties, Installed Files, Verify integrity.")),
         });
     }
+    // a rule an older release added (setup no longer adds one, so nothing else would remove it)
+    if cfg!(windows) && platform::firewall_rule_present() {
+        steps.push(if platform::remove_firewall_rule() {
+            ok("Removed the firewall rule an older ts3-online added.")
+        } else {
+            fail(format!(r#"The firewall rule "{}" an older release added was left (no administrator rights): remove it in Windows Defender Firewall."#, platform::FIREWALL_RULE))
+        });
+    }
     let me = std::env::current_exe().ok();
     // player progress always stays; settings and the joined game only unless the player chose to delete them
     let is_saves = |n: &str| n == "save backups" || is_copy_dir(n);

@@ -248,7 +248,7 @@ impl App {
         style.spacing.item_spacing = egui::vec2(10.0, 9.0);
         style.spacing.button_padding = egui::vec2(14.0, 7.0);
         style.visuals.selection.bg_fill = Color32::from_rgb(120, 88, 20);
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
+        style.visuals.selection.stroke = egui::Stroke::new(1.0_f32, ACCENT);
         ctx.set_style(style);
         ctx.set_zoom_factor(1.1);
         let game = platform::find_game();

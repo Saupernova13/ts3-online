@@ -867,3 +867,11 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
 - **[obs] A story level resets the wallet counters while it loads (2026-10-22).** A client following
   the host from Toy Box saw gold 1080 -> 0 during the load, reported it as a spend of 1080 (and 95
   imagination points), and the host deducted it: both copies showed -1080 in the level.
+- **[obs] A player back as another character (2026-10-23, in game, T34).** Two copies in Toy Box
+  as Woody; copy 2 closed, started again and picked Jessie. It rejoined under the same player id,
+  so the host's partner for that id was the parked Woody, and before the fix the host showed that
+  Woody driven by Jessie's input. Setting the Woody aside under a spare key and binding a new
+  avatar in the next free slot showed Jessie on the host within 4 s (`player 1 plays jessie but
+  slot 1 holds woody; parking it`, then `bound: slot 2 ... class jessie`), with no crash; the old
+  Woody stands idle until the level ends, as removing an avatar mid-level can crash (above). With
+  no free slot (four players) the player keeps driving the avatar it has.

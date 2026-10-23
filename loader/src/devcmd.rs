@@ -70,9 +70,6 @@ pub fn cmd_path(base: &std::path::Path, copy: u32) -> std::path::PathBuf {
     base.join(format!("cmd.copy{copy}.txt"))
 }
 
-/// The game's broadcast post entry; the hooks group detours it into `hooks::post_broadcast`.
-const POST_BROADCAST: u64 = 0x1_4049_e160;
-
 /// `event NAME [STR]`, `post NAME [STR]`, `event_actor NAME ACTOR_HEX [STR]`, `post5 NAME A_HEX B_HEX ACTOR_HEX`, `log TEXT`.
 pub fn parse(line: &str) -> Result<Cmd, String> {
     let line = line.trim();

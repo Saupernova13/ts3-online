@@ -867,3 +867,17 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
 - **[obs] A story level resets the wallet counters while it loads (2026-10-22).** A client following
   the host from Toy Box saw gold 1080 -> 0 during the load, reported it as a spend of 1080 (and 95
   imagination points), and the host deducted it: both copies showed -1080 in the level.
+- **[obs] Enemy motions (2026-10-23, `queries/205`-`206`, in game, T35).** An actor's animation
+  component `+0x360` holds its motion system at `+0x18`, and `0x140340b40(system, layer)` finds a
+  layer; the by-name player `0x14056bda0(actor, name, start, flags, blend_ms)` stops layers 0 and 1
+  together. A layer keeps the index of the motion it plays at `+0xc0` (`0x14033fa40`) and its
+  animation set at `+0xb0`, whose name table `0x14033f170` looks names up in: buckets at `+0x70`,
+  bucket count at `+0x80`, entries {next, hash, name, index} at `+0`, `+8`, `+0x10`, `+0x18`. The
+  hash is `h * 33 + byte` over the name (signed bytes; `WALK` is `0x30d38f`). The by-name player
+  plays through `0x140350ca0(layer, index, flags, start_s, blend_s, force)` and posts `StartMotion`.
+  Haunted Bakery's Muffins ran `WALK`, `START_CHARGE`, `CHARGE`, `QUICKWINDUP`, `REACT_WOBBLE` and
+  `RECOVER_1`-`3` on layer 0 and `LEAN` on layer 1, and died in `REACT_BLASTAWAY`; the cannons and
+  cow barrels have no layers. Indexes matched on both copies ([inf] the same set loads), but only
+  names are guaranteed. A client that skips the behaviour tree plays none of these; calling
+  `0x140350ca0` with flags 0, start 0 and a 0.2 s blend on each change of the host's motion made a
+  client's Muffins run the host's sequence, the death included.

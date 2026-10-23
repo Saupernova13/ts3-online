@@ -74,10 +74,26 @@ impl Follower {
         true
     }
 
-    /// Per layer, the host's motion when it changed since it last played here.
+    /// Per layer, the host's motion when it differs from what last played here, offered again on
+    /// every resend until the caller `record`s it. A layer the host stopped (0) is recorded at once.
     pub fn changes(&mut self, hash: u32, host: Layers) -> [Option<u32>; LAYERS] {
-        let prev = self.played.insert(hash, host);
-        std::array::from_fn(|l| (host[l] != 0 && prev.is_none_or(|p| p[l] != host[l])).then_some(host[l]))
+        let played = self.played.entry(hash).or_default();
+        let mut out = [None; LAYERS];
+        for (l, &motion) in host.iter().enumerate() {
+            if motion == 0 {
+                played[l] = 0;
+            } else if played[l] != motion {
+                out[l] = Some(motion);
+            }
+        }
+        out
+    }
+
+    /// `motion` is done on `layer`: played, already current, or absent from its animation set for good.
+    pub fn record(&mut self, hash: u32, layer: usize, motion: u32) {
+        if let Some(slot) = self.played.entry(hash).or_default().get_mut(layer) {
+            *slot = motion;
+        }
     }
 }
 
@@ -244,7 +260,11 @@ mod live {
             for (l, motion) in live.follower.changes(hash, host).into_iter().enumerate() {
                 let Some(motion) = motion else { continue };
                 let ly = layer(actor, l);
-                match if ly == 0 { None } else { find(ly, Some(motion), |h, _, i| (h == motion).then_some(i)) } {
+                if ly == 0 {
+                    // no animation layer yet: left unrecorded, so the host's next resend retries
+                    continue;
+                }
+                match find(ly, Some(motion), |h, _, i| (h == motion).then_some(i)) {
                     Some(i) if current(ly) != i => {
                         motion_play(ly, i as u32, FROM_START, 0.0, BLEND_S, 0);
                         live.played += 1;
@@ -252,6 +272,7 @@ mod live {
                     Some(_) => {}
                     None => live.missing += 1,
                 }
+                live.follower.record(hash, l, motion);
             }
         }
         if live.last_log.is_none_or(|t| t.elapsed() >= LOG_EVERY) && live.played + live.missing > 0 {
@@ -329,15 +350,41 @@ mod tests {
         assert_eq!(t.sample(132, &[(A, [5, 0])]), vec![(A, [5, 0])], "a new level starts afresh");
     }
 
+    /// `changes` as a caller that plays everything it is offered.
+    fn play_all(f: &mut Follower, hash: u32, host: Layers) -> [Option<u32>; LAYERS] {
+        let offered = f.changes(hash, host);
+        for (l, motion) in offered.into_iter().enumerate() {
+            if let Some(m) = motion {
+                f.record(hash, l, m);
+            }
+        }
+        offered
+    }
+
     #[test]
     fn a_client_plays_each_change_of_the_hosts_motion_once() {
         let mut f = Follower::default();
-        assert_eq!(f.changes(A, [5, 0]), [Some(5), None], "first sight: play what the host plays; 0 is no motion");
-        assert_eq!(f.changes(A, [5, 0]), [None, None], "a resend changes nothing");
-        assert_eq!(f.changes(A, [6, 3]), [Some(6), Some(3)]);
-        assert_eq!(f.changes(A, [6, 0]), [None, None], "a layer that stops is left to the game");
-        assert_eq!(f.changes(B, [6, 0]), [Some(6), None], "per enemy");
+        assert_eq!(play_all(&mut f, A, [5, 0]), [Some(5), None], "first sight: play what the host plays; 0 is no motion");
+        assert_eq!(play_all(&mut f, A, [5, 0]), [None, None], "a resend changes nothing");
+        assert_eq!(play_all(&mut f, A, [6, 3]), [Some(6), Some(3)]);
+        assert_eq!(play_all(&mut f, A, [6, 0]), [None, None], "a layer that stops is left to the game");
+        assert_eq!(play_all(&mut f, B, [6, 0]), [Some(6), None], "per enemy");
         assert!(f.set_level(2));
-        assert_eq!(f.changes(A, [6, 3]), [Some(6), Some(3)], "a new level forgets what played");
+        assert_eq!(play_all(&mut f, A, [6, 3]), [Some(6), Some(3)], "a new level forgets what played");
+    }
+
+    #[test]
+    fn a_change_not_recorded_as_played_is_offered_again_on_the_resend() {
+        let mut f = Follower::default();
+        assert_eq!(f.changes(A, [5, 3]), [Some(5), Some(3)]);
+        f.record(A, 1, 3); // layer 1 played; layer 0 has no animation layer yet
+        assert_eq!(f.changes(A, [5, 3]), [Some(5), None], "the resend retries what could not play");
+        assert_eq!(f.changes(A, [5, 3]), [Some(5), None], "and keeps retrying");
+        assert_eq!(f.changes(A, [7, 3]), [Some(7), None], "a newer motion replaces the one waiting");
+        f.record(A, 0, 7);
+        assert_eq!(f.changes(A, [7, 3]), [None, None]);
+        assert_eq!(f.changes(A, [0, 3]), [None, None], "a layer that stops is recorded at once");
+        assert_eq!(f.changes(A, [7, 3]), [Some(7), None], "a restart of the same motion plays again");
+        f.record(A, 9, 1); // out of range: ignored
     }
 }

@@ -101,19 +101,14 @@ pub fn take_level_requests() -> Vec<String> {
     LEVEL_REQUESTS.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default()
 }
 
-/// Host: sent to every client.
-pub fn set_local_wallet(values: &[i32]) {
-    with(|s| s.set_local_wallet(values));
+/// Host: sent to every client, with the spends the game applied to these values as (client, seq).
+pub fn set_local_wallet(values: &[i32], confirmed: &[(u8, u32)]) {
+    with(|s| s.set_local_wallet(values, confirmed));
 }
 
-/// Host: confirm each with `confirm_spends` once applied.
+/// Host: confirm each `seq` to `set_local_wallet` once applied.
 pub fn take_spends() -> Vec<(u8, Vec<(u8, i32)>, u32)> {
     SPENDS.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default()
-}
-
-/// Host: the game applied `client`'s spends up to `upto`.
-pub fn confirm_spends(client: u8, upto: u32) {
-    with(|s| s.confirm_spends(client, upto));
 }
 
 /// Client: the latest (values, acked seq), once.
@@ -326,6 +321,17 @@ pub fn set_plays_session() {
     PLAYS_SESSION.store(true, Ordering::Relaxed);
 }
 
+/// Whether a copy plays the save the session shares: a host always does, a client only when the
+/// save-folder redirect gave it the host's save.
+pub fn plays_hosts_save(client: bool, plays_session: bool) -> bool {
+    !client || plays_session
+}
+
+/// Game thread: `plays_hosts_save` for this copy's role and save folder.
+pub fn save_is_shared() -> bool {
+    plays_hosts_save(is_client(), PLAYS_SESSION.load(Ordering::Relaxed))
+}
+
 fn client_session(build: u64, name: &str, host: SocketAddr, key: &NetKey) -> Session {
     let mut s = Session::client(build, name, host);
     s.set_key(key.as_str().as_bytes());
@@ -380,6 +386,13 @@ mod tests {
         assert_eq!(served_save_path(r"C:\A", base, 2, false), host_save_path(r"C:\A", base, 2));
         let s = served_save_path(r"C:\A", base, 2, true);
         assert!(s.starts_with(base.join("session")) && s.ends_with("Saved Game"));
+    }
+
+    #[test]
+    fn a_client_shares_the_hosts_save_only_when_it_plays_it() {
+        assert!(plays_hosts_save(false, false) && plays_hosts_save(false, true), "a host serves what it plays");
+        assert!(plays_hosts_save(true, true));
+        assert!(!plays_hosts_save(true, false), "a client on its own save keeps it");
     }
 
     #[test]

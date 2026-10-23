@@ -41,7 +41,7 @@ mod live {
     static SKIPPED: AtomicU64 = AtomicU64::new(0);
     static LAST_LOG: AtomicU64 = AtomicU64::new(0);
     static LEVEL: AtomicU32 = AtomicU32::new(0);
-    /// actor pointer -> whether it follows the host, decided once per actor
+    /// actor id -> whether it follows the host, decided once per actor
     static DECIDED: Mutex<Option<HashMap<u64, bool>>> = Mutex::new(None);
     const LOG_EVERY_MS: u64 = 10_000;
 
@@ -54,7 +54,7 @@ mod live {
     /// Game thread, per frame in a level: the tick detour must not take the session lock per enemy.
     pub fn note_frame(level: u32) {
         if LEVEL.swap(level, Ordering::Relaxed) != level {
-            // actor pointers are reused by the next level
+            // ids belong to one level's registry
             if let Ok(mut g) = DECIDED.lock() {
                 *g = None;
             }
@@ -88,17 +88,18 @@ mod live {
         follows_host(noted, now_ms(), LOCAL_AI.load(Ordering::Relaxed)) && hostile(actor)
     }
 
-    /// Whether `actor` is an enemy, decided once per actor.
+    /// Whether `actor` is an enemy, decided once per actor id: a later spawn can reuse a dead one's address.
     unsafe fn hostile(actor: u64) -> bool {
         let Ok(mut guard) = DECIDED.try_lock() else { return false };
         let decided = guard.get_or_insert_with(HashMap::new);
-        if let Some(&h) = decided.get(&actor) {
+        let id = actor::id(actor);
+        if let Some(&h) = decided.get(&id) {
             return h;
         }
         let h = crate::health::is_enemy(actor) && follows_by_name(&actor::name(actor).unwrap_or_default());
-        decided.insert(actor, h);
+        decided.insert(id, h);
         if h {
-            log!("ai: {} ({:#x}) follows the host", actor::name(actor).unwrap_or_default(), actor::id(actor));
+            log!("ai: {} ({:#x}) follows the host", actor::name(actor).unwrap_or_default(), id);
         }
         h
     }

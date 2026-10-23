@@ -99,7 +99,9 @@ macro_rules! game_fn {
 
 game_fn!(assign_avatar, 0x1_405f_1030, fn(mgr: u64, idx: u32, avatar: u64) -> ());
 game_fn!(ev5, 0x1_4049_e0b0, fn(events: u64, name: u64, a: u64, b: u64, id: u64) -> ());
-game_fn!(ev4, 0x1_4049_e160, fn(events: u64, name: u64, id: u64, b: u64) -> ());
+/// The game's broadcast post entry `(events, name, id, b)`; the hooks group detours it into `hooks::post_broadcast`.
+pub const POST_BROADCAST: u64 = 0x1_4049_e160;
+game_fn!(ev4, POST_BROADCAST, fn(events: u64, name: u64, id: u64, b: u64) -> ());
 game_fn!(hash, 0x1_404f_dbb0, fn(v: u32) -> u64);
 game_fn!(flagtest, 0x1_404f_ac20, fn(flags: u64, hb: u64, h: u64) -> u8);
 game_fn!(lvltest, 0x1_4050_2bb0, fn(flags: u64, level_info: u64, h: u64) -> u8);

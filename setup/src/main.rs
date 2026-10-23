@@ -528,6 +528,10 @@ impl App {
         heading(ui, "Playing over the internet");
         self.tailscale_line(ui);
         ui.label(RichText::new("Players on the same home network find each other without it.").weak());
+        if !self.steps.is_empty() {
+            ui.add_space(8.0);
+            steps_list(ui, &self.steps);
+        }
     }
 
     fn tailscale_line(&mut self, ui: &mut egui::Ui) {

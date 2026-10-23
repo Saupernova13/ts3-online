@@ -12,6 +12,8 @@ const STEAM: &str = "steam_api64.dll";
 /// A settings file in the game folder itself, from releases before 1.7.
 const OLD_INI: &str = "ts3online.ini";
 const SETUP_FILES: [&str; 2] = ["ts3-online-setup.exe", "ts3-online-setup"];
+/// The setup window's title, which also tells a setup program from any other file.
+pub const SETUP_TITLE: &str = "ts3-online setup";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {

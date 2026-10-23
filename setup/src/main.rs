@@ -147,12 +147,12 @@ fn main() -> eframe::Result<()> {
         std::process::exit(text::run(&user_name()));
     }
     let shot = shot_args();
-    let mut viewport = egui::ViewportBuilder::default().with_icon(std::sync::Arc::new(icon())).with_title("ts3-online setup").with_inner_size([680.0, 600.0]).with_min_inner_size([560.0, 480.0]);
+    let mut viewport = egui::ViewportBuilder::default().with_icon(std::sync::Arc::new(icon())).with_title(actions::SETUP_TITLE).with_inner_size([680.0, 600.0]).with_min_inner_size([560.0, 480.0]);
     if shot.is_some() {
         viewport = viewport.with_position([-4000.0, -4000.0]).with_active(false).with_taskbar(false);
     }
     let options = eframe::NativeOptions { viewport, ..Default::default() };
-    let r = eframe::run_native("ts3-online setup", options, Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx, shot)))));
+    let r = eframe::run_native(actions::SETUP_TITLE, options, Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx, shot)))));
     if let Err(e) = &r {
         // no desktop or no graphics libraries: the same setup as questions in the terminal
         attach_console();

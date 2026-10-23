@@ -106,6 +106,7 @@ pub unsafe fn update() {
     follow_levels(level);
     crate::perf::section("world", || crate::world::update(level));
     crate::perf::section("npc", || crate::npc::update(level));
+    crate::perf::section("motion", || crate::motion::update(level));
     let Ok(mut guard) = PARTNERS.lock() else { return };
     let partners = guard.get_or_insert_with(HashMap::new);
     if switched && !partners.is_empty() {

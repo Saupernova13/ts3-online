@@ -347,6 +347,24 @@ impl Session {
         self.world.take_npcs()
     }
 
+    /// Unreliable: the caller resends every motion once a second.
+    pub fn set_motions(&mut self, level: u32, entries: &[(u32, [u32; 2])]) {
+        if !self.is_host() || level == 0 || level != self.world.level() {
+            return;
+        }
+        for chunk in entries.chunks(proto::MAX_MOTIONS) {
+            let msg = Msg::Motions { level, entries: chunk.to_vec() };
+            for i in 0..self.peers.len() {
+                let addr = self.peers[i].addr;
+                self.send(addr, &msg);
+            }
+        }
+    }
+
+    pub fn take_motions(&mut self) -> Vec<(u32, [u32; 2])> {
+        self.world.take_motions()
+    }
+
     /// Host, unreliable: the caller resends what is still changing.
     pub fn set_healths(&mut self, level: u32, entries: &[(Key, f32)]) {
         if !self.is_host() || level == 0 || level != self.world.level() {
@@ -735,6 +753,7 @@ impl Session {
                 }
             }
             Msg::Npcs { level, entries } => self.world.on_npcs(level, entries),
+            Msg::Motions { level, entries } => self.world.on_motions(level, entries),
             Msg::Healths { level, entries } => self.world.on_healths(level, entries),
             Msg::Progress { level, kind, page, pages, entries } => self.progress.on_page(Page { level, kind, page, pages, entries }),
             Msg::Hurt { level, entries } => self.hurts.on_hurt(level, entries),
@@ -1491,6 +1510,31 @@ mod tests {
         a.handle(addr(H), &proto::encode(&Msg::Npcs { level: 7, entries: vec![mover(4)] }, &[]), MS);
         a.set_world_level(8);
         assert!(a.take_npcs().is_empty());
+    }
+
+    #[test]
+    fn motions_go_to_every_client_and_only_from_the_host() {
+        let (mut host, mut a, mut b) = two_clients();
+        let enemy = |i: u32| (i, [i * 7, 0]);
+        for s in [&mut host, &mut a, &mut b] {
+            s.set_world_level(7);
+        }
+        let many: Vec<_> = (0..(proto::MAX_MOTIONS as u32 + 5)).map(enemy).collect();
+        host.set_motions(7, &many);
+        host.set_motions(8, &[enemy(1)]); // another level: dropped
+        let out = host.drain_outgoing();
+        assert_eq!(out.len(), 4, "two datagrams for each of two clients");
+        for (to, bytes) in out {
+            match (to, &mut a, &mut b) {
+                (t, a, _) if t == addr(1) => a.handle(addr(H), &bytes, MS),
+                (_, _, b) => b.handle(addr(H), &bytes, MS),
+            }
+        }
+        assert_eq!(a.take_motions().len(), many.len());
+        assert_eq!(b.take_motions().len(), many.len());
+        a.drain_outgoing();
+        a.set_motions(7, &[enemy(1)]);
+        assert!(a.drain_outgoing().is_empty(), "a client's enemies follow the host");
     }
 
     #[test]

@@ -151,6 +151,16 @@ pub fn take_npcs() -> Vec<(u32, [f32; 3], f32)> {
     with(|s| s.take_npcs()).unwrap_or_default()
 }
 
+/// Host: current motions of `level`'s enemies, sent unreliably to every client.
+pub fn set_motions(level: u32, entries: &[(u32, [u32; 2])]) {
+    with(|s| s.set_motions(level, entries));
+}
+
+/// Client: (hash, motion per layer) from the host.
+pub fn take_motions() -> Vec<(u32, [u32; 2])> {
+    with(|s| s.take_motions()).unwrap_or_default()
+}
+
 /// Host: health of damaged enemies of `level`, sent unreliably to every client.
 pub fn set_healths(level: u32, entries: &[(crate::health::Key, f32)]) {
     with(|s| s.set_healths(level, entries));

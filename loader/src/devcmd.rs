@@ -33,6 +33,8 @@ pub enum Cmd {
     AutoRide(bool),
     /// log every actor with a health interface
     Healths,
+    /// log every enemy's current motion per layer
+    Motions,
     /// open a front-end screen by name, as a script would
     Screen(String),
     /// down the local player through the game's own damage
@@ -133,6 +135,7 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
             _ => Err("autoride needs on or off".into()),
         },
         "healths" => Ok(Cmd::Healths),
+        "motions" => Ok(Cmd::Motions),
         "devices" => Ok(Cmd::Devices),
         "checkpoints" => Ok(Cmd::Checkpoints),
         "flight" => Ok(Cmd::Flight),
@@ -228,6 +231,7 @@ unsafe fn run(cmd: &Cmd) {
             crate::coop::set_auto_ride(*on);
         }
         Cmd::Healths => crate::health::dev_list(),
+        Cmd::Motions => crate::motion::dev_list(),
         Cmd::Checkpoints => crate::checkpoint::dev_list(),
         Cmd::Flight => crate::flight::dev_list(),
         Cmd::Down(at) => {
@@ -333,6 +337,7 @@ mod tests {
         assert_eq!(parse("event_actor Hit 0x10 STR"), Ok(Cmd::EventActor { name: "Hit".into(), actor: 0x10, arg: Some("STR".into()) }));
         assert_eq!(parse("post5 StartPickup 0 317 0x28c"), Ok(Cmd::Post5 { name: "StartPickup".into(), a: 0, b: 0x317, actor: 0x28c }));
         assert_eq!(parse("healths"), Ok(Cmd::Healths));
+        assert_eq!(parse("motions"), Ok(Cmd::Motions));
         assert_eq!(parse("devices"), Ok(Cmd::Devices));
         assert_eq!(parse("goto 0 1f2"), Ok(Cmd::Goto { slot: 0, actor: 0x1f2 }));
         assert!(parse("goto 0").is_err());

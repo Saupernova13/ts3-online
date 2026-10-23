@@ -74,13 +74,18 @@ mod live {
 
     /// Whether `actor`'s behaviour tree ticks this frame.
     pub unsafe fn runs(actor: u64) -> bool {
-        let at = NOTED_AT.load(Ordering::Relaxed);
-        let noted = (at != 0).then(|| (CLIENT.load(Ordering::Relaxed), at));
-        if !follows_host(noted, now_ms(), LOCAL_AI.load(Ordering::Relaxed)) || !hostile(actor) {
+        if !follows(actor) {
             return true;
         }
         SKIPPED.fetch_add(1, Ordering::Relaxed);
         false
+    }
+
+    /// Whether `actor` is an enemy that follows the host on this copy instead of thinking.
+    pub unsafe fn follows(actor: u64) -> bool {
+        let at = NOTED_AT.load(Ordering::Relaxed);
+        let noted = (at != 0).then(|| (CLIENT.load(Ordering::Relaxed), at));
+        follows_host(noted, now_ms(), LOCAL_AI.load(Ordering::Relaxed)) && hostile(actor)
     }
 
     /// Whether `actor` is an enemy, decided once per actor.

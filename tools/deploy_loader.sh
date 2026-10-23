@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Copy the built dinput8.dll into the game folder ($TS3_DIR or via Steam), or remove it.
+# Copy the built loader into the game folder ($TS3_DIR or via Steam), or remove it.
 #   tools/deploy_loader.sh [--remove]
-# Never overwrites or removes a dinput8.dll that is not ours.
+# Installs it as ts3-online-setup does, as dinput8.dll and as steam_api64.dll: the game loads
+# steam_api64.dll first, and the first copy to load runs the mod. Steam's own steam_api64.dll is
+# kept as ts3-online/steam_api64_o.dll. Never overwrites or removes a dinput8.dll that is not ours.
 set -euo pipefail
 
 GAME="Toy Story 3 Complete Edition"
@@ -40,6 +42,12 @@ is_ours() {
   grep -aq 'DirectInput8Create' "$1" && grep -aq 'ts3online' "$1"
 }
 
+# never half-written: a cut-off copy of ours would pass for Steam's own on the next deploy
+put() {
+  cp -- "$1" "$2.new"
+  mv -f -- "$2.new" "$2"
+}
+
 mode=deploy
 case "${1:-}" in
   "") ;;
@@ -50,15 +58,30 @@ esac
 dir="$(find_game_dir || true)"
 [ -n "$dir" ] && [ -d "$dir" ] || { echo "game folder not found (set TS3_DIR)" >&2; exit 1; }
 dest="$dir/dinput8.dll"
+steam="$dir/steam_api64.dll"
+original="$dir/ts3-online/steam_api64_o.dll"
 
 if [ "$mode" = remove ]; then
-  if [ ! -e "$dest" ]; then
-    echo "nothing to remove: $dest"
-    exit 0
+  if [ -e "$dest" ] && ! is_ours "$dest"; then
+    echo "refusing: $dest is not the ts3online loader" >&2
+    exit 1
   fi
-  is_ours "$dest" || { echo "refusing: $dest is not the ts3online loader" >&2; exit 1; }
-  rm -- "$dest"
-  echo "removed $dest"
+  if [ -e "$steam" ] && is_ours "$steam" && [ ! -f "$original" ]; then
+    echo "refusing: Steam's steam_api64.dll is not kept at $original; verify the game's files in Steam" >&2
+    exit 1
+  fi
+  done=0
+  if [ -e "$dest" ]; then
+    rm -- "$dest"
+    echo "removed $dest"
+    done=1
+  fi
+  if [ -e "$steam" ] && is_ours "$steam"; then
+    put "$original" "$steam"
+    echo "put Steam's steam_api64.dll back: $steam"
+    done=1
+  fi
+  [ "$done" = 1 ] || echo "nothing to remove in $dir"
   exit 0
 fi
 
@@ -67,5 +90,15 @@ if [ -e "$dest" ] && ! is_ours "$dest"; then
   echo "refusing: $dest exists and is not the ts3online loader" >&2
   exit 1
 fi
-cp -- "$src" "$dest"
+if [ -e "$steam" ] && ! is_ours "$steam"; then
+  # Steam's own, perhaps newer than a copy kept before
+  mkdir -p -- "$(dirname "$original")"
+  put "$steam" "$original"
+elif [ ! -e "$steam" ] && [ ! -f "$original" ]; then
+  echo "refusing: the game folder has no steam_api64.dll and none is kept at $original" >&2
+  exit 1
+fi
+put "$src" "$dest"
+put "$src" "$steam"
 echo "$dest"
+echo "$steam"

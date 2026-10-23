@@ -107,7 +107,7 @@ pub fn saves_dir(game: &Path) -> Option<PathBuf> {
 
 pub fn game_running() -> bool {
     if cfg!(windows) {
-        output("tasklist", &["/FI", &format!("IMAGENAME eq {EXE}"), "/NH"]).is_some_and(|o| o.contains(EXE))
+        output("tasklist", &["/FO", "CSV", "/NH", "/FI", &format!("IMAGENAME eq {EXE}")]).is_some_and(|o| tasklist_has_game(&o))
     } else {
         // a process that merely mentions the exe (a shell, pgrep) is not the game
         let Ok(rd) = std::fs::read_dir("/proc") else { return false };
@@ -130,9 +130,26 @@ fn cmdline_is_game(cmdline: &[u8]) -> bool {
     })
 }
 
+/// Whether a line of `tasklist /FO CSV /NH` has the exe as its first field. The plain table cuts
+/// the image name to 25 characters, so the exe's 32 never appear in it.
+fn tasklist_has_game(csv: &str) -> bool {
+    csv.lines().any(|l| l.split(',').next().is_some_and(|f| f.trim().trim_matches('"').eq_ignore_ascii_case(EXE)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tasklist_csv_names_the_running_game() {
+        assert!(tasklist_has_game("\"Toy Story 3 Complete Edition.exe\",\"39548\",\"Console\",\"1\",\"5 440 K\"\r\n"));
+        assert!(tasklist_has_game("\"toy story 3 complete edition.EXE\",\"7\",\"Console\",\"1\",\"5 440 K\"\r\n"));
+        assert!(tasklist_has_game("\"notepad.exe\",\"4\",\"Console\",\"1\",\"9 000 K\"\r\n\"Toy Story 3 Complete Edition.exe\",\"39548\",\"Console\",\"1\",\"5 440 K\"\r\n"));
+        // no match prints a notice, and another program is not the game
+        assert!(!tasklist_has_game("INFO: No tasks are running which match the specified criteria.\r\n"));
+        assert!(!tasklist_has_game("\"notepad.exe\",\"4\",\"Console\",\"1\",\"9 000 K\"\r\n"));
+        assert!(!tasklist_has_game(""));
+    }
 
     #[test]
     fn only_a_path_to_the_exe_counts_as_the_game() {

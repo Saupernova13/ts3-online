@@ -41,7 +41,7 @@ pub enum Event {
     SaveBad,
     /// A client asks the host to follow it to this level.
     LevelRequested { id: u8, name: String },
-    /// New spends as (wallet index, delta), in order; pass `upto` to `confirm_spends` once applied.
+    /// New spends as (wallet index, delta), in order; pass `upto` to `set_local_wallet` once applied.
     Spend { id: u8, deltas: Vec<(u8, i32)>, upto: u32 },
 }
 
@@ -264,11 +264,17 @@ impl Session {
         }
     }
 
-    pub fn set_local_wallet(&mut self, values: &[i32]) {
-        if self.wallet != values {
+    /// Host: the wallet values, and the spends the game applied to them as (client, up to seq). One
+    /// call, so an ack never goes out with values that lack its spends.
+    pub fn set_local_wallet(&mut self, values: &[i32], confirmed: &[(u8, u32)]) {
+        let mut dirty = self.wallet != values;
+        if dirty {
             self.wallet = values.to_vec();
-            self.wallet_dirty = true;
         }
+        for &(id, upto) in confirmed {
+            dirty |= self.spent.confirm(id, upto);
+        }
+        self.wallet_dirty |= dirty;
     }
 
     /// Host: the game applied `id`'s spends up to `upto`; the next wallet send acks them.
@@ -1323,7 +1329,7 @@ mod tests {
         c.set_want_save(false);
         connect(&mut host, &mut c, addr(1), addr(H), 0);
         host.drain_events();
-        host.set_local_wallet(&[500, 7]);
+        host.set_local_wallet(&[500, 7], &[]);
         host.tick(MS);
         deliver(addr(H), &mut host, addr(1), &mut c, MS);
         assert_eq!(c.take_host_wallet(), Some((vec![500, 7], 0)));
@@ -1343,11 +1349,35 @@ mod tests {
         deliver(addr(H), &mut host, addr(1), &mut c, 1500 * MS);
         assert_eq!(c.take_host_wallet(), Some((vec![500, 7], 0)));
         // then the ack goes out at once with the new value
-        host.confirm_spends(1, 1);
-        host.set_local_wallet(&[300, 7]);
+        host.set_local_wallet(&[300, 7], &[(1, 1)]);
         host.tick(1501 * MS);
         deliver(addr(H), &mut host, addr(1), &mut c, 1501 * MS);
         assert_eq!(c.take_host_wallet(), Some((vec![300, 7], 1)));
+    }
+
+    #[test]
+    fn a_spends_ack_goes_out_only_with_the_wallet_that_includes_it() {
+        let (mut host, mut a, mut b) = two_clients();
+        host.set_local_wallet(&[500, 7], &[]);
+        host.tick(MS);
+        deliver(addr(H), &mut host, addr(1), &mut a, MS);
+        deliver(addr(H), &mut host, addr(2), &mut b, MS);
+        assert_eq!(a.take_host_wallet(), Some((vec![500, 7], 0)));
+        a.send_spends(&[(1, 0, -200)]);
+        deliver(addr(1), &mut a, addr(H), &mut host, 2 * MS);
+        assert!(host.drain_events().contains(&Event::Spend { id: 1, deltas: vec![(0, -200)], upto: 1 }));
+        // the game applied the spend: the values and the confirmation are published in one call
+        host.set_local_wallet(&[300, 7], &[(1, 1)]);
+        host.tick(3 * MS);
+        let sent: Vec<(SocketAddr, Msg)> = msgs(&mut host).into_iter().filter(|(_, m)| matches!(m, Msg::Wallet { .. })).collect();
+        assert_eq!(sent.len(), 2, "one wallet per client");
+        assert!(sent.contains(&(addr(1), Msg::Wallet { values: vec![300, 7], acked: 1 })), "the spender gets its ack with the spent value");
+        assert!(sent.contains(&(addr(2), Msg::Wallet { values: vec![300, 7], acked: 0 })), "a bystander sees the value");
+        // a confirmation alone, with the values unchanged, still goes out at once
+        host.set_local_wallet(&[300, 7], &[(1, 2)]);
+        host.tick(4 * MS);
+        let sent = msgs(&mut host);
+        assert!(sent.contains(&(addr(1), Msg::Wallet { values: vec![300, 7], acked: 2 })));
     }
 
     #[test]
@@ -1357,7 +1387,7 @@ mod tests {
         connect(&mut host, &mut c, addr(1), addr(H), 0);
         host.tick(0);
         assert!(msgs(&mut host).iter().all(|(_, m)| !matches!(m, Msg::Wallet { .. })));
-        host.set_local_wallet(&[1, 2]);
+        host.set_local_wallet(&[1, 2], &[]);
         host.tick(MS);
         assert!(msgs(&mut host).iter().any(|(_, m)| matches!(m, Msg::Wallet { .. })));
         host.tick(500 * MS);

@@ -263,6 +263,8 @@ mod live {
         reports: HashMap<Id, (u8, u64)>,
         /// client: what it reported at the last poll
         last_report: Vec<(Id, u8)>,
+        /// the own-save notice was logged for this level
+        told_own_save: bool,
         forced: u32,
         reported: u32,
         unknown: u32,
@@ -431,6 +433,13 @@ mod live {
             net::send_progress_report(level, &report.iter().map(|((k, h), s)| (*k, *h, *s)).collect::<Vec<_>>());
         }
         live.last_report = report;
+        if !net::save_is_shared() {
+            if !live.told_own_save {
+                live.told_own_save = true;
+                log!("progress: the host's missions, unlocks and lots are not applied, this copy plays its own save");
+            }
+            return;
+        }
         for &(id, _, ptr) in table {
             if !live.mirror.complete(id.0) || live.reporter.pending(id) {
                 continue;

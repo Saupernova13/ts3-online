@@ -146,6 +146,8 @@ mod live {
         idx: [i32; WALLETS.len()],
         client: ClientWallet,
         last_send: Option<Instant>,
+        /// the own-save notice was logged for this level
+        told_own_save: bool,
     }
 
     static LIVE: Mutex<Option<Live>> = Mutex::new(None);
@@ -166,16 +168,18 @@ mod live {
             return;
         }
         let Ok(mut guard) = LIVE.lock() else { return };
-        let live = guard.get_or_insert_with(|| Live { level: 0, idx: [-1; WALLETS.len()], client: ClientWallet::new(), last_send: None });
+        let live = guard.get_or_insert_with(|| Live { level: 0, idx: [-1; WALLETS.len()], client: ClientWallet::new(), last_send: None, told_own_save: false });
         if live.level != level {
             live.level = level;
             live.idx = resolve(stats);
             live.client.reset_applied();
+            live.told_own_save = false;
             log!("wallet: stat indexes {:?}", live.idx);
         }
         let read = |idx: &[i32]| -> Vec<i32> { idx.iter().map(|&i| if i < 0 { 0 } else { rd_i32(stat_entry(stats, i) + STAT_VALUE) }).collect() };
         if !net::is_client() {
             // apply before publishing, so an ack never goes out with a value missing its spends
+            let mut confirmed = Vec::new();
             for (client, deltas, upto) in net::take_spends() {
                 for (idx, delta) in deltas {
                     let i = live.idx.get(idx as usize).copied().unwrap_or(-1);
@@ -184,9 +188,16 @@ mod live {
                         log!("wallet: player {client} spent {delta} {}", WALLETS[idx as usize]);
                     }
                 }
-                net::confirm_spends(client, upto);
+                confirmed.push((client, upto));
             }
-            net::set_local_wallet(&read(&live.idx));
+            net::set_local_wallet(&read(&live.idx), &confirmed);
+            return;
+        }
+        if !net::save_is_shared() {
+            if !live.told_own_save {
+                live.told_own_save = true;
+                log!("wallet: not shared, this copy plays its own save; gold and imagination stay as saved here");
+            }
             return;
         }
         if loading {

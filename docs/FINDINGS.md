@@ -568,7 +568,17 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `gui_storymode_boardgame` on the story game board, `westerntown` in Toy Box and `wt_stuntpark` in the
   stunt park; a fresh board launch can pass through `st_train`. The name changes the moment
   `SwitchLevel` is posted, before the old level is torn down. Follow treats `gui_*` and `frontend`
-  as menus.
+  as menus, except that a client on `gui_storymode_boardgame` follows the host into a level (#70).
+- **[obs] The story board ignores `SwitchLevel` (2026-10-26, `queries/207`-`208`, in game).** A
+  `SwitchLevel` posted on the board changes nothing. The board's own launches (the avatar select
+  `0x1401278d0` state 7, the Toy Box door `0x14012e800`) check bit 4 of `[0x140ac66a0]+0x1a8` and
+  then, instead of `SwitchLevel`, make the level the next one and post `SetupLaunch` (no argument):
+  `0x1405b53a0(levels, "filename", name, -1)` gives the level's index on the level list (the object
+  `0x1405bb6a0` returns, whose first bytes are the current level's name), `0x1405f09b0(levels,
+  index)` makes it the next level (0 when out of range). Doing the same from the loader on a
+  client on the board loaded `st_andysroom` at once (the level name changed 33 ms later); the
+  avatar select is skipped and the partner binds as usual. [unk] what bit 4 means beyond "launch
+  through `SetupLaunch`".
 - **[obs] Level load completion and intro movies (2026-10-20, `queries/130`-`131`, in game).** The
   level update `0x1405dd410` posts `LevelLoadComplete` (broadcast, no arguments) when streaming is
   done, then, when the level's `postLoadMovie` property is set (flag `+0x2a9`, set by
@@ -886,6 +896,25 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   slot 1 holds woody; parking it`, then `bound: slot 2 ... class jessie`), with no crash; the old
   Woody stands idle until the level ends, as removing an avatar mid-level can crash (above). With
   no free slot (four players) the player keeps driving the avatar it has.
+- **[obs] The character switch (2026-10-26, `queries/209`, in game, #65).** `LB` (control `0x20`)
+  in the avatar input handler `0x14004ee90` calls `0x14027d4e0(mapper)`, then the swap
+  `0x1400c7620(controller)` (`controller+8` is the avatar): it tells the avatar's `0x140b2a468`
+  interface that it is left (`vt+0x90`), takes the next avatar from `0x1401db630` and gives it to the
+  same player with `assign_avatar` (which posts `PlayerSwappedAvatars` with the old avatar index and
+  the new id), then requests `SwapAvatar` on the new avatar's state machine unless `vt+0x18("ANY")`
+  holds. `0x1401db630` walks avatar indices 0-3 (`mgr+0x10`, registry entries) from the current
+  one and takes the first whose `vt+0x140` (`0x1401e2240`) passes: no player owns it (`+0x484` is
+  -1) and `+0x478` is 0. Spawned avatars get higher indices (`0xb` seen), so the swap never takes
+  one. A stand-in fed its owner's `LB` swapped on its own copy, where the free avatars differ, and
+  the mod then set it aside and spawned again on every switch (seven avatars for one partner in the
+  2026-10-23 playtest). The mod now follows an owner's class change with the swap's own steps onto
+  a free level avatar of that class, or onto an avatar it spawned earlier and switched away from;
+  only with neither does it set aside and spawn. Ten switches of a partner in Andy's House (host
+  Woody): Jessie, Buzz and the one spare Woody in turn, no new avatar; on the client copy the host's
+  stand-in followed four switches of the host the same way. The replayed `LB` itself never reached
+  the stand-in's handler: the owner's swap changes its class in the same frame, so the stand-in is
+  already in `SwapAvatar` when the press lands. The `LB` block is still hooked (`swap_pressed`) so a
+  press without a class change cannot swap a stand-in [inf: not seen].
 - **[obs] Enemy motions (2026-10-23, `queries/205`-`206`, in game, T35).** An actor's animation
   component `+0x360` holds its motion system at `+0x18`, and `0x140340b40(system, layer)` finds a
   layer; the by-name player `0x14056bda0(actor, name, start, flags, blend_ms)` stops layers 0 and 1

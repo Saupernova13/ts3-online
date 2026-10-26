@@ -84,7 +84,9 @@ options: `ts3-online-setup --apply --role join --join 100.64.0.7 --name Alice`, 
 2. Friends start the game; with **Join a friend** it joins by itself, downloads the host's save and
    plays from it. Pick a different character and enter Toy Box.
 3. Each player now sees the others as co-op partners. When the host changes level, the others
-   follow a few seconds later; when someone goes through a level door, the host follows.
+   follow a few seconds later; when someone goes through a level door, the host follows. In story
+   mode, friends waiting on the game board follow the host into the chapter it picks, and the
+   host's level waits for them to load.
 
 A host takes up to 4 players.
 

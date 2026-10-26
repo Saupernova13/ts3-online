@@ -12,14 +12,14 @@ pub const TIMEOUT_MS: u64 = 120_000;
 pub enum Peer {
     /// in `level`, loaded
     Ready,
-    /// loading, or in another play level it will leave for this one (level follow)
+    /// loading, on the story board, or in another play level it will leave for this one (level follow)
     Coming,
     /// in a menu: it does not follow, so nobody waits for it
     Away,
 }
 
 pub fn classify(level: u32, st: &State) -> Peer {
-    if st.flags & flags::LOADING != 0 {
+    if st.flags & (flags::LOADING | flags::ON_BOARD) != 0 {
         return Peer::Coming;
     }
     match st.level {
@@ -224,6 +224,13 @@ mod tests {
         assert_eq!(classify(7, &st(7, flags::LOADING)), Peer::Coming);
         assert_eq!(classify(7, &st(9, 0)), Peer::Coming);
         assert_eq!(classify(7, &st(0, 0)), Peer::Away);
+    }
+
+    #[test]
+    fn a_peer_on_the_story_board_is_on_its_way() {
+        assert_eq!(classify(7, &st(0, flags::ON_BOARD)), Peer::Coming);
+        assert_eq!(classify(7, &st(0, 0)), Peer::Away, "a menu other than the board, or an older release");
+        assert_eq!(classify(0, &st(0, flags::ON_BOARD)), Peer::Coming, "no hold arms outside a level anyway");
     }
 
     #[test]

@@ -60,7 +60,7 @@ GROUPS = {
         "Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which "
         "hardcodes player 1 or only handles players 0/1.",
         "FINDINGS 5a-5f",
-        "verified in game (teardown and the controls fix 2026-10-17) except level_player_setup (T8)",
+        "verified in game (teardown and the controls fix 2026-10-17, swap_pressed 2026-10-26) except level_player_setup (T8)",
     ),
 }
 

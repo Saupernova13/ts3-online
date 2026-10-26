@@ -1,5 +1,6 @@
 //! Shared wallets (H6a): the host's gold and imagination points are authoritative; clients resend
-//! spends by seq until acked. Pickups are not sent: both worlds see them and the host's value wins.
+//! their spends and pickups by seq until acked, and the host's value wins once it has them.
+use crate::log;
 use std::collections::HashMap;
 
 /// Synced stats, in wire order (`Wallet.values` and `Spend` index into it).
@@ -8,10 +9,13 @@ pub const WALLETS: [&str; 2] = ["Stat_GOLD_COLLECTED", "Stat_IMAGINATION_POINTS_
 /// Larger single spends are dropped (but acked).
 pub const MAX_SPEND: i32 = 1_000_000;
 
-/// (seq, wallet index, negative delta).
+/// Larger single gains are clamped to this; a few gold coins (100 each) in one frame, a bar's worth.
+pub const MAX_GAIN: i32 = 10_000;
+
+/// (seq, wallet index, delta); negative for a spend, positive for a pickup.
 pub type Spend = (u32, u8, i32);
 
-/// Client side: local drops become pending spends until the host acks them.
+/// Client side: local changes become pending spends and gains until the host acks them.
 #[derive(Debug)]
 pub struct ClientWallet {
     /// last known local counter value, per wallet
@@ -31,22 +35,21 @@ impl ClientWallet {
         ClientWallet { applied: Vec::new(), pending: Vec::new(), next_seq: 1 }
     }
 
-    /// Records counter drops as spends. Increases are not sent (the host sees the same pickups) but
-    /// are tracked, so a later drop is measured from the raised counter.
+    /// Records counter changes as spends (drops) and gains (pickups), measured from the last value.
     pub fn observe(&mut self, current: &[i32]) {
         if self.applied.len() < current.len() {
             self.applied.resize(current.len(), None);
         }
         for (i, &cur) in current.iter().enumerate() {
-            if let Some(a) = self.applied[i].filter(|&a| cur < a) {
-                self.pending.push((self.next_seq, i as u8, cur - a));
+            if let Some(a) = self.applied[i].filter(|&a| cur != a) {
+                self.pending.push((self.next_seq, i as u8, cur.saturating_sub(a)));
                 self.next_seq = self.next_seq.wrapping_add(1);
             }
             self.applied[i] = Some(cur);
         }
     }
 
-    /// Values to show: the host's values with still-unacked spends applied on top.
+    /// Values to show: the host's values with still-unacked spends and gains applied on top.
     pub fn on_host(&mut self, values: &[i32], acked: u32) -> Vec<i32> {
         self.pending.retain(|&(seq, _, _)| seq > acked);
         if self.applied.len() < values.len() {
@@ -67,13 +70,13 @@ impl ClientWallet {
         self.pending.clone()
     }
 
-    /// For a level change, which reloads the counters; pending spends stay.
+    /// For a level change, which reloads the counters; pending spends and gains stay.
     pub fn reset_applied(&mut self) {
         self.applied.iter_mut().for_each(|a| *a = None);
     }
 }
 
-/// Host side, per client: the highest spend seq accepted and the highest the game applied.
+/// Host side, per client: the highest spend or gain seq accepted and the highest the game applied.
 #[derive(Debug, Default)]
 pub struct HostWallet {
     last: HashMap<u8, u32>,
@@ -82,8 +85,9 @@ pub struct HostWallet {
 }
 
 impl HostWallet {
-    /// (wallet index, delta) of `client`'s unseen spends, in seq order. Positive deltas, unknown
-    /// indexes and deltas below `-MAX_SPEND` are skipped but acked.
+    /// (wallet index, delta) of `client`'s unseen spends and gains, in seq order. Unknown indexes,
+    /// zero deltas and deltas below `-MAX_SPEND` are skipped but acked; gains above `MAX_GAIN` are
+    /// clamped to it.
     pub fn accept(&mut self, client: u8, spends: &[Spend]) -> Vec<(u8, i32)> {
         let last = self.last.entry(client).or_insert(0);
         let mut fresh: Vec<Spend> = spends.iter().copied().filter(|s| s.0 > *last).collect();
@@ -92,7 +96,13 @@ impl HostWallet {
         let mut out = Vec::new();
         for (seq, idx, delta) in fresh {
             *last = seq;
-            if (idx as usize) < WALLETS.len() && (-MAX_SPEND..0).contains(&delta) {
+            if (idx as usize) >= WALLETS.len() {
+                continue;
+            }
+            if delta > MAX_GAIN {
+                log!("wallet: player {client} gained {delta} {} in one step, crediting {MAX_GAIN}", WALLETS[idx as usize]);
+                out.push((idx, MAX_GAIN));
+            } else if delta > 0 || (-MAX_SPEND..0).contains(&delta) {
                 out.push((idx, delta));
             }
         }
@@ -185,7 +195,7 @@ mod live {
                     let i = live.idx.get(idx as usize).copied().unwrap_or(-1);
                     if i >= 0 {
                         stat_add(stats, i, delta);
-                        log!("wallet: player {client} spent {delta} {}", WALLETS[idx as usize]);
+                        log!("wallet: player {client} {} {delta} {}", if delta < 0 { "spent" } else { "gained" }, WALLETS[idx as usize]);
                     }
                 }
                 confirmed.push((client, upto));
@@ -234,12 +244,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_spend_after_a_local_pickup_is_measured_from_the_raised_counter() {
+    fn a_spend_after_a_local_pickup_is_measured_from_the_raised_counter_and_follows_its_gain() {
         let mut c = ClientWallet::new();
         c.observe(&[1000, 0]);
         c.observe(&[1100, 0]); // picked up a coin
         c.observe(&[600, 0]); // bought something for 500
-        assert_eq!(c.pending(), vec![(1, 0, -500)]);
+        assert_eq!(c.pending(), vec![(1, 0, 100), (2, 0, -500)]);
     }
 
     #[test]
@@ -297,25 +307,49 @@ mod tests {
     }
 
     #[test]
-    fn increases_are_ignored() {
+    fn a_pickup_is_sent_as_a_gain_and_not_counted_twice() {
         let mut c = ClientWallet::new();
         c.on_host(&[100, 0], 0);
-        c.observe(&[200, 0]);
+        c.observe(&[200, 5]);
+        assert_eq!(c.pending(), vec![(1, 0, 100), (2, 1, 5)]);
+        // the host's broadcast before the ack still lacks the gain: no flicker back down
+        assert_eq!(c.on_host(&[100, 0], 0), vec![200, 5]);
+        c.observe(&[200, 5]);
+        assert_eq!(c.pending().len(), 2);
+        // the host applied it and acked: its value already holds the gain
+        let mut h = HostWallet::default();
+        assert_eq!(h.accept(1, &c.pending()), vec![(0, 100), (1, 5)]);
+        assert_eq!(c.on_host(&[200, 5], 2), vec![200, 5]);
         assert!(c.pending().is_empty());
-        // the host's value (which saw the same pickup) overwrites ours
-        assert_eq!(c.on_host(&[200, 0], 0), vec![200, 0]);
-        // a spend before the first host value still counts
-        let mut c = ClientWallet::new();
-        c.observe(&[50, 0]);
-        c.observe(&[10, 0]);
-        assert_eq!(c.pending(), vec![(1, 0, -40)]);
     }
 
     #[test]
-    fn host_applies_only_spending_in_range() {
+    fn gain_and_spend_mix_in_order_and_ack_in_parts() {
+        let mut c = ClientWallet::new();
+        c.on_host(&[100, 0], 0);
+        c.observe(&[200, 0]); // coin
+        c.observe(&[150, 0]); // spend
+        assert_eq!(c.pending(), vec![(1, 0, 100), (2, 0, -50)]);
+        // only the gain was applied so far
+        assert_eq!(c.on_host(&[200, 0], 1), vec![150, 0]);
+        assert_eq!(c.pending(), vec![(2, 0, -50)]);
+        assert_eq!(c.on_host(&[150, 0], 2), vec![150, 0]);
+    }
+
+    #[test]
+    fn a_gain_before_the_first_host_value_is_measured_from_the_first_reading() {
+        let mut c = ClientWallet::new();
+        c.observe(&[50, 0]);
+        assert!(c.pending().is_empty());
+        c.observe(&[150, 0]);
+        assert_eq!(c.pending(), vec![(1, 0, 100)]);
+    }
+
+    #[test]
+    fn host_applies_gains_and_spends_in_range() {
         let mut h = HostWallet::default();
-        assert_eq!(h.accept(1, &[(1, 0, 100), (2, 7, -5), (3, 1, -5)]), vec![(1, -5)]);
-        assert_eq!(h.acked(1), 3);
+        assert_eq!(h.accept(1, &[(1, 0, 100), (2, 7, -5), (3, 1, -5), (4, 0, 0)]), vec![(0, 100), (1, -5)]);
+        assert_eq!(h.acked(1), 4);
         h.forget(1);
         assert_eq!(h.acked(1), 0);
         assert_eq!(h.accept(1, &[(1, 0, -1)]), vec![(0, -1)]);
@@ -327,6 +361,14 @@ mod tests {
         let spends = [(1, 0, -MAX_SPEND), (2, 0, -MAX_SPEND - 1), (3, 0, i32::MIN), (4, 1, -5)];
         assert_eq!(h.accept(1, &spends), vec![(0, -MAX_SPEND), (1, -5)]);
         assert_eq!(h.acked(1), 4);
+    }
+
+    #[test]
+    fn oversized_gains_are_clamped_and_acked() {
+        let mut h = HostWallet::default();
+        let gains = [(1, 0, MAX_GAIN), (2, 0, MAX_GAIN + 1), (3, 1, i32::MAX)];
+        assert_eq!(h.accept(1, &gains), vec![(0, MAX_GAIN), (0, MAX_GAIN), (1, MAX_GAIN)]);
+        assert_eq!(h.acked(1), 3);
     }
 
     #[test]

@@ -511,15 +511,20 @@ town.
   only with its wallet, enemy verdicts by actor id, enemy motions retried) and the network loops
   (reading past Windows ICMP resets, one Join check, probe threads that stop). The release notes
   say how 1.7.2 and 1.8.0 update (the setup's Update button) and how older releases do.
-- 2026-10-26, a client's pickups reach the host (issue #66): a client's coins and imagination points
-  were counted only on its own copy (stand-ins collect nothing, FINDINGS 10), and the host's
-  `Wallet` overwrote them within a second. `ClientWallet::observe` now sends every change of
-  either counter as a delta by seq, increases (positive) like spends, and `HostWallet::accept`
-  credits positive deltas, clamping one entry to `MAX_GAIN` (10000, a few coins in one frame) with
-  a log line. The same message, ack and resend carry both, so a gain stays on the client's shown
-  value until the host acks it (acked only once applied) and never counts twice; the host's own
-  pickups count as before. The wire is unchanged (protocol 20): an old host drops positive deltas
-  as before. A coin taken on two copies counts twice (PLAYING.md). Ammo (plan step 2) is not
-  done: the counter beside the coins is imagination points (fixed here) or a cannon's ammo, still
-  open. Not tried in game. 320 loader tests pass on Windows (6 new or changed, the pickup,
-  mixed-order and clamp ones fail on the old code).
+- 2026-10-26, a client's pickups reach the host (#66): a client's coins and imagination points
+  were counted only on its own copy, and the host's `Wallet` overwrote them within a second.
+  `ClientWallet::observe` now sends every change of either counter by seq, increases like spends,
+  and `HostWallet::accept` credits gains, one entry clamped to `MAX_GAIN` (10000) with a log line;
+  the same message, ack and resend carry both (protocol 20 unchanged; an old host drops gains as
+  before). In game a stand-in turned out to collect pickups too: when its replayed attack breaks a
+  crate on the host's copy before the world sync does, the crate's coins spawn there, the stand-in
+  takes them, and a client's crate of 20 gold counted 40. A new `pickup` filter remembers each
+  hit's attacker (`MunitionImpactActor`) and drops a wallet pickup spawn (`SpawnGoldPickup` and
+  the other gold and imagination spawns) whose crate a stand-in broke, so its coins appear on its
+  owner's copy only. New dev command `actors <text>` lists actors by name, nearest first. In game,
+  two copies in Toy Box (gold 2340): the client smashed three crates, the host dropped the coin
+  spawns of the two its stand-in broke first and credited the client's gains, +60 on both copies;
+  the host smashed three crates and both showed +50 with no gain from the client. Imagination
+  points and the counter's second meaning (cannon ammo) were not tried: no such pickup came up. A
+  coin taken on two copies by their own players still counts twice (PLAYING.md). 323 loader tests
+  pass on Windows (9 new or changed).

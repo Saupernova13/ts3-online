@@ -52,6 +52,8 @@ pub enum Cmd {
     EnemyAi(bool),
     /// log the Toy Box lots and the building kinds
     Lots,
+    /// log the actors whose actor or reference name contains this text, nearest to slot 0 first
+    Actors(String),
     /// build a building (short name) on a lot (reference name) the way the lot selector does
     Build { lot: String, building: String },
     /// log every input device's kind and which device each player reads
@@ -140,6 +142,7 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
         "screen" if !rest.is_empty() => Ok(Cmd::Screen(rest.to_string())),
         "progress" => Ok(Cmd::Progress),
         "lots" => Ok(Cmd::Lots),
+        "actors" if !rest.is_empty() => Ok(Cmd::Actors(rest.to_ascii_lowercase())),
         "enemyai" => match rest {
             "on" => Ok(Cmd::EnemyAi(true)),
             "off" => Ok(Cmd::EnemyAi(false)),
@@ -170,6 +173,25 @@ pub fn parse(line: &str) -> Result<Cmd, String> {
         "" => Err("empty line".into()),
         v => Err(format!("unknown command {v:?}")),
     }
+}
+
+/// At most this many lines per `actors` command.
+const MAX_ACTORS_LISTED: usize = 30;
+
+unsafe fn list_actors(text: &str) {
+    let me = slot_avatar(global(MGR_PTR), 0);
+    let here = if me == 0 { [0.0; 3] } else { crate::actor::pos(me) };
+    let mut found: Vec<(f32, u64)> = crate::target::actor_ptrs()
+        .into_iter()
+        .filter(|&a| [crate::actor::name(a), crate::actor::refname(a)].iter().flatten().any(|n| n.to_ascii_lowercase().contains(text)))
+        .map(|a| (crate::math::dist(here, crate::actor::pos(a)), a))
+        .collect();
+    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (d, a) in found.iter().take(MAX_ACTORS_LISTED) {
+        let p = crate::actor::pos(*a);
+        log!("dev: actor {:#x} {:?} ref {:?} at {:.1} {:.1} {:.1}, {d:.1} m away", crate::actor::id(*a), crate::actor::name(*a), crate::actor::refname(*a), p[0], p[1], p[2]);
+    }
+    log!("dev: {} actors match {text:?}", found.len());
 }
 
 fn split_arg(s: &str) -> (&str, Option<&str>) {
@@ -257,6 +279,7 @@ unsafe fn run(cmd: &Cmd) {
         }
         Cmd::Progress => crate::progress::dev_list(),
         Cmd::Lots => crate::lots::dev_list(),
+        Cmd::Actors(text) => list_actors(text),
         Cmd::EnemyAi(on) => crate::ai::set_local_ai(*on),
         Cmd::Build { lot, building } => crate::lots::dev_build(lot, building),
         Cmd::SetProgress { name, state } => crate::progress::dev_set(name, *state),
@@ -352,6 +375,8 @@ mod tests {
         assert_eq!(parse("autoride off"), Ok(Cmd::AutoRide(false)));
         assert!(parse("horse x").is_err());
         assert_eq!(parse("lots"), Ok(Cmd::Lots));
+        assert_eq!(parse("actors PICKUP"), Ok(Cmd::Actors("pickup".into())));
+        assert!(parse("actors").is_err());
         assert_eq!(parse("enemyai on"), Ok(Cmd::EnemyAi(true)));
         assert!(parse("enemyai").is_err());
         assert_eq!(parse("build LOT_HatShop  HatShop "), Ok(Cmd::Build { lot: "LOT_HatShop".into(), building: "HatShop".into() }));

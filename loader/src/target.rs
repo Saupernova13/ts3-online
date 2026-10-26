@@ -12,6 +12,9 @@ pub const TARGET_NAMED: u32 = 2;
 /// unnameable (such as a runtime spawn): partners pick up nothing
 pub const TARGET_OTHER: u32 = 3;
 
+/// Keys of avatars set aside: session ids are below 4, so no pick-up target names a key from here up.
+pub const SET_ASIDE: u8 = 0x80;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     None,

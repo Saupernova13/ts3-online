@@ -19,9 +19,9 @@ Relocation: `0x258` bytes at RVA `0x9582b0` -> a `0x400` buffer; fields from `+0
 | quadrants (optional) | 1 | Optional (`enable=quadrants` in `ts3online.ini`): every split request builds 4 quadrants, so each player keeps the same 16:9 quarter for streaming. | FINDINGS 2; PLAN rig design | not tested in game |
 | online (optional) | 3 | Optional (enabled by `net=` in `ts3online.ini`): every split request keeps one full-screen viewport for the local player, whatever the player count, so remote players join as partners without a split screen. | FINDINGS 9 | not tested in game |
 | instances (optional) | 3 | Optional (`enable=instances`): lets a second copy of the game run on the same PC for host/client play. | FINDINGS 9 | not tested in game |
-| hooks | 14 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5f | verified in game (teardown and the controls fix 2026-10-17) except level_player_setup (T8) |
+| hooks | 15 | Jumps or calls into Rust functions in `loader/src/hooks.rs` that replace game code which hardcodes player 1 or only handles players 0/1. | FINDINGS 5a-5f | verified in game (teardown and the controls fix 2026-10-17, swap_pressed 2026-10-26) except level_player_setup (T8) |
 
-Total: 235 patches.
+Total: 236 patches.
 
 ## relocate
 
@@ -288,6 +288,7 @@ Total: 235 patches.
 
 | VA | change | note |
 |---|---|---|
+| `0x14004efca` | call -> `swap_pressed` (prefix `4889f1`), 16 bytes | avatar input handler (0x14004ee90) LB block: mapper call + character swap 0x1400c7620 -> same, minus the swap for a remote player's stand-in (#65); controller in RSI |
 | `0x1400e2490` | entry -> `bind_joining_avatar`, 12 bytes | bind(avatar, level_info, start): Rust mirror with the joining player's index instead of 1 |
 | `0x1400eb6f0` | entry -> `join_request`, 12 bytes | join handler(pad): Rust reimplementation using the first free player index for assign, screen owner and release |
 | `0x1400fe910` | entry -> `join_cancel`, 12 bytes | ScreenJoinIn cancel: release the joining index (not 1), then the shared tail 0x1400e7450 |

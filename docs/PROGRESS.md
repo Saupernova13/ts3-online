@@ -511,6 +511,21 @@ town.
   only with its wallet, enemy verdicts by actor id, enemy motions retried) and the network loops
   (reading past Windows ICMP resets, one Join check, probe threads that stop). The release notes
   say how 1.7.2 and 1.8.0 update (the setup's Update button) and how older releases do.
+- 2026-10-26, character switch (#65): in story levels every switch of a remote player set its
+  stand-in aside and spawned a new avatar on the other copies, so a level filled with Woodys, Buzzes
+  and Jessies and switching got blocked (each stand-in kept a player index, so the local swap
+  skipped it). The owner's `LB` reached the stand-in and the other copy's game swapped it too, onto
+  whatever was free there. Now a stand-in follows its owner's class change with the game's own
+  swap steps (`assign_avatar`, the leaving notice, `SwapAvatar`) onto a free level avatar of the new
+  class, or onto an avatar the mod spawned and the partner switched away from (kept per level);
+  only with neither does the old set-aside and spawn run (Toy Box, a player back as another
+  character, #51). A new call hook on the input handler's `LB` block (`swap_pressed`,
+  `0x14004efca`) skips the swap for a stand-in during a session. In game, two copies in Andy's
+  House, both Woody: ten switches of the client gave the host Jessie, Buzz and the spare Woody in
+  turn, with no new bind; four switches of the host were followed on the client the same way, and
+  the host's own swaps still work through the hook. The hook's refusal never fired, as the stand-in
+  is already swapping when the replayed press lands (FINDINGS 10). New test: the switch target. 318
+  loader tests pass on Windows (1 new); 236 patches.
 - 2026-10-26, story-board follow (#70): in story mode a client on the game board never followed the
   host into a level (the board counts as a menu, level hash 0), and a client whose level ended
   landed on the board and stayed there while the host went on; the host's level start did not wait

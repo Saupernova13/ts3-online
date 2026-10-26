@@ -23,8 +23,14 @@ pub const PROPS: u64 = 0x2e0;
 pub const AVATAR_FLAGS: u64 = 0x408;
 /// Avatar: nonzero while controls are enabled.
 pub const CONTROLS_ON: u64 = 0x428;
+/// Avatar: index in the avatar registry (`game::level_avatar`).
+pub const AVATAR_INDEX: u64 = 0x480;
 /// Avatar: owning player index, -1 for none.
 pub const PLAYER_INDEX: u64 = 0x484;
+/// Avatar: `vt+0x140` (`0x1401e2240`), true when a swap may take it: no player owns it and `+0x478` is 0.
+const SWAPPABLE_VT: u64 = 0x140;
+/// Avatar: `vt+0x90` of its `TYPE_SWAP_LEAVE` interface, the swap's notice that a player leaves it.
+const SWAP_LEAVE_VT: u64 = 0x90;
 /// Animation component; its motion system at `ANIM_MOTIONS`, whose layers `motion_layer` finds
 /// (`0x14056bda0`, queries/205).
 pub const ANIM: u64 = 0x360;
@@ -119,6 +125,34 @@ pub unsafe fn request_state(actor: u64, name: &[u8]) -> bool {
     let f: extern "system" fn(u64, *const c_char, u64) = std::mem::transmute(rd_u64(rd_u64(sm) + REQUEST_STATE_VT) as usize);
     f(sm, name.as_ptr() as *const c_char, 0);
     true
+}
+
+pub unsafe fn player_index(avatar: u64) -> i32 {
+    rd_u32(avatar + PLAYER_INDEX) as i32
+}
+
+pub unsafe fn avatar_index(avatar: u64) -> u32 {
+    rd_u32(avatar + AVATAR_INDEX)
+}
+
+pub unsafe fn swappable(avatar: u64) -> bool {
+    let f: extern "system" fn(u64) -> u8 = std::mem::transmute(rd_u64(rd_u64(avatar) + SWAPPABLE_VT) as usize);
+    f(avatar) != 0
+}
+
+/// The swap's steps around `assign_avatar` (`0x1400c7620`): the leaving notice on `old`, then
+/// `SwapAvatar` requested on `new` unless its state machine is busy (`vt+0x18("ANY")`).
+pub unsafe fn notify_swap_leave(old: u64) {
+    let leave = interface(old, TYPE_SWAP_LEAVE);
+    if leave != 0 {
+        vt_call(leave, SWAP_LEAVE_VT);
+    }
+}
+
+pub unsafe fn request_swap_in(new: u64) {
+    if !state_tests(new, b"ANY\0").1 {
+        request_state(new, b"SwapAvatar\0");
+    }
 }
 
 /// Rotation only: node refresh, matrix from the yaw quaternion, setter, node `vt+0x8`.

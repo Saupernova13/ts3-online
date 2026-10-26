@@ -88,6 +88,16 @@ pub unsafe fn slot_avatar(mgr: u64, i: u64) -> u64 {
     rd_u64(mgr + SLOT_AVATAR_BASE + i * SLOT_STRIDE)
 }
 
+/// Avatar registry entries by avatar index (`actor+0x480`); the swap walks indices 0-3, a level's own
+/// avatars, and spawned avatars get higher ones (FINDINGS 10).
+pub const AVATAR_ENTRIES: u64 = 0x10;
+pub const SWAP_POOL: u64 = 4;
+
+/// The level avatar at avatar index `i`, or 0.
+pub unsafe fn level_avatar(mgr: u64, i: u64) -> u64 {
+    registry_get(rd_u64(mgr + AVATAR_ENTRIES + i * 8))
+}
+
 macro_rules! game_fn {
     ($name:ident, $va:expr, fn($($a:ident: $t:ty),*) -> $r:ty) => {
         pub unsafe fn $name($($a: $t),*) -> $r {
@@ -117,6 +127,13 @@ game_fn!(level_by_prop, 0x1_405b_53a0, fn(levels: u64, prop: u64, value: u64, fr
 game_fn!(set_next_level, 0x1_405f_09b0, fn(levels: u64, index: i32) -> u8);
 game_fn!(get_screen, 0x1_404b_26c0, fn(ui: u64, name: u64) -> u64);
 game_fn!(push_screen, 0x1_405d_6590, fn(screen: u64, idx: u32) -> u8);
+// The character swap on `LB` (control 0x20): the next free avatar of the pool goes to the same player.
+game_fn!(avatar_swap, 0x1_400c_7620, fn(controller: u64) -> ());
+// What the avatar input handler `0x14004ee90` calls on its control mapper before the swap.
+game_fn!(mapper_release, 0x1_4027_d4e0, fn(mapper: u64) -> ());
+// The handler's way to its control mapper: the actor's `ControlMapper` component, then its mapper.
+game_fn!(component_named, 0x1_4055_a920, fn(actor: u64, name: u64) -> u64);
+game_fn!(component_mapper, 0x1_4044_7b00, fn(component: u64) -> u64);
 game_fn!(registry_get, 0x1_4055_8400, fn(entry: u64) -> u64);
 game_fn!(motion_layer, 0x1_4034_0b40, fn(motions: u64, layer: u32) -> u64);
 // plays motion `index` of a layer: `flags` 0 starts it at `start` seconds, blending in over `blend`.
@@ -191,6 +208,8 @@ const TYPE_COUNTER: u64 = 0x1_40b2_a448;
 pub const TYPE_STATE_MACHINE: u64 = 0x1_40b2_a44c;
 /// Type slot of the health interface (`HealthTracker+0x18`).
 pub const TYPE_HEALTH: u64 = 0x1_40b2_a464;
+/// Type slot of the interface the swap tells, through `vt+0x90`, that its avatar is being left.
+pub const TYPE_SWAP_LEAVE: u64 = 0x1_40b2_a468;
 
 /// The id stored at `slot`, numbered now if it has none yet, as the game does inline.
 pub unsafe fn type_id(slot: u64) -> u32 {

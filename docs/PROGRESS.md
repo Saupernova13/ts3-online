@@ -511,6 +511,15 @@ town.
   only with its wallet, enemy verdicts by actor id, enemy motions retried) and the network loops
   (reading past Windows ICMP resets, one Join check, probe threads that stop). The release notes
   say how 1.7.2 and 1.8.0 update (the setup's Update button) and how older releases do.
+- 2026-10-26, partner pick-up targets (#67, part): a client named the host's set-aside avatars
+  (keys 128 and 129, after #65's duplicates) as pick-up targets, which no other copy resolves, so
+  the stand-in there lifted nothing. Set-aside keys are now left out of the players a target can
+  name (`target::session_players`), and `Target::encode`/`identify` refuse them too. In game, two
+  copies in Toy Box: about 15 lifts, drops (B) and throws (RT) of the partner, by either player and
+  with the partner moving, showed the lift on both copies with no `carry state` disagreement
+  logged, so the issue's second part (correcting a lasting disagreement) was not reproduced and is
+  not done here. 318 loader tests pass on Windows (1 new).
+
 - 2026-10-26, a client's pickups reach the host (#66): a client's coins and imagination points
   were counted only on its own copy, and the host's `Wallet` overwrote them within a second.
   `ClientWallet::observe` now sends every change of either counter by seq, increases like spends,

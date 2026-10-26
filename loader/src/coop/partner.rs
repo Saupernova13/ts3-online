@@ -3,7 +3,7 @@ use super::ride::Ride;
 use super::steer::velocity_xz;
 use crate::log;
 use crate::net::proto::State;
-use crate::target::Target;
+use crate::target::{Target, SET_ASIDE};
 use std::collections::HashMap;
 
 /// Owner updates older than this (us) count as standing still.
@@ -167,9 +167,6 @@ pub(super) fn switch_target(bound: usize, owner: u8, pool: &[(u64, Option<usize>
     }
     pool.iter().find(|(_, c, free)| *free && *c == Some(owner)).map(|(a, _, _)| *a)
 }
-
-/// Keys of avatars set aside: session ids are below 4.
-const SET_ASIDE: u8 = 0x80;
 
 /// Bound avatars whose owner is gone, as (key, class).
 fn orphans(partners: &HashMap<u8, Partner>, remote: &[(u8, State)]) -> Vec<(u8, usize)> {

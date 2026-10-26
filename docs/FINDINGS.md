@@ -568,7 +568,8 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `gui_storymode_boardgame` on the story game board, `westerntown` in Toy Box and `wt_stuntpark` in the
   stunt park; a fresh board launch can pass through `st_train`. The name changes the moment
   `SwitchLevel` is posted, before the old level is torn down. Follow treats `gui_*` and `frontend`
-  as menus.
+  as menus, except that a client on `gui_storymode_boardgame` follows the host into a level (#70,
+  [unk] in game: a `SwitchLevel` posted from the board).
 - **[obs] Level load completion and intro movies (2026-10-20, `queries/130`-`131`, in game).** The
   level update `0x1405dd410` posts `LevelLoadComplete` (broadcast, no arguments) when streaming is
   done, then, when the level's `postLoadMovie` property is set (flag `+0x2a9`, set by

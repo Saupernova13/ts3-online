@@ -511,3 +511,16 @@ town.
   only with its wallet, enemy verdicts by actor id, enemy motions retried) and the network loops
   (reading past Windows ICMP resets, one Join check, probe threads that stop). The release notes
   say how 1.7.2 and 1.8.0 update (the setup's Update button) and how older releases do.
+- 2026-10-26, story-board follow (#70): in story mode a client on the game board never followed the
+  host into a level (the board counts as a menu, level hash 0), and a client whose level ended
+  landed on the board and stayed there while the host went on; the host's level start did not wait
+  for a client on the board either, which then loaded up to ~70 s later. The follow decision now
+  takes where the copy is: a play level (as before, with the 15 s cooldown), the story board (follows
+  after 1.5 s, no cooldown, but not back into the level it just left while the host is still in it,
+  forgotten once the host's level changes), or another menu (never). A new state flag `ON_BOARD`
+  (`1 << 17`, no protocol bump) makes the host's hold count a peer on the board as coming; 1.8.x
+  clients send no such flag and are not waited for, as before. New tests: the hold's `classify`,
+  the board's name, follow targets per row, the cooldown only for level-to-level follows, and the
+  just-left tracker. 322 loader tests pass on Windows (5 new), 267 on Linux (1 new; not run here).
+  Not tried in game: a `SwitchLevel` posted from the board (if it fails the client stays on the
+  board and the host waits the 120 s timeout), and the in-game two-player check from the issue.

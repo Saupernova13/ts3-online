@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 const FOLLOW_AFTER: Duration = Duration::from_millis(1500);
 /// No level follow this soon after a level switch of this copy.
 const FOLLOW_COOLDOWN: Duration = Duration::from_secs(15);
+/// A launch from the board is retried no sooner than this.
+const BOARD_RETRY: Duration = Duration::from_secs(5);
 
 static MISMATCH_SINCE: Mutex<Option<Instant>> = Mutex::new(None);
 /// Last level switch here, by the game itself or by following.
@@ -66,11 +68,11 @@ fn follow_target(here: Here, host_hash: u32) -> Option<u32> {
 }
 
 /// The host level a client should switch to; the host's name must match the hash in its state.
-/// From the board a client never asks the host to follow, so only a level-to-level follow cools down.
+/// Between two levels a follow cools down; from the board only a failed launch is retried, after a gap.
 fn decide_follow(here: Here, host_hash: u32, host_name: Option<&str>, mismatch_for: Duration, since_switch: Duration) -> Option<String> {
     follow_target(here, host_hash)?;
     let name = host_name.filter(|n| level_hash(n) == host_hash)?;
-    let cooled = !matches!(here, Here::Play(_)) || since_switch >= FOLLOW_COOLDOWN;
+    let cooled = since_switch >= if matches!(here, Here::Play(_)) { FOLLOW_COOLDOWN } else { BOARD_RETRY };
     (mismatch_for >= FOLLOW_AFTER && cooled).then(|| name.to_string())
 }
 
@@ -129,6 +131,19 @@ unsafe fn post_switch_level(name: &str) {
     hooks::call_broadcast(global(EVENTS), b"SwitchLevel\0".as_ptr() as u64, leak_cstr(name), 0);
 }
 
+/// The board ignores `SwitchLevel`; it launches as its own chapter select does (`0x14012e800`):
+/// the level by `filename` becomes the next one, then `SetupLaunch`. False when the level is unknown.
+unsafe fn post_board_launch(name: &str) -> bool {
+    let levels = level_name();
+    let Ok(want) = std::ffi::CString::new(name) else { return false };
+    let index = if levels == 0 { -1 } else { level_by_prop(levels, b"filename\0".as_ptr() as u64, want.as_ptr() as u64, -1) };
+    if index < 0 || set_next_level(levels, index) == 0 {
+        return false;
+    }
+    hooks::call_broadcast(global(EVENTS), b"SetupLaunch\0".as_ptr() as u64, 0, 0);
+    true
+}
+
 /// Client: how long the follow target has been there.
 fn mismatch_duration(target: Option<u32>, now: Instant) -> Duration {
     let Ok(mut since) = MISMATCH_SINCE.lock() else { return Duration::ZERO };
@@ -170,14 +185,16 @@ pub(super) unsafe fn follow_levels(local: u32, on_board: bool) {
         let mismatch = mismatch_duration(follow_target(here, host), now);
         let since_switch = LAST_SWITCH.lock().ok().and_then(|t| *t).map_or(Duration::MAX, |t| now.saturating_duration_since(t));
         if let Some(name) = decide_follow(here, host, host_name.as_deref(), mismatch, since_switch) {
-            if matches!(here, Here::Board { .. }) {
-                log!("coop: following the host from the story board to level {name}");
-            } else {
-                log!("coop: following the host to level {name}");
-            }
             note_switch();
             mismatch_duration(None, now);
-            post_switch_level(&name);
+            if !matches!(here, Here::Board { .. }) {
+                log!("coop: following the host to level {name}");
+                post_switch_level(&name);
+            } else if post_board_launch(&name) {
+                log!("coop: following the host from the story board to level {name}");
+            } else {
+                log!("coop: the story board has no level {name}; staying on the board (retry in {} s)", BOARD_RETRY.as_secs());
+            }
         }
         return;
     }
@@ -268,12 +285,13 @@ mod tests {
     #[test]
     fn only_a_follow_between_two_levels_waits_for_the_cooldown() {
         let daycare = level_hash("ST_Daycare");
-        let (long, soon) = (Duration::from_secs(2), Duration::from_secs(1));
+        let (long, soon) = (Duration::from_secs(2), Duration::from_secs(6));
         let board = Here::Board { left: None };
         assert_eq!(decide_follow(board, daycare, Some("ST_Daycare"), long, soon).as_deref(), Some("ST_Daycare"));
         assert_eq!(decide_follow(Here::Play(level_hash("ST_ToyBox")), daycare, Some("ST_Daycare"), long, soon), None);
         assert_eq!(decide_follow(board, daycare, Some("ST_Daycare"), Duration::from_millis(1499), soon), None);
         assert_eq!(decide_follow(board, daycare, Some("ST_Attic"), long, soon), None, "the name must match the hash");
+        assert_eq!(decide_follow(board, daycare, Some("ST_Daycare"), long, Duration::from_secs(4)), None, "a failed launch is not re-posted every frame");
     }
 
     #[test]

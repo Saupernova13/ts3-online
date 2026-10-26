@@ -36,6 +36,7 @@ pub mod pad;
 pub mod patch;
 pub mod pe;
 pub mod perf;
+pub mod pickup;
 pub mod progress;
 pub mod projectile;
 pub mod respawn;

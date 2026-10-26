@@ -2478,6 +2478,17 @@
    "note": "input dispatch (0x140280b90): three per-frame calls -> same calls, then the net proxy update"
   },
   {
+   "id": "hook_swap_14004efca",
+   "group": "hooks",
+   "rva": "0x4efca",
+   "orig": "488bcfe80ee52200488bcee846860700",
+   "kind": "hook",
+   "mode": "call",
+   "hook": "swap_pressed",
+   "note": "avatar input handler (0x14004ee90) LB block: mapper call + character swap 0x1400c7620 -> same, minus the swap for a remote player's stand-in (#65); controller in RSI",
+   "prefix": "4889f1"
+  },
+  {
    "id": "hook_post_broadcast_14049e160",
    "group": "hooks",
    "rva": "0x49e160",

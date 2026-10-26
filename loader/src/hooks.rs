@@ -12,7 +12,7 @@ struct Hook {
     original: Option<&'static AtomicU64>,
 }
 
-fn table() -> [Hook; 13] {
+fn table() -> [Hook; 14] {
     let f = |p: *const ()| p as u64;
     [
         Hook { name: "bind_joining_avatar", func: f(bind_joining_avatar as *const ()), original: None },
@@ -23,6 +23,7 @@ fn table() -> [Hook; 13] {
         Hook { name: "reset_player_slots", func: f(reset_player_slots as *const ()), original: None },
         Hook { name: "level_player_setup", func: f(level_player_setup as *const ()), original: None },
         Hook { name: "frame_tick", func: f(frame_tick as *const ()), original: None },
+        Hook { name: "swap_pressed", func: f(swap_pressed as *const ()), original: None },
         Hook { name: "post_broadcast", func: f(post_broadcast as *const ()), original: Some(&ORIG_POST_BROADCAST) },
         Hook { name: "post_actor", func: f(post_actor as *const ()), original: Some(&ORIG_POST_ACTOR) },
         Hook { name: "post_broadcast2", func: f(post_broadcast2 as *const ()), original: Some(&ORIG_POST_BROADCAST2) },
@@ -97,6 +98,19 @@ pub unsafe extern "system" fn frame_tick() {
     crate::devcmd::tick();
 }
 
+/// Replaces the avatar input handler's `LB` block (`0x14004efca`): the mapper call as before, then the
+/// swap unless the avatar is a remote player's stand-in (#65). `controller+8` is the avatar.
+pub unsafe extern "system" fn swap_pressed(controller: u64) {
+    let avatar = rd_u64(controller + 8);
+    let mapper = component_mapper(component_named(avatar, b"ControlMapper\0".as_ptr() as u64));
+    if mapper != 0 {
+        mapper_release(mapper);
+    }
+    if !crate::coop::refuses_swap(avatar) {
+        avatar_swap(controller);
+    }
+}
+
 // ---- detours that call the original (FINDINGS 10) ----
 
 static ORIG_POST_BROADCAST: AtomicU64 = AtomicU64::new(0);
@@ -142,6 +156,9 @@ pub unsafe extern "system" fn post_broadcast(events: u64, name: u64, a: u64, b: 
     if is_event(name, b"LevelLoadComplete\0") {
         crate::coop::on_level_loaded();
     }
+    if !crate::pickup::live::allows(name, b) {
+        return 0;
+    }
     match original("post_broadcast") {
         Some(o) => std::mem::transmute::<u64, Post4>(o)(events, name, a, b),
         None => 0,
@@ -153,6 +170,7 @@ pub unsafe extern "system" fn post_actor(events: u64, name: u64, a: u64, b: u64,
     crate::evlog::record(name, a, b, Some(actor));
     crate::world::on_post(name, a, b, actor);
     crate::projectile::on_post(name, b, actor);
+    crate::pickup::live::on_post(name, b, actor);
     match original("post_actor") {
         Some(o) => std::mem::transmute::<u64, Post5>(o)(events, name, a, b, actor),
         None => 0,
@@ -162,6 +180,9 @@ pub unsafe extern "system" fn post_actor(events: u64, name: u64, a: u64, b: u64,
 /// Detour of the second event post broadcast (0x14049e250).
 pub unsafe extern "system" fn post_broadcast2(events: u64, name: u64, a: u64, b: u64) -> u8 {
     crate::evlog::record(name, a, b, None);
+    if !crate::pickup::live::allows(name, b) {
+        return 0;
+    }
     match original("post_broadcast2") {
         Some(o) => std::mem::transmute::<u64, Post4>(o)(events, name, a, b),
         None => 0,

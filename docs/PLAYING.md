@@ -84,7 +84,9 @@ options: `ts3-online-setup --apply --role join --join 100.64.0.7 --name Alice`, 
 2. Friends start the game; with **Join a friend** it joins by itself, downloads the host's save and
    plays from it. Pick a different character and enter Toy Box.
 3. Each player now sees the others as co-op partners. When the host changes level, the others
-   follow a few seconds later; when someone goes through a level door, the host follows.
+   follow a few seconds later; when someone goes through a level door, the host follows. In story
+   mode, friends waiting on the game board follow the host into the chapter it picks, and the
+   host's level waits for them to load.
 
 A host takes up to 4 players.
 
@@ -154,6 +156,7 @@ password is never written to the log. It authenticates the traffic but does not 
 - Each PC runs its own world, kept in step by the host: players, what they carry and throw,
   townspeople, broken crates, gold, missions, unlocks and shop purchases, and the buildings on Toy
   Box's lots (a client that joins later builds the host's on arrival).
+- A coin or point taken on two copies counts twice: a client's pickups are sent to the host as gains.
 - Enemies are run by the host. On the client they move where the host's enemies are and do not
   play their attacks; their hits arrive from the host, so a hit can land a moment late.
 - One player's pause pauses everyone, with the menu on that player's screen only. When every

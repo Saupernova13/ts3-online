@@ -520,3 +520,54 @@ town.
   logged, so the issue's second part (correcting a lasting disagreement) was not reproduced and is
   not done here. 318 loader tests pass on Windows (1 new).
 
+- 2026-10-26, a client's pickups reach the host (#66): a client's coins and imagination points
+  were counted only on its own copy, and the host's `Wallet` overwrote them within a second.
+  `ClientWallet::observe` now sends every change of either counter by seq, increases like spends,
+  and `HostWallet::accept` credits gains, one entry clamped to `MAX_GAIN` (10000) with a log line;
+  the same message, ack and resend carry both (protocol 20 unchanged; an old host drops gains as
+  before). In game a stand-in turned out to collect pickups too: when its replayed attack breaks a
+  crate on the host's copy before the world sync does, the crate's coins spawn there, the stand-in
+  takes them, and a client's crate of 20 gold counted 40. A new `pickup` filter remembers each
+  hit's attacker (`MunitionImpactActor`) and drops a wallet pickup spawn (`SpawnGoldPickup` and
+  the other gold and imagination spawns) whose crate a stand-in broke, so its coins appear on its
+  owner's copy only. New dev command `actors <text>` lists actors by name, nearest first. In game,
+  two copies in Toy Box (gold 2340): the client smashed three crates, the host dropped the coin
+  spawns of the two its stand-in broke first and credited the client's gains, +60 on both copies;
+  the host smashed three crates and both showed +50 with no gain from the client. Imagination
+  points and the counter's second meaning (cannon ammo) were not tried: no such pickup came up. A
+  coin taken on two copies by their own players still counts twice (PLAYING.md). 323 loader tests
+  pass on Windows (9 new or changed).
+- 2026-10-26, character switch (#65): in story levels every switch of a remote player set its
+  stand-in aside and spawned a new avatar on the other copies, so a level filled with Woodys, Buzzes
+  and Jessies and switching got blocked (each stand-in kept a player index, so the local swap
+  skipped it). The owner's `LB` reached the stand-in and the other copy's game swapped it too, onto
+  whatever was free there. Now a stand-in follows its owner's class change with the game's own
+  swap steps (`assign_avatar`, the leaving notice, `SwapAvatar`) onto a free level avatar of the new
+  class, or onto an avatar the mod spawned and the partner switched away from (kept per level);
+  only with neither does the old set-aside and spawn run (Toy Box, a player back as another
+  character, #51). A new call hook on the input handler's `LB` block (`swap_pressed`,
+  `0x14004efca`) skips the swap for a stand-in during a session. In game, two copies in Andy's
+  House, both Woody: ten switches of the client gave the host Jessie, Buzz and the spare Woody in
+  turn, with no new bind; four switches of the host were followed on the client the same way, and
+  the host's own swaps still work through the hook. The hook's refusal never fired, as the stand-in
+  is already swapping when the replayed press lands (FINDINGS 10). New test: the switch target. 318
+  loader tests pass on Windows (1 new); 236 patches.
+- 2026-10-26, story-board follow (#70): in story mode a client on the game board never followed the
+  host into a level (the board counts as a menu, level hash 0), and a client whose level ended
+  landed on the board and stayed there while the host went on; the host's level start did not wait
+  for a client on the board either, which then loaded up to ~70 s later. The follow decision now
+  takes where the copy is: a play level (as before, with the 15 s cooldown), the story board (follows
+  after 1.5 s, but not back into the level it just left while the host is still in it, forgotten
+  once the host's level changes), or another menu (never). The board ignores `SwitchLevel` (seen in
+  game: the client re-posted it every 1.5 s and stayed), so from the board the client launches as
+  the board's own chapter select does, the level made the next one and `SetupLaunch` posted
+  (FINDINGS 10); a launch that fails is logged and retried after 5 s. A new state flag `ON_BOARD`
+  (`1 << 17`, no protocol bump) makes the host's hold count a peer on the board as coming; 1.8.x
+  clients send no such flag and are not waited for, as before. In game, two copies on one PC from
+  the story board: the host entered Andy's House and the client followed at once, the host's level
+  held 11.8 s until it had loaded; the client exited to the board while the host stayed and waited
+  there ("waiting for its next level"); the host exited too and entered Andy's House again, and the
+  client followed the replay (hold 14.2 s). Not tried in game: a client in the front end while the
+  host plays (unit test only, unchanged from before). New tests: the hold's `classify`, the board's
+  name, follow targets per row, the cooldown and the board retry, and the just-left tracker. 322
+  loader tests pass on Windows (5 new); the Linux run was not done here.

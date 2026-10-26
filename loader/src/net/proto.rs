@@ -105,6 +105,8 @@ pub mod flags {
     pub const WAITING: u32 = 1 << 15;
     /// the owner flies Buzz's rail; `State.rail` follows on the wire
     pub const FLYING: u32 = 1 << 16;
+    /// the owner is on the story board, from where it follows the host into a level
+    pub const ON_BOARD: u32 = 1 << 17;
 }
 
 /// One player's state, sent by its owner.

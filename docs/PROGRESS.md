@@ -511,3 +511,22 @@ town.
   only with its wallet, enemy verdicts by actor id, enemy motions retried) and the network loops
   (reading past Windows ICMP resets, one Join check, probe threads that stop). The release notes
   say how 1.7.2 and 1.8.0 update (the setup's Update button) and how older releases do.
+- 2026-10-26, story-board follow (#70): in story mode a client on the game board never followed the
+  host into a level (the board counts as a menu, level hash 0), and a client whose level ended
+  landed on the board and stayed there while the host went on; the host's level start did not wait
+  for a client on the board either, which then loaded up to ~70 s later. The follow decision now
+  takes where the copy is: a play level (as before, with the 15 s cooldown), the story board (follows
+  after 1.5 s, but not back into the level it just left while the host is still in it, forgotten
+  once the host's level changes), or another menu (never). The board ignores `SwitchLevel` (seen in
+  game: the client re-posted it every 1.5 s and stayed), so from the board the client launches as
+  the board's own chapter select does, the level made the next one and `SetupLaunch` posted
+  (FINDINGS 10); a launch that fails is logged and retried after 5 s. A new state flag `ON_BOARD`
+  (`1 << 17`, no protocol bump) makes the host's hold count a peer on the board as coming; 1.8.x
+  clients send no such flag and are not waited for, as before. In game, two copies on one PC from
+  the story board: the host entered Andy's House and the client followed at once, the host's level
+  held 11.8 s until it had loaded; the client exited to the board while the host stayed and waited
+  there ("waiting for its next level"); the host exited too and entered Andy's House again, and the
+  client followed the replay (hold 14.2 s). Not tried in game: a client in the front end while the
+  host plays (unit test only, unchanged from before). New tests: the hold's `classify`, the board's
+  name, follow targets per row, the cooldown and the board retry, and the just-left tracker. 322
+  loader tests pass on Windows (5 new); the Linux run was not done here.

@@ -103,7 +103,8 @@ struct Frame<'a> {
 /// Per frame, on the game thread.
 pub unsafe fn update() {
     let (name, level, switched) = current_level();
-    follow_levels(level);
+    let on_board = level::is_story_board(&local_level_name());
+    follow_levels(level, on_board);
     crate::perf::section("world", || crate::world::update(level));
     crate::perf::section("npc", || crate::npc::update(level));
     crate::perf::section("motion", || crate::motion::update(level));
@@ -120,7 +121,7 @@ pub unsafe fn update() {
     let loading = level != 0 && !track_load(switched, p0, &name);
     crate::wallet::update(level, loading);
     crate::hold::update(if loading || p0 == 0 { "" } else { &name });
-    let own_flags = if loading { flags::LOADING } else { 0 } | if crate::hold::paused() { flags::PAUSED } else { 0 } | respawn_flags(mgr);
+    let own_flags = if loading { flags::LOADING } else { 0 } | if crate::hold::paused() { flags::PAUSED } else { 0 } | respawn_flags(mgr) | if on_board { flags::ON_BOARD } else { 0 };
 
     let held = pad::take_local_pad();
     if p0 == 0 {

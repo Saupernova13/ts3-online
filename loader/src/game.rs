@@ -111,6 +111,10 @@ game_fn!(join_cancel_tail, 0x1_400e_7450, fn(screen: u64) -> u64);
 game_fn!(can_join, 0x1_405c_e0e0, fn(mgr: u64) -> u8);
 game_fn!(post_event, 0x1_4047_8530, fn(name: u64, arg: u64) -> ());
 game_fn!(level_name, 0x1_405b_b6a0, fn() -> u64);
+// On the level list `level_name` returns: the first level index from `from` whose `prop` equals `value`, else -1.
+game_fn!(level_by_prop, 0x1_405b_53a0, fn(levels: u64, prop: u64, value: u64, from: i32) -> i32);
+// Makes a level index the next one to launch; 0 when out of range.
+game_fn!(set_next_level, 0x1_405f_09b0, fn(levels: u64, index: i32) -> u8);
 game_fn!(get_screen, 0x1_404b_26c0, fn(ui: u64, name: u64) -> u64);
 game_fn!(push_screen, 0x1_405d_6590, fn(screen: u64, idx: u32) -> u8);
 game_fn!(registry_get, 0x1_4055_8400, fn(entry: u64) -> u64);

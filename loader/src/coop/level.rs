@@ -129,30 +129,54 @@ unsafe fn post_switch_level(name: &str) {
     hooks::call_broadcast(global(EVENTS), b"SwitchLevel\0".as_ptr() as u64, leak_cstr(name), 0);
 }
 
-/// Client: how long the local and host levels have differed.
-fn mismatch_duration(local: u32, host: u32, now: Instant) -> Duration {
+/// Client: how long the follow target has been there.
+fn mismatch_duration(target: Option<u32>, now: Instant) -> Duration {
     let Ok(mut since) = MISMATCH_SINCE.lock() else { return Duration::ZERO };
-    if local == 0 || host == 0 || local == host {
+    if target.is_none() {
         *since = None;
         return Duration::ZERO;
     }
     now.saturating_duration_since(*since.get_or_insert(now))
 }
 
-/// Per frame; `local` is the play level hash (0 outside one).
-pub(super) unsafe fn follow_levels(local: u32) {
+static LEFT: Mutex<LeftBehind> = Mutex::new(LeftBehind { left: None, last_play: 0 });
+
+/// Where this client is; logs once each time it starts waiting on the board for the host's next level.
+fn locate(local: u32, on_board: bool, host: u32) -> Here {
+    let (was, left) = match LEFT.lock() {
+        Ok(mut b) => (b.left, b.update(local, on_board, host)),
+        Err(_) => (None, None),
+    };
+    if local != 0 {
+        return Here::Play(local);
+    }
+    if !on_board {
+        return Here::Menu;
+    }
+    if let (Some(l), None) = (left, was) {
+        log!("coop: on the story board after level {l:#010x}, which the host still plays; waiting for its next level");
+    }
+    Here::Board { left }
+}
+
+/// Per frame; `local` is the play level hash (0 outside one), `on_board` that this copy is on the story board.
+pub(super) unsafe fn follow_levels(local: u32, on_board: bool) {
     let now = Instant::now();
     if net::is_client() {
         let host_name = net::host_level_name();
         let host_state = net::remote_states().into_iter().find(|(id, _)| *id == 0).map(|(_, s)| s);
         let host = host_level(host_state.as_ref(), host_name.as_deref());
-        let mismatch = mismatch_duration(local, host, now);
+        let here = locate(local, on_board, host);
+        let mismatch = mismatch_duration(follow_target(here, host), now);
         let since_switch = LAST_SWITCH.lock().ok().and_then(|t| *t).map_or(Duration::MAX, |t| now.saturating_duration_since(t));
-        let here = if local != 0 { Here::Play(local) } else { Here::Menu };
-        if let Some(name) = decide_follow(here, host,host_name.as_deref(), mismatch, since_switch) {
-            log!("coop: following the host to level {name}");
+        if let Some(name) = decide_follow(here, host, host_name.as_deref(), mismatch, since_switch) {
+            if matches!(here, Here::Board { .. }) {
+                log!("coop: following the host from the story board to level {name}");
+            } else {
+                log!("coop: following the host to level {name}");
+            }
             note_switch();
-            mismatch_duration(0, 0, now);
+            mismatch_duration(None, now);
             post_switch_level(&name);
         }
         return;

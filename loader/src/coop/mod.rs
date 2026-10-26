@@ -254,7 +254,7 @@ unsafe fn publish_local(mgr: u64, p0: u64, level: u32, own_class: Option<usize>,
         net::set_local_rail(crate::flight::read(ship));
     }
     let state_flags = carry | extra_flags | if controls { 0 } else { flags::CONTROLS_OFF } | if riding { flags::RIDING } else { 0 } | if ship != 0 { flags::FLYING } else { 0 };
-    let mut players: Vec<(u64, u8)> = partners.iter().filter(|(_, p)| p.avatar != 0).map(|(id, p)| (p.actor_id, *id)).collect();
+    let mut players = target::session_players(partners.iter().filter(|(_, p)| p.avatar != 0).map(|(id, p)| (*id, p.actor_id)));
     if let Some(me) = net::local_id() {
         players.push((actor::id(p0), me));
     }

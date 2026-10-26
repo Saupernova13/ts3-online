@@ -28,7 +28,8 @@ impl Target {
     pub fn encode(self, flags: u32) -> (u32, u32) {
         let (kind, value) = match self {
             Target::None => (TARGET_NONE, 0),
-            Target::Player(id) => (TARGET_PLAYER, id as u32),
+            Target::Player(id) if id < SET_ASIDE => (TARGET_PLAYER, id as u32),
+            Target::Player(_) => (TARGET_NONE, 0),
             Target::Named(h) => (TARGET_NAMED, h),
             Target::Other => (TARGET_OTHER, 0),
         };
@@ -76,13 +77,20 @@ impl RefIndex {
     }
 }
 
+/// (avatar actor id, player id) of the avatars bound to session ids; set-aside keys name no player.
+pub fn session_players(bound: impl IntoIterator<Item = (u8, u64)>) -> Vec<(u64, u8)> {
+    bound.into_iter().filter(|(id, _)| *id < SET_ASIDE).map(|(id, actor)| (actor, id)).collect()
+}
+
 /// The owner's candidate as a `Target`; `players` maps avatar actor ids here to player ids.
 pub fn identify(candidate: u64, players: &[(u64, u8)], refname: Option<&str>, unique: bool) -> Target {
     if candidate == 0 {
         return Target::None;
     }
     if let Some((_, id)) = players.iter().find(|(a, _)| *a == candidate) {
-        return Target::Player(*id);
+        if *id < SET_ASIDE {
+            return Target::Player(*id);
+        }
     }
     match refname {
         Some(n) if !n.is_empty() && unique => Target::Named(level_hash(n)),
@@ -236,6 +244,23 @@ mod tests {
         let (f, _) = Target::Other.encode(0);
         let (f, v) = Target::Player(1).encode(f);
         assert_eq!(Target::decode(f, v), Target::Player(1));
+    }
+
+    #[test]
+    fn player_targets_never_carry_a_set_aside_key() {
+        let bound = [(0u8, 0x28c_u64), (1, 0x317), (SET_ASIDE, 0x400), (SET_ASIDE + 1, 0x401), (u8::MAX, 0x402)];
+        let players = session_players(bound);
+        assert_eq!(players, [(0x28c, 0), (0x317, 1)]);
+        // a stray list still cannot put a set-aside key on the wire
+        let stray = [(0x28c, 0u8), (0x400, SET_ASIDE), (0x401, SET_ASIDE + 1)];
+        for actor in [0x28c, 0x400, 0x401, 0x500] {
+            let t = identify(actor, &stray, None, false);
+            let (flags, value) = t.encode(0);
+            assert!(!matches!(Target::decode(flags, value), Target::Player(id) if id >= SET_ASIDE), "{t:?}");
+        }
+        assert_eq!(Target::Player(SET_ASIDE).encode(0), Target::None.encode(0));
+        assert_eq!(Target::Player(SET_ASIDE - 1).encode(0).1, (SET_ASIDE - 1) as u32);
+        assert_eq!(identify(0x400, &stray, None, false), Target::Other);
     }
 
     #[test]

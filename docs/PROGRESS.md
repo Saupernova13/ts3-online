@@ -511,3 +511,15 @@ town.
   only with its wallet, enemy verdicts by actor id, enemy motions retried) and the network loops
   (reading past Windows ICMP resets, one Join check, probe threads that stop). The release notes
   say how 1.7.2 and 1.8.0 update (the setup's Update button) and how older releases do.
+- 2026-10-26, a client's pickups reach the host (issue #66): a client's coins and imagination points
+  were counted only on its own copy (stand-ins collect nothing, FINDINGS 10), and the host's
+  `Wallet` overwrote them within a second. `ClientWallet::observe` now sends every change of
+  either counter as a delta by seq, increases (positive) like spends, and `HostWallet::accept`
+  credits positive deltas, clamping one entry to `MAX_GAIN` (10000, a few coins in one frame) with
+  a log line. The same message, ack and resend carry both, so a gain stays on the client's shown
+  value until the host acks it (acked only once applied) and never counts twice; the host's own
+  pickups count as before. The wire is unchanged (protocol 20): an old host drops positive deltas
+  as before. A coin taken on two copies counts twice (PLAYING.md). Ammo (plan step 2) is not
+  done: the counter beside the coins is imagination points (fixed here) or a cannon's ammo, still
+  open. Not tried in game. 320 loader tests pass on Windows (6 new or changed, the pickup,
+  mixed-order and clamp ones fail on the old code).

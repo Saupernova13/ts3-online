@@ -568,8 +568,17 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   `gui_storymode_boardgame` on the story game board, `westerntown` in Toy Box and `wt_stuntpark` in the
   stunt park; a fresh board launch can pass through `st_train`. The name changes the moment
   `SwitchLevel` is posted, before the old level is torn down. Follow treats `gui_*` and `frontend`
-  as menus, except that a client on `gui_storymode_boardgame` follows the host into a level (#70,
-  [unk] in game: a `SwitchLevel` posted from the board).
+  as menus, except that a client on `gui_storymode_boardgame` follows the host into a level (#70).
+- **[obs] The story board ignores `SwitchLevel` (2026-10-26, `queries/207`-`208`, in game).** A
+  `SwitchLevel` posted on the board changes nothing. The board's own launches (the avatar select
+  `0x1401278d0` state 7, the Toy Box door `0x14012e800`) check bit 4 of `[0x140ac66a0]+0x1a8` and
+  then, instead of `SwitchLevel`, make the level the next one and post `SetupLaunch` (no argument):
+  `0x1405b53a0(levels, "filename", name, -1)` gives the level's index on the level list (the object
+  `0x1405bb6a0` returns, whose first bytes are the current level's name), `0x1405f09b0(levels,
+  index)` makes it the next level (0 when out of range). Doing the same from the loader on a
+  client on the board loaded `st_andysroom` at once (the level name changed 33 ms later); the
+  avatar select is skipped and the partner binds as usual. [unk] what bit 4 means beyond "launch
+  through `SetupLaunch`".
 - **[obs] Level load completion and intro movies (2026-10-20, `queries/130`-`131`, in game).** The
   level update `0x1405dd410` posts `LevelLoadComplete` (broadcast, no arguments) when streaming is
   done, then, when the level's `postLoadMovie` property is set (flag `+0x2a9`, set by

@@ -571,3 +571,8 @@ town.
   host plays (unit test only, unchanged from before). New tests: the hold's `classify`, the board's
   name, follow targets per row, the cooldown and the board retry, and the just-left tracker. 322
   loader tests pass on Windows (5 new); the Linux run was not done here.
+- 2026-10-26, release 1.8.2 (protocol 20, plays with 1.8.x): the playtest fixes, each checked in
+  game with two copies on one PC: following the host from the story board (#70), character
+  switches without new avatars (#65), a client's pickups counted once (#66) and pick-up targets
+  that only name session players (#67, part). #67's carry correction, #68 and #69 stay open.
+

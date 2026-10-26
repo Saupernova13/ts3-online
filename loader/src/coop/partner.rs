@@ -55,6 +55,8 @@ pub(super) struct Partner {
     pub(super) ride: Ride,
     /// owner's speed along Buzz's flight rail
     pub(super) flight: crate::flight::Follow,
+    /// a switch to this class was refused by the slot: not retried until the owner switches again
+    pub(super) switch_failed: Option<u8>,
 }
 
 #[derive(Default)]
@@ -110,6 +112,7 @@ impl Partner {
             target_lost: 0,
             last_target_log_us: 0,
             flight: Default::default(),
+            switch_failed: None,
         }
     }
 
@@ -152,6 +155,17 @@ pub(super) fn free_slot(taken: &[usize]) -> Option<usize> {
 
 pub(super) fn class_name(c: usize) -> String {
     CLASSES.get(c).map_or(String::new(), |c| String::from_utf8_lossy(&c.class[..c.class.len() - 1]).into_owned())
+}
+
+/// Where a partner goes when its owner switches characters in a level, as the owner's own game does
+/// on `LB`: a free avatar of the owner's new class from `pool` (avatar, class, swappable), so no
+/// avatar is spawned. None when the class is unchanged or unknown, or no avatar of it is free.
+pub(super) fn switch_target(bound: usize, owner: u8, pool: &[(u64, Option<usize>, bool)]) -> Option<u64> {
+    let owner = owner as usize;
+    if owner >= CLASSES.len() || owner == bound {
+        return None;
+    }
+    pool.iter().find(|(_, c, free)| *free && *c == Some(owner)).map(|(a, _, _)| *a)
 }
 
 /// Keys of avatars set aside: session ids are below 4.
@@ -217,6 +231,18 @@ mod tests {
 
     fn near(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
+    }
+
+    #[test]
+    fn a_switch_takes_a_free_avatar_of_the_new_class() {
+        let (buzz, woody, jessie) = (0, 1, 2);
+        let pool = [(0xa, Some(woody), false), (0xb, Some(buzz), true), (0xc, Some(jessie), true), (0xd, Some(jessie), true)];
+        assert_eq!(switch_target(woody, jessie as u8, &pool), Some(0xc), "the first free one, level avatars before spares");
+        assert_eq!(switch_target(jessie, buzz as u8, &pool), Some(0xb));
+        assert_eq!(switch_target(buzz, woody as u8, &pool), None, "the only woody is played: set aside and spawn as before");
+        assert_eq!(switch_target(woody, woody as u8, &pool), None, "no switch");
+        assert_eq!(switch_target(woody, crate::net::proto::CLASS_UNKNOWN, &pool), None);
+        assert_eq!(switch_target(woody, jessie as u8, &[(0xe, None, true)]), None, "an avatar of no known class");
     }
 
     #[test]

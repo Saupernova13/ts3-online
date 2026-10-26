@@ -12,7 +12,7 @@ struct Hook {
     original: Option<&'static AtomicU64>,
 }
 
-fn table() -> [Hook; 13] {
+fn table() -> [Hook; 14] {
     let f = |p: *const ()| p as u64;
     [
         Hook { name: "bind_joining_avatar", func: f(bind_joining_avatar as *const ()), original: None },
@@ -23,6 +23,7 @@ fn table() -> [Hook; 13] {
         Hook { name: "reset_player_slots", func: f(reset_player_slots as *const ()), original: None },
         Hook { name: "level_player_setup", func: f(level_player_setup as *const ()), original: None },
         Hook { name: "frame_tick", func: f(frame_tick as *const ()), original: None },
+        Hook { name: "swap_pressed", func: f(swap_pressed as *const ()), original: None },
         Hook { name: "post_broadcast", func: f(post_broadcast as *const ()), original: Some(&ORIG_POST_BROADCAST) },
         Hook { name: "post_actor", func: f(post_actor as *const ()), original: Some(&ORIG_POST_ACTOR) },
         Hook { name: "post_broadcast2", func: f(post_broadcast2 as *const ()), original: Some(&ORIG_POST_BROADCAST2) },
@@ -95,6 +96,19 @@ pub unsafe extern "system" fn frame_tick() {
     }
     crate::evlog::tick();
     crate::devcmd::tick();
+}
+
+/// Replaces the avatar input handler's `LB` block (`0x14004efca`): the mapper call as before, then the
+/// swap unless the avatar is a remote player's stand-in (#65). `controller+8` is the avatar.
+pub unsafe extern "system" fn swap_pressed(controller: u64) {
+    let avatar = rd_u64(controller + 8);
+    let mapper = component_mapper(component_named(avatar, b"ControlMapper\0".as_ptr() as u64));
+    if mapper != 0 {
+        mapper_release(mapper);
+    }
+    if !crate::coop::refuses_swap(avatar) {
+        avatar_swap(controller);
+    }
 }
 
 // ---- detours that call the original (FINDINGS 10) ----

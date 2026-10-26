@@ -17,7 +17,7 @@ use crate::projectile;
 use crate::target::{self, Target};
 use crate::{log, net, pad};
 use level::{follow_levels, level_loaded, local_level_name};
-use partner::{adopt_parked, choose_class, class_name, free_slot, set_aside_mismatched, Class, Partner, CLASSES, SLOTS};
+use partner::{adopt_parked, choose_class, class_name, free_slot, set_aside_mismatched, switch_target, Class, Partner, CLASSES, SLOTS};
 use steer::{is_idle, mirror_input, pressed_bits, rising, rotate_pad, steer_pad, stick_delta};
 use std::collections::HashMap;
 use std::ffi::c_char;
@@ -39,6 +39,8 @@ const FACE_TOLERANCE: f32 = 10.0 * std::f32::consts::PI / 180.0;
 const PREPARE_DIST: f32 = 2.0;
 
 static PARTNERS: Mutex<Option<HashMap<u8, Partner>>> = Mutex::new(None);
+/// Avatars the mod spawned that a partner switched away from; a later switch takes them back.
+static SPARES: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 static START: OnceLock<Instant> = OnceLock::new();
 /// Last raw local `ActorCarriedBy` / `ActorCarried`, to log changes.
 static LAST_CARRY: Mutex<(u64, u64)> = Mutex::new((0, 0));
@@ -113,6 +115,7 @@ pub unsafe fn update() {
         // the switch is only posted: leave the avatars to the teardown, freeing them first crashes (FINDINGS 10)
         log!("coop: level switch: {} partner(s) left to the level teardown", partners.len());
         partners.clear();
+        forget_spares();
         forget_pads();
     }
     let mgr = global(MGR_PTR);
@@ -127,6 +130,7 @@ pub unsafe fn update() {
         net::set_local_state(0, CLASS_UNKNOWN, [0.0; 3], 0.0, 0.0, Pad::default(), own_flags);
         // the level teardown already reset slots 1-3
         partners.clear();
+        forget_spares();
         forget_pads();
         return;
     }
@@ -148,6 +152,11 @@ pub unsafe fn update() {
     for (id, p) in partners.iter_mut() {
         if !remote.iter().any(|(r, _)| r == id) {
             park(*id, p, "left");
+        }
+    }
+    for (id, st) in &remote {
+        if let Some(p) = partners.get_mut(id).filter(|_| st.level == level && st.flags & flags::LOADING == 0) {
+            mirror_switch(mgr, *id, p, st.class);
         }
     }
     for slot in set_aside_mismatched(partners, &remote) {
@@ -390,6 +399,50 @@ unsafe fn class_of(avatar: u64) -> Option<usize> {
         return None;
     }
     CLASSES.iter().position(|c| stricmp(cls as *const c_char, c.class.as_ptr() as *const c_char) == 0)
+}
+
+fn forget_spares() {
+    if let Ok(mut s) = SPARES.lock() {
+        s.clear();
+    }
+}
+
+/// The `LB` hook asks this: in a session a stand-in never swaps on its owner's replayed press, since
+/// the other copy's swap pool differs; `mirror_switch` follows the owner's own switch instead.
+pub unsafe fn refuses_swap(avatar: u64) -> bool {
+    let player = actor::player_index(avatar);
+    let refused = net::active() && player != 0;
+    if refused {
+        log!("coop: character switch of slot {player} skipped: its owner's own switch is followed instead");
+    }
+    refused
+}
+
+/// Moves a partner whose owner switched characters onto a free avatar of the new class with the
+/// swap's own steps (`0x1400c7620`); with none free, `set_aside_mismatched` binds a new one instead.
+unsafe fn mirror_switch(mgr: u64, id: u8, p: &mut Partner, class: u8) {
+    if p.avatar == 0 || p.parked || p.switch_failed == Some(class) {
+        return;
+    }
+    let Ok(mut spares) = SPARES.lock() else { return };
+    let pool: Vec<(u64, Option<usize>, bool)> =
+        (0..SWAP_POOL).map(|i| level_avatar(mgr, i)).chain(spares.iter().copied()).filter(|a| *a != 0).map(|a| (a, class_of(a), actor::swappable(a))).collect();
+    let Some(next) = switch_target(p.class, class, &pool) else { return };
+    let old = p.avatar;
+    actor::notify_swap_leave(old);
+    assign_avatar(mgr, p.slot as u32, next);
+    if slot_avatar(mgr, p.slot as u64) != next {
+        p.switch_failed = Some(class);
+        log!("coop: player {id} switched to {} but slot {} refused avatar {next:#x}; it keeps {}", class_name(class as usize), p.slot, class_name(p.class));
+        return;
+    }
+    actor::request_swap_in(next);
+    spares.retain(|a| *a != next);
+    if actor::avatar_index(old) as u64 >= SWAP_POOL {
+        spares.push(old);
+    }
+    log!("coop: player {id} switched {} -> {}: slot {} avatar {old:#x} -> {next:#x}", class_name(p.class), class_name(class as usize), p.slot);
+    (p.avatar, p.actor_id, p.class, p.target_written, p.switch_failed) = (next, actor::id(next), class as usize, None, None);
 }
 
 fn forget_pads() {

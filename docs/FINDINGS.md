@@ -679,6 +679,17 @@ Tags: **[obs]** seen in code or data, **[inf]** inferred from what was seen, **[
   (writing its value makes the counter animate to it; `GoldCoins` pickups add 100 via `0x140632130`).
   `Stat_IMAGINATION_POINTS_COLLECTED` is the second counter. `0x140617c40(stats, name)` finds a stat
   index (-1 when absent).
+- **[obs] Who collects a pickup (2026-10-26, `queries/210`, in game, #66).** Any player avatar
+  does, a stand-in included: a crate a client broke on its own copy (`MunitionImpactActor b=<attacker>
+  actor=<crate>`, `ExploderDestroy`, two `SpawnGoldPickup b=<crate>`, 10 gold each) broke on the
+  host's copy too when the stand-in's replayed attack (`Y`) hit it before the world sync, and the
+  stand-in took those coins into the host's counter. When the world sync breaks it first, no coins
+  spawn on that copy. `0x140619710`, named as the pickup's collision handler in the issue, is
+  `AiInterruptMonitor::ActorsCollided` (RTTI at its vtable `0x1407ffda8`); the credit happens in
+  level script, through `PickupManager_CollectPickup` (`0x1400b9a10`), whose
+  `GamePickupManager` `vt+0x30` (`0x1401982c0`) only returns the pickup to its pool by
+  `pickupType` (`capsule`, `coin`, `ip`, `goldstar`, `cowammo`) and size. The `PICKUP` actors at
+  the origin are that pool.
 - **[obs] Actor ids differ between copies (2026-10-19, `queries/115`).** The actor registry behind
   `0x140558400(id)` is a 256-bucket hash table at `0x140b2bb90` (bucket `id & 0xff`; node `[0]` actor,
   `[1]` id, `[3]` next). Two copies in Toy Box from the same save both held 943 actors (RTTI: 818

@@ -511,6 +511,23 @@ town.
   only with its wallet, enemy verdicts by actor id, enemy motions retried) and the network loops
   (reading past Windows ICMP resets, one Join check, probe threads that stop). The release notes
   say how 1.7.2 and 1.8.0 update (the setup's Update button) and how older releases do.
+- 2026-10-26, a client's pickups reach the host (#66): a client's coins and imagination points
+  were counted only on its own copy, and the host's `Wallet` overwrote them within a second.
+  `ClientWallet::observe` now sends every change of either counter by seq, increases like spends,
+  and `HostWallet::accept` credits gains, one entry clamped to `MAX_GAIN` (10000) with a log line;
+  the same message, ack and resend carry both (protocol 20 unchanged; an old host drops gains as
+  before). In game a stand-in turned out to collect pickups too: when its replayed attack breaks a
+  crate on the host's copy before the world sync does, the crate's coins spawn there, the stand-in
+  takes them, and a client's crate of 20 gold counted 40. A new `pickup` filter remembers each
+  hit's attacker (`MunitionImpactActor`) and drops a wallet pickup spawn (`SpawnGoldPickup` and
+  the other gold and imagination spawns) whose crate a stand-in broke, so its coins appear on its
+  owner's copy only. New dev command `actors <text>` lists actors by name, nearest first. In game,
+  two copies in Toy Box (gold 2340): the client smashed three crates, the host dropped the coin
+  spawns of the two its stand-in broke first and credited the client's gains, +60 on both copies;
+  the host smashed three crates and both showed +50 with no gain from the client. Imagination
+  points and the counter's second meaning (cannon ammo) were not tried: no such pickup came up. A
+  coin taken on two copies by their own players still counts twice (PLAYING.md). 323 loader tests
+  pass on Windows (9 new or changed).
 - 2026-10-26, character switch (#65): in story levels every switch of a remote player set its
   stand-in aside and spawned a new avatar on the other copies, so a level filled with Woodys, Buzzes
   and Jessies and switching got blocked (each stand-in kept a player index, so the local swap

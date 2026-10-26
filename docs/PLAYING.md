@@ -156,6 +156,7 @@ password is never written to the log. It authenticates the traffic but does not 
 - Each PC runs its own world, kept in step by the host: players, what they carry and throw,
   townspeople, broken crates, gold, missions, unlocks and shop purchases, and the buildings on Toy
   Box's lots (a client that joins later builds the host's on arrival).
+- A coin or point taken on two copies counts twice: a client's pickups are sent to the host as gains.
 - Enemies are run by the host. On the client they move where the host's enemies are and do not
   play their attacks; their hits arrive from the host, so a hit can land a moment late.
 - One player's pause pauses everyone, with the menu on that player's screen only. When every

@@ -156,6 +156,9 @@ pub unsafe extern "system" fn post_broadcast(events: u64, name: u64, a: u64, b: 
     if is_event(name, b"LevelLoadComplete\0") {
         crate::coop::on_level_loaded();
     }
+    if !crate::pickup::live::allows(name, b) {
+        return 0;
+    }
     match original("post_broadcast") {
         Some(o) => std::mem::transmute::<u64, Post4>(o)(events, name, a, b),
         None => 0,
@@ -167,6 +170,7 @@ pub unsafe extern "system" fn post_actor(events: u64, name: u64, a: u64, b: u64,
     crate::evlog::record(name, a, b, Some(actor));
     crate::world::on_post(name, a, b, actor);
     crate::projectile::on_post(name, b, actor);
+    crate::pickup::live::on_post(name, b, actor);
     match original("post_actor") {
         Some(o) => std::mem::transmute::<u64, Post5>(o)(events, name, a, b, actor),
         None => 0,
@@ -176,6 +180,9 @@ pub unsafe extern "system" fn post_actor(events: u64, name: u64, a: u64, b: u64,
 /// Detour of the second event post broadcast (0x14049e250).
 pub unsafe extern "system" fn post_broadcast2(events: u64, name: u64, a: u64, b: u64) -> u8 {
     crate::evlog::record(name, a, b, None);
+    if !crate::pickup::live::allows(name, b) {
+        return 0;
+    }
     match original("post_broadcast2") {
         Some(o) => std::mem::transmute::<u64, Post4>(o)(events, name, a, b),
         None => 0,

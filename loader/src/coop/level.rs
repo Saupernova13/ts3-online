@@ -37,13 +37,68 @@ pub fn is_play_level(name: &str) -> bool {
     !name.is_empty() && !name.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("gui_")) && !name.eq_ignore_ascii_case("frontend")
 }
 
-/// The host level a client should switch to; the host's name must match the hash in its state.
-fn decide_follow(local_hash: u32, host_hash: u32, host_name: Option<&str>, mismatch_for: Duration, since_switch: Duration) -> Option<String> {
-    if local_hash == 0 || host_hash == 0 || local_hash == host_hash {
+/// The story game board, a menu from which a client still follows the host into a level.
+pub(super) const STORY_BOARD: &str = "gui_storymode_boardgame";
+
+pub(super) fn is_story_board(name: &str) -> bool {
+    name.eq_ignore_ascii_case(STORY_BOARD)
+}
+
+/// Where this copy is, for following.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Here {
+    Play(u32),
+    /// on the story board; `left` is the level it just finished while the host is still in it
+    Board { left: Option<u32> },
+    Menu,
+}
+
+/// The host level this copy should move to; `None` when it is there already or must not follow.
+fn follow_target(here: Here, host_hash: u32) -> Option<u32> {
+    if host_hash == 0 {
         return None;
     }
+    match here {
+        Here::Play(l) => (l != host_hash).then_some(host_hash),
+        Here::Board { left } => (left != Some(host_hash)).then_some(host_hash),
+        Here::Menu => None,
+    }
+}
+
+/// The host level a client should switch to; the host's name must match the hash in its state.
+/// From the board a client never asks the host to follow, so only a level-to-level follow cools down.
+fn decide_follow(here: Here, host_hash: u32, host_name: Option<&str>, mismatch_for: Duration, since_switch: Duration) -> Option<String> {
+    follow_target(here, host_hash)?;
     let name = host_name.filter(|n| level_hash(n) == host_hash)?;
-    (mismatch_for >= FOLLOW_AFTER && since_switch >= FOLLOW_COOLDOWN).then(|| name.to_string())
+    let cooled = !matches!(here, Here::Play(_)) || since_switch >= FOLLOW_COOLDOWN;
+    (mismatch_for >= FOLLOW_AFTER && cooled).then(|| name.to_string())
+}
+
+/// The play level this copy left for the board, kept while the host is still in it.
+#[derive(Debug, Default)]
+struct LeftBehind {
+    left: Option<u32>,
+    last_play: u32,
+}
+
+impl LeftBehind {
+    fn update(&mut self, local: u32, on_board: bool, host_hash: u32) -> Option<u32> {
+        if local != 0 {
+            self.last_play = local;
+            self.left = None;
+        } else if on_board {
+            if self.last_play != 0 {
+                self.left = Some(self.last_play);
+                self.last_play = 0;
+            }
+            if self.left.is_some_and(|l| l != host_hash) {
+                self.left = None;
+            }
+        } else {
+            *self = Self::default();
+        }
+        self.left
+    }
 }
 
 /// The host's level hash; while the host loads, the level it is loading, so both load at once.
@@ -93,7 +148,8 @@ pub(super) unsafe fn follow_levels(local: u32) {
         let host = host_level(host_state.as_ref(), host_name.as_deref());
         let mismatch = mismatch_duration(local, host, now);
         let since_switch = LAST_SWITCH.lock().ok().and_then(|t| *t).map_or(Duration::MAX, |t| now.saturating_duration_since(t));
-        if let Some(name) = decide_follow(local, host, host_name.as_deref(), mismatch, since_switch) {
+        let here = if local != 0 { Here::Play(local) } else { Here::Menu };
+        if let Some(name) = decide_follow(here, host,host_name.as_deref(), mismatch, since_switch) {
             log!("coop: following the host to level {name}");
             note_switch();
             mismatch_duration(0, 0, now);
@@ -149,7 +205,7 @@ mod tests {
     fn follow_needs_a_lasting_mismatch_between_two_levels() {
         let (toybox, daycare) = (level_hash("ST_ToyBox"), level_hash("ST_Daycare"));
         let (long, never) = (Duration::from_secs(2), Duration::MAX);
-        let go = |l, h, n: Option<&str>, m, s| decide_follow(l, h, n, m, s);
+        let go = |l, h, n: Option<&str>, m, s| decide_follow(if l == 0 { Here::Menu } else { Here::Play(l) }, h, n, m, s);
         assert_eq!(go(toybox, daycare, Some("ST_Daycare"), long, never).as_deref(), Some("ST_Daycare"));
         // too soon, or cooling down after a switch
         assert_eq!(go(toybox, daycare, Some("ST_Daycare"), Duration::from_millis(1499), never), None);
@@ -164,5 +220,48 @@ mod tests {
         assert_eq!(go(toybox, daycare, None, long, never), None);
         assert_eq!(go(toybox, daycare, Some("ST_Attic"), long, never), None);
         assert_eq!(go(toybox, daycare, Some("st_daycare"), long, never).as_deref(), Some("st_daycare"));
+    }
+
+    #[test]
+    fn the_story_board_is_known_by_name() {
+        assert!(is_story_board("gui_storymode_boardgame") && is_story_board("GUI_StoryMode_BoardGame"));
+        assert!(!is_story_board("gui_toybarn") && !is_story_board("frontend") && !is_story_board(""));
+    }
+
+    #[test]
+    fn a_client_on_the_board_follows_the_host_into_a_level() {
+        let (toybox, daycare) = (level_hash("ST_ToyBox"), level_hash("ST_Daycare"));
+        let board = |left| Here::Board { left };
+        assert_eq!(follow_target(board(None), daycare), Some(daycare));
+        assert_eq!(follow_target(board(Some(toybox)), daycare), Some(daycare));
+        assert_eq!(follow_target(board(Some(daycare)), daycare), None, "it waits after finishing the host's level");
+        assert_eq!(follow_target(board(None), 0), None, "the host is on the board or in a menu too");
+        assert_eq!(follow_target(Here::Menu, daycare), None, "never out of the front end");
+        assert_eq!(follow_target(Here::Play(daycare), daycare), None);
+        assert_eq!(follow_target(Here::Play(toybox), daycare), Some(daycare));
+    }
+
+    #[test]
+    fn only_a_follow_between_two_levels_waits_for_the_cooldown() {
+        let daycare = level_hash("ST_Daycare");
+        let (long, soon) = (Duration::from_secs(2), Duration::from_secs(1));
+        let board = Here::Board { left: None };
+        assert_eq!(decide_follow(board, daycare, Some("ST_Daycare"), long, soon).as_deref(), Some("ST_Daycare"));
+        assert_eq!(decide_follow(Here::Play(level_hash("ST_ToyBox")), daycare, Some("ST_Daycare"), long, soon), None);
+        assert_eq!(decide_follow(board, daycare, Some("ST_Daycare"), Duration::from_millis(1499), soon), None);
+        assert_eq!(decide_follow(board, daycare, Some("ST_Attic"), long, soon), None, "the name must match the hash");
+    }
+
+    #[test]
+    fn just_left_holds_while_the_host_stays_and_is_forgotten_when_it_moves() {
+        let (l, m) = (level_hash("st_train"), level_hash("st_daycare"));
+        let mut b = LeftBehind::default();
+        assert_eq!(b.update(l, false, l), None, "in a play level nothing is left behind");
+        assert_eq!(b.update(0, true, l), Some(l), "finished first: on the board, the host still in it");
+        assert_eq!(b.update(0, true, l), Some(l));
+        assert_eq!(b.update(0, true, 0), None, "the host left it");
+        assert_eq!(b.update(0, true, l), None, "a replay of the same level is followed");
+        assert_eq!(b.update(m, false, m), None);
+        assert_eq!(b.update(0, false, m), None, "a menu other than the board leaves nothing behind");
     }
 }
